@@ -205,3 +205,21 @@ www.iij.ad.jp.	300(5 mins)	IN	A	202.232.2.180
 
 ;; ADDITIONAL SECTION:
 ```
+
+# Installation
+
+We have debian package hosted on cloudsmith; follow the instruction below to install.
+
+```
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/iijlab/bowline/setup.deb.sh' \
+  | sudo -E bash
+sudo apt-get update
+sudo apt-get install bowline
+```
+
+For the dug command, the instruction is like this.
+
+```
+brew install iijlab/tap/dug
+```

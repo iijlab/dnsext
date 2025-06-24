@@ -139,20 +139,17 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         files: |
           ${{ env.PACKAGE_FILENAME }}
-    - uses: ruby/setup-ruby@v1
+    - name: release to cloudsmith
       if: gitHub.event_name == 'release' && runner.os == 'linux'
+      id: push
+      uses: cloudsmith-io/action@master
       with:
-        ruby-version: 2.7
-    - name: release to packagecloud.io
-      if: gitHub.event_name == 'release' && runner.os == 'linux'
-      run: |
-        # Instsall packagecloud CLI
-        gem install package_cloud
-        # push all versions and delete it in advance
-        for distro_version in ${{ env.DISTRO_LIST }} ; do
-            package_cloud yank ukontainer/bowline/$distro_version ${{ env.PACKAGE_FILENAME }} || true
-            package_cloud push ukontainer/bowline/$distro_version ${{ env.PACKAGE_FILENAME }}
-        done
-      env:
-        PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
-        DISTRO_LIST: "debian/bookworm"
+        api-key: ${{ secrets.CLOUDSMITH_API_KEY }}
+        command: "push"
+        format: "deb"
+        owner: "iijlab"
+        repo: "bowline"
+        distro: "debian"
+        release: "bookworm"
+        republish: "true" # needed ONLY if version is not changing
+        file: ${{ env.PACKAGE_FILENAME }}
