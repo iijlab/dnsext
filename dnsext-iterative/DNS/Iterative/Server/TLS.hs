@@ -8,7 +8,13 @@ module DNS.Iterative.Server.TLS (
 where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically)
+
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.STM
+import qualified Control.Exception as E
+import Control.Monad
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Functor
 
 -- dnsext-* packages
@@ -52,14 +58,44 @@ tlsServer VcServerConfig{..} env toCacher s = do
             peersa = H2.peerSockAddr backend
             peerInfo = PeerInfoVC peersa
         logLn env Log.DEBUG $ "tls-srv: accept: " ++ show peersa
-        (vcSess, toSender, fromX) <- initVcSession (pure $ pure ())
-        withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
-            recv <- makeNBRecvVCNoSize maxSize $ H2.recv backend
-            let onRecv bs = do
-                    checkReceived vc_slowloris_size vcTimer bs
-                    incStatsDoT peersa (stats_ env)
-            let send = getSendVC vcTimer $ \bs _ -> DNS.sendVC (H2.sendMany backend) bs
-                receiver = receiverVCnonBlocking "tls-recv" env vcSess peerInfo recv onRecv toCacher $ mkInput mysa toSender DOT
-                sender = senderVC "tls-send" env vcSess send fromX
-            TStat.concurrently_ "tls-send" sender "tls-recv" receiver
-        logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
+        var <- newTVarIO ""
+        inpq <- newTQueueIO
+        (vcSess, toSender, fromX) <- initVcSession (return $ checkInp var inpq)
+        E.bracket (forkIO $ reader backend inpq) killThread $ \_ -> do
+            withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+                recv <- makeNBRecvVC maxSize $ getInp var inpq
+                let onRecv bs = do
+                        checkReceived vc_slowloris_size vcTimer bs
+                        incStatsDoT peersa (stats_ env)
+                let send = getSendVC vcTimer $ \bs _ -> DNS.sendVC (H2.sendMany backend) bs
+                    receiver = receiverVCnonBlocking "tls-recv" env vcSess peerInfo recv onRecv toCacher $ mkInput mysa toSender DOT
+                    sender = senderVC "tls-send" env vcSess send fromX
+                TStat.concurrently_ "tls-send" sender "tls-recv" receiver
+            logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
+
+reader :: H2.IOBackend -> TQueue ByteString -> IO ()
+reader backend inpq = forever $ do
+    pkt <- H2.recv backend
+    atomically $ writeTQueue inpq pkt
+
+checkInp :: TVar ByteString -> TQueue ByteString -> STM ()
+checkInp var inpq = do
+    bs0 <- readTVar var
+    if bs0 /= ""
+        then return ()
+        else do
+            isEmpty <- isEmptyTQueue inpq
+            if isEmpty then retry else return ()
+
+getInp :: TVar ByteString -> TQueue ByteString -> Int -> IO ByteString
+getInp var inpq len = do
+    bs0 <- atomically $ readTVar var
+    bs <-
+        if bs0 == ""
+            then do
+                atomically $ readTQueue inpq
+            else
+                return bs0
+    let (bs1, bs2) = BS.splitAt len bs
+    atomically $ writeTVar var bs2
+    return bs1
