@@ -44,10 +44,11 @@ quicServers VcServerConfig{..} env toCacher ss = do
         info <- QUIC.getConnectionInfo conn
         let mysa = QUIC.localSockAddr info
             peersa = QUIC.remoteSockAddr info
-            waitInput = return $ do
+            waitInput = do
                 isEmpty <- isEmptyTQueue $ QUIC.inputQ conn
                 retryUntil $ not isEmpty
-        (vcSess, toSender, fromX) <- initVcSession waitInput
+            cancel = return ()
+        (vcSess, toSender, fromX) <- initVcSession $ return (waitInput, cancel)
         withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = do
                     strm <- QUIC.acceptStream conn

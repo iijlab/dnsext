@@ -19,7 +19,7 @@ import qualified DNS.ThreadStats as TStat
 
 -- other packages
 import Network.Run.TCP
-import Network.Socket (getPeerName, getSocketName, waitReadSocketSTM)
+import Network.Socket (getPeerName, getSocketName, waitAndCancelReadSocketSTM)
 import qualified Network.Socket.ByteString as Network
 
 -- this package
@@ -50,7 +50,7 @@ tcpServer VcServerConfig{..} env toCacher s = do
         peersa <- getPeerName sock
         logLn env Log.DEBUG $ "tcp-srv: accept: " ++ show peersa
         let peerInfo = PeerInfoVC peersa
-        (vcSess, toSender, fromX) <- initVcSession (waitReadSocketSTM sock)
+        (vcSess, toSender, fromX) <- initVcSession $ waitAndCancelReadSocketSTM sock
         withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             recv <- makeNBRecvVC maxSize $ Network.recv sock
             let onRecv bs = do

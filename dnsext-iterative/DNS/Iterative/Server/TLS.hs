@@ -52,7 +52,9 @@ tlsServer VcServerConfig{..} env toCacher s = do
             peersa = H2.peerSockAddr backend
             peerInfo = PeerInfoVC peersa
         logLn env Log.DEBUG $ "tls-srv: accept: " ++ show peersa
-        (vcSess, toSender, fromX) <- initVcSession (pure $ pure ())
+        let waitInput = return ()
+            cancel = return ()
+        (vcSess, toSender, fromX) <- initVcSession $ return (waitInput, cancel)
         withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             recv <- makeNBRecvVCNoSize maxSize $ H2.recv backend
             let onRecv bs = do

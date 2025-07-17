@@ -391,7 +391,7 @@ data VcSession =
     --   tell whether or not the queue to the sender is empty or not
     --   WITHOUT IO.
     , vcAllowInput_     :: STM VcAllowInput
-    , vcWaitRead_       :: IO (STM VcWaitRead)
+    , vcWaitRead_       :: IO (STM VcWaitRead, IO ())
     }
 {- FOURMOLU_ENABLE -}
 
@@ -421,7 +421,7 @@ withVcTimer
 withVcTimer micro actionTO = bracket (initVcTimer micro actionTO) finalizeVcTimer
 
 {- FOURMOLU_DISABLE -}
-initVcSession :: IO (STM VcWaitRead) -> IO (VcSession, ToSender -> IO (), IO FromX)
+initVcSession :: IO (STM VcWaitRead, IO ()) -> IO (VcSession, ToSender -> IO (), IO FromX)
 initVcSession getWaitIn = do
     vcEof       <- newTVarIO False
     vcTimeout   <- newTVarIO False
@@ -461,14 +461,14 @@ resetVcTimer :: VcTimer -> IO ()
 resetVcTimer VcTimer{..} = updateTimeout vtManager_ vtKey_ vtMicrosec_
 
 waitVcInput :: VcSession -> IO Bool
-waitVcInput VcSession{..} = do
-    waitIn <- vcWaitRead_
-    atomically $ do
-        timeout <- readTVar vcTimeout_
-        unless timeout $ do
-            retryUntil =<< vcAllowInput_
-            waitIn
-        return timeout
+waitVcInput VcSession{..} =
+    bracket vcWaitRead_ (\(_, cancel) -> cancel) $ \(waitIn, _) -> do
+        atomically $ do
+            timeout <- readTVar vcTimeout_
+            unless timeout $ do
+                retryUntil =<< vcAllowInput_
+                waitIn
+            return timeout
 
 {- FOURMOLU_DISABLE -}
 --   eof       timeout   pending     avail       sender-loop
