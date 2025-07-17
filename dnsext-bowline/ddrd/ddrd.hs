@@ -222,8 +222,8 @@ main = do
                     , send = \(bs, sa) -> void $ NSB.sendTo s bs sa
                     , recv = NSB.recvFrom s 2048
                     , wait = do
-                        wait' <- waitReadSocketSTM s
-                        atomically wait'
+                        (wait', cancel) <- waitAndCancelReadSocketSTM s
+                        atomically wait' `E.onException` cancel
                     , putLog = putL
                     }
         void $ forkIO $ do
