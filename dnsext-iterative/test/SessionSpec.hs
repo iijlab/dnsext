@@ -21,6 +21,7 @@ import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 --
+import DNS.Control.Recv
 import DNS.TAP.Schema (SocketProtocol (..))
 import qualified DNS.ThreadStats as TStat
 
@@ -47,14 +48,14 @@ withVc getWaitIn micro action = do
 waitInputSpec :: Spec
 waitInputSpec = describe "session - wait VC input" $ do
     it "now" $ withVc readableNow 100_000 $ \(vcs, _, _) _ -> do
-        result <- timeout 3_000_000 $ waitVcInput vcs
-        result `shouldBe` Just False
-    it "wait" $ withVc waitRead 1_000_000 $ \(vcs, _, _) _ -> do
-        result <- timeout 3_000_000 $ waitVcInput vcs
-        result `shouldBe` Just False
-    it "timeout" $ withVc noReadable 100_000 $ \(vcs, _, _) _ -> do
-        result <- timeout 3_000_000 $ waitVcInput vcs
+        result <- timeout 3_000_000 $ controlContinue $ vcControl vcs
         result `shouldBe` Just True
+    it "wait" $ withVc waitRead 1_000_000 $ \(vcs, _, _) _ -> do
+        result <- timeout 3_000_000 $ controlContinue $ vcControl vcs
+        result `shouldBe` Just True
+    it "timeout" $ withVc noReadable 100_000 $ \(vcs, _, _) _ -> do
+        result <- timeout 3_000_000 $ controlContinue $ vcControl vcs
+        result `shouldBe` Just False
   where
     readableNow = pure (pure ())
     waitRead = do
