@@ -83,6 +83,7 @@ library
         iproute,
         memory,
         network >= 3.2.3 && < 3.3,
+        network-control,
         network-run,
         psqueues,
         quic >= 0.2.14 && < 0.3,
@@ -148,7 +149,8 @@ test-suite spec
         QuickCheck,
         async,
         hspec,
-        hspec-expectations
+        hspec-expectations,
+        network-control
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native

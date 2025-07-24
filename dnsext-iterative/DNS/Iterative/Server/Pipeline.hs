@@ -36,17 +36,21 @@ import Control.Concurrent.STM
 import Control.Exception (AsyncException, Exception (..), SomeException (..), bracket, handle, throwIO)
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
+import Data.IORef
 import qualified Data.IntSet as Set
 import GHC.Event (TimeoutKey, TimerManager, getSystemTimerManager, registerTimeout, unregisterTimeout, updateTimeout)
 
 -- libs
 import Control.Concurrent.Async (AsyncCancelled)
+import Network.Control.Recv
 
 -- dnsext packages
+
+import DNS.Do53.Internal (VCLimit, decodeVCLength)
 import qualified DNS.Log as Log
 import DNS.TAP.Schema (HttpProtocol (..), SocketProtocol (..))
 import qualified DNS.TAP.Schema as DNSTAP
-import DNS.Types (DNSFlags (..), DNSMessage (..), EDNS (..), EDNSheader (..), Question (..), RCODE (..))
+import DNS.Types (DNSError (..), DNSFlags (..), DNSMessage (..), EDNS (..), EDNSheader (..), Question (..), RCODE (..))
 import qualified DNS.Types.Decode as DNS
 import qualified DNS.Types.Encode as DNS
 import DNS.Types.Time
@@ -55,7 +59,6 @@ import DNS.Types.Time
 import DNS.Iterative.Imports
 import DNS.Iterative.Internal (Env (..))
 import DNS.Iterative.Query (VResult (..), foldResponseCached, foldResponseIterative)
-import DNS.Iterative.Server.NonBlocking
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Server.WorkerStats
 import DNS.Iterative.Stats
@@ -245,11 +248,11 @@ receiverVC
     -> (ToCacher -> IO ())
     -> MkInput
     -> IO VcFinished
-receiverVC name env vcs@VcSession{..} recv toCacher mkInput_ =
+receiverVC name env VcSession{..} recv toCacher mkInput_ =
     loop 1 `E.catch` onError
   where
     onError se@(SomeException e) = warnOnError env name se >> throwIO e
-    loop i = cases =<< waitVcInput vcs
+    loop i = cases =<< (not <$> controlContinue vcControl)
       where
         cases timeout
             | timeout = pure VfTimeout
@@ -270,31 +273,43 @@ receiverVC name env vcs@VcSession{..} recv toCacher mkInput_ =
 receiverVCnonBlocking
     :: String
     -> Env
+    -> VCLimit
     -> VcSession
     -> Peer
-    -> IO NBRecvR
-    -> (ByteString -> IO ())
+    -> (Int -> IO BS)
+    -> (BS -> IO ())
     -> (ToCacher -> IO ())
     -> MkInput
     -> IO VcFinished
-receiverVCnonBlocking name env vcs@VcSession{..} peerInfo recv onRecv toCacher mkInput_ =
+receiverVCnonBlocking name env lim VcSession{..} peerInfo recvN onRecv toCacher mkInput_ =
     loop 1 `E.catch` onError
   where
     onError se@(SomeException e) = warnOnError env name se >> throwIO e
     loop i = do
-        timeout <- waitVcInput vcs
-        if timeout
-            then return VfTimeout
-            else do
-                r <- recv
-                case r of
-                    EOF _bs -> caseEof
-                    NotEnough -> loop i
-                    NBytes bs -> do
+        en <- withControlledRecv vcControl recvN 2 $ \bs ->
+            return $ decodeVCLength bs
+        case en of
+            Left EOF -> caseEof
+            Left Break -> return VfTimeout
+            Right len
+                | fromIntegral len > lim ->
+                    E.throwIO $
+                        DecodeError $
+                            "length is over the limit: should be len <= lim, but (len: "
+                                ++ show len
+                                ++ ") > (lim: "
+                                ++ show lim
+                                ++ ") "
+                | otherwise -> do
+                    ex <- withControlledRecv vcControl recvN len $ \bs -> do
                         onRecv bs
                         ts <- currentTimeUsec_ env
                         step bs ts
-                        loop (i + 1)
+                        return ()
+                    case ex of
+                        Left EOF -> caseEof
+                        Left Break -> return VfTimeout
+                        Right () -> loop (i + 1)
       where
         caseEof = atomically (enableVcEof vcEof_) >> return VfEof
         step bs ts = do
@@ -390,8 +405,7 @@ data VcSession =
     -- ^ Jobs are available to the sender. This is necessary to
     --   tell whether or not the queue to the sender is empty or not
     --   WITHOUT IO.
-    , vcAllowInput_     :: STM VcAllowInput
-    , vcWaitRead_       :: IO (STM VcWaitRead)
+    , vcControl         :: Control
     }
 {- FOURMOLU_ENABLE -}
 
@@ -421,27 +435,29 @@ withVcTimer
 withVcTimer micro actionTO = bracket (initVcTimer micro actionTO) finalizeVcTimer
 
 {- FOURMOLU_DISABLE -}
-initVcSession :: IO (STM VcWaitRead) -> IO (VcSession, ToSender -> IO (), IO FromX)
+initVcSession
+    :: IO (STM VcWaitRead)
+    -> IO (VcSession, ToSender -> IO (), IO FromX)
 initVcSession getWaitIn = do
-    vcEof       <- newTVarIO False
-    vcTimeout   <- newTVarIO False
-    vcPendings  <- newTVarIO Set.empty
+    vcEof      <- newTVarIO False
+    vcTimeout  <- newTVarIO False
+    vcPendings <- newTVarIO Set.empty
     let queueBound = 8 {- limit waiting area per session to constant size -}
-    senderQ     <- newTBQueueIO queueBound
+    senderQ    <- newTBQueueIO queueBound
     let toSender = atomically . writeTBQueue senderQ
         fromX = atomically $ readTBQueue senderQ
         inputThreshold = succ queueBound `quot` 2
         {- allow room for cacher loops and worker loops to write -}
-        allowInput = (<= inputThreshold) <$> lengthTBQueue senderQ
-        result =
+        allowInput' = (<= inputThreshold) <$> lengthTBQueue senderQ
+    ctl <- newControl $ waitVcInput getWaitIn vcTimeout allowInput'
+    let result =
             VcSession
-            { vcEof_            = vcEof
-            , vcTimeout_        = vcTimeout
-            , vcPendings_       = vcPendings
-            , vcRespAvail_      = not <$> isEmptyTBQueue senderQ
-            , vcAllowInput_     = allowInput
-            , vcWaitRead_       = getWaitIn
-            }
+                { vcEof_ = vcEof
+                , vcTimeout_ = vcTimeout
+                , vcPendings_ = vcPendings
+                , vcRespAvail_ = not <$> isEmptyTBQueue senderQ
+                , vcControl = ctl
+                }
     pure (result, toSender, fromX)
 {- FOURMOLU_ENABLE -}
 
@@ -460,15 +476,15 @@ delVcPending pendings i = modifyTVar' pendings (Set.delete i)
 resetVcTimer :: VcTimer -> IO ()
 resetVcTimer VcTimer{..} = updateTimeout vtManager_ vtKey_ vtMicrosec_
 
-waitVcInput :: VcSession -> IO Bool
-waitVcInput VcSession{..} = do
-    waitIn <- vcWaitRead_
+waitVcInput :: IO (STM ()) -> TVar Bool -> STM Bool -> IO Bool
+waitVcInput getWaitIn timedout allowInput' = do
+    waitIn <- getWaitIn
     atomically $ do
-        timeout <- readTVar vcTimeout_
+        timeout <- readTVar timedout
         unless timeout $ do
-            retryUntil =<< vcAllowInput_
+            retryUntil =<< allowInput'
             waitIn
-        return timeout
+        return $ not timeout
 
 {- FOURMOLU_DISABLE -}
 --   eof       timeout   pending     avail       sender-loop
