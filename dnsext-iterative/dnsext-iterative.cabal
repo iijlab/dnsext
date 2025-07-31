@@ -42,7 +42,6 @@ library
         DNS.Iterative.RootTrustAnchors
         DNS.Iterative.Server.HTTP2
         DNS.Iterative.Server.HTTP3
-        DNS.Iterative.Server.NonBlocking
         DNS.Iterative.Server.Pipeline
         DNS.Iterative.Server.PrometheusHisto
         DNS.Iterative.Server.QUIC
@@ -125,7 +124,6 @@ test-suite spec
     build-tool-depends: hspec-discover:hspec-discover
     hs-source-dirs:     test
     other-modules:
-                        NonBlockingSpec
                         QuerySpec
                         SessionPropSpec
                         SessionSpec

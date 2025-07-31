@@ -28,7 +28,6 @@ import qualified Network.HTTP2.TLS.Server as H2
 
 -- this package
 import DNS.Iterative.Internal (Env (..))
-import DNS.Iterative.Server.NonBlocking
 import DNS.Iterative.Server.Pipeline
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Stats (incStatsDoT, sessionStatsDoT)
@@ -43,8 +42,8 @@ tlsServer VcServerConfig{..} env toCacher s = do
     let tlsserver = withLocationIOE name $ H2.runTLSWithSocket settings vc_credentials s "dot" go
     return [tlsserver]
   where
-    tmicro = vc_idle_timeout * 1_000_000
     maxSize = fromIntegral vc_query_max_size
+    tmicro = vc_idle_timeout * 1_000_000
     settings =
         H2.defaultSettings
             { H2.settingsTimeout = vc_idle_timeout
@@ -62,12 +61,12 @@ tlsServer VcServerConfig{..} env toCacher s = do
         (vcSess, toSender, fromX) <- initVcSession (return $ checkInp inpq)
         E.bracket (TStat.forkIO "TLS reader" $ reader backend inpq) killThread $ \_ -> do
             withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
-                recv <- makeNBRecvVC maxSize $ getInp inpq
+                let recv = getInp inpq
                 let onRecv bs = do
                         checkReceived vc_slowloris_size vcTimer bs
                         incStatsDoT peersa (stats_ env)
                 let send = getSendVC vcTimer $ \bs _ -> DNS.sendVC (H2.sendMany backend) bs
-                    receiver = receiverVCnonBlocking "tls-recv" env vcSess peerInfo recv onRecv toCacher $ mkInput mysa toSender DOT
+                    receiver = receiverVCnonBlocking "tls-recv" env maxSize vcSess peerInfo recv onRecv toCacher $ mkInput mysa toSender DOT
                     sender = senderVC "tls-send" env vcSess send fromX
                 TStat.concurrently_ "tls-send" sender "tls-recv" receiver
             logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa

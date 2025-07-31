@@ -10,14 +10,15 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:
         DNS.Array
+        DNS.Control.Recv
         DNS.Log
         DNS.Parser
+        DNS.RRCache
         DNS.TAP.FastStream
         DNS.TAP.ProtocolBuffer
         DNS.TAP.Schema
         DNS.ThreadStats
         DNS.TimeCache
-        DNS.RRCache
         DNS.ZoneFile
 
     other-modules:
