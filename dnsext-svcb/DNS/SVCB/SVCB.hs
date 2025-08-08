@@ -27,7 +27,10 @@ data RD_SVCB = RD_SVCB
     , svcb_target :: Domain
     , svcb_params :: SvcParams
     }
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord)
+
+instance Show RD_SVCB where
+    show RD_SVCB{..} = show svcb_priority ++ " " ++ show svcb_target ++ " " ++ show svcb_params
 
 instance ResourceData RD_SVCB where
     resourceDataType _ = SVCB
@@ -74,7 +77,10 @@ data RD_HTTPS = RD_HTTPS
     , https_target :: Domain
     , https_params :: SvcParams
     }
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord)
+
+instance Show RD_HTTPS where
+    show RD_HTTPS{..} = show https_priority ++ " " ++ show https_target ++ " " ++ show https_params
 
 instance ResourceData RD_HTTPS where
     resourceDataType _ = HTTPS

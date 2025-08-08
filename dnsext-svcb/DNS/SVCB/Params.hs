@@ -1,6 +1,5 @@
 module DNS.SVCB.Params where
 
-import DNS.SVCB.Imports
 import DNS.SVCB.Key
 import DNS.SVCB.Value
 import Data.IntMap.Strict (IntMap)
@@ -9,7 +8,7 @@ import qualified Data.IntMap.Strict as M
 newtype SvcParams = SvcParams (IntMap SvcParamValue) deriving (Eq, Ord)
 
 instance Show SvcParams where
-    show (SvcParams m) = "{" ++ intercalate ", " (M.foldrWithKey f [] m) ++ "}"
+    show (SvcParams m) = unwords $ M.foldrWithKey f [] m
       where
         showkv k v =
             show (toSvcParamKey $ fromIntegral k)
