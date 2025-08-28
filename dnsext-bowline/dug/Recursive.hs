@@ -194,8 +194,10 @@ runUDP
     -> [(Question, QueryControls)]
     -> IO ()
 runUDP printHeader conf putLnSTM putLinesSTM qcs = withLookupConf conf $ \LookupEnv{..} -> do
-    let printIt (q, ctl) = resolve lenvResolveEnv q ctl >>= atomically . printReplySTM printHeader putLnSTM putLinesSTM
-    mapM_ printIt qcs
+    let resolveAndPrint (q, ctl) = do
+            erply <- resolve lenvResolveEnv q ctl
+            atomically $ printReplySTM printHeader putLnSTM putLinesSTM erply
+    mapM_ resolveAndPrint qcs
 
 runVC
     :: Bool
