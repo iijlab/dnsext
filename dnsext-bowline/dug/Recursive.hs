@@ -171,7 +171,7 @@ recursiveQuery
     -> [(Question, QueryControls)]
     -> Options
     -> TQueue (NameTag, String)
-    -> IO ()
+    -> IO Bool
 recursiveQuery ips port putLnSTM putLinesSTM qcs opt@Options{..} tq = do
     ractions <- makeAction opt tq putLinesSTM
     (conf, ris) <- getCustomConf ips port mempty opt ractions
@@ -192,12 +192,16 @@ runUDP
     -> (DNS.DNSMessage -> STM ())
     -> Log.PutLines STM
     -> [(Question, QueryControls)]
-    -> IO ()
+    -> IO Bool
 runUDP printHeader conf putLnSTM putLinesSTM qcs = withLookupConf conf $ \LookupEnv{..} -> do
     let resolveAndPrint (q, ctl) = do
             erply <- resolve lenvResolveEnv q ctl
             atomically $ printReplySTM printHeader putLnSTM putLinesSTM erply
-    mapM_ resolveAndPrint qcs
+            return $ case erply of
+                Left _err -> False
+                Right Reply{..} ->
+                    not $ null $ DNS.fromDNSMessage replyDNSMessage id
+    foldr (&&) True <$> mapM resolveAndPrint qcs
 
 runVC
     :: Bool
@@ -205,7 +209,7 @@ runVC
     -> (DNS.DNSMessage -> STM ())
     -> Log.PutLines STM
     -> [(Question, QueryControls)]
-    -> IO ()
+    -> IO Bool
 runVC printHeader pipes putLnSTM putLinesSTM qcs = do
     refs <- replicateM len $ newTVarIO False
     let targets = zip qcs refs
@@ -213,7 +217,7 @@ runVC printHeader pipes putLnSTM putLinesSTM qcs = do
     -- are certainly saved.
     rs <- mapConcurrently (E.try . resolver printHeader putLnSTM putLinesSTM targets) pipes
     case foldr1 op rs of
-        Right _ -> return ()
+        Right _ -> return True
         Left e -> do
             print (e :: DNS.DNSError)
             exitFailure

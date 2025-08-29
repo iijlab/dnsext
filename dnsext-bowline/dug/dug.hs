@@ -168,22 +168,24 @@ main = do
     t0 <- T.getUnixTime
     tq <- newTQueueIO
     ------------------------
-    if optIterative
-        then do
-            target <- checkIterative at qs
-            opts <- checkFallbackV4 opts1 =<< getRootV6
-            iterativeQuery putLn putLines target opts
-        else do
-            let mserver = map (drop 1) at
-            ips <- resolveServers opts1 mserver
-            opts <- checkFallbackV4 opts1 [(ip, 53) | (ip, _) <- ips]
-            recursiveQuery ips port putLnSTM putLinesSTM qs opts tq
+    r <-
+        if optIterative
+            then do
+                target <- checkIterative at qs
+                opts <- checkFallbackV4 opts1 =<< getRootV6
+                iterativeQuery putLn putLines target opts
+                return True
+            else do
+                let mserver = map (drop 1) at
+                ips <- resolveServers opts1 mserver
+                opts <- checkFallbackV4 opts1 [(ip, 53) | (ip, _) <- ips]
+                recursiveQuery ips port putLnSTM putLinesSTM qs opts tq
     ------------------------
     when (optFormat /= JSONstyle) $ putTime t0 putLines
     killLogger
     sentinel tq
     deprecated
-    exitSuccess
+    if r then exitSuccess else exitFailure
   where
     sentinel tq = do
         xs <- readQ
