@@ -39,6 +39,7 @@ getDefaultDnsServers file = toAddresses <$> readFile file
   where
     toAddresses :: String -> [String]
     toAddresses cs = map extract (filter ("nameserver" `isPrefixOf`) (lines cs))
-    extract = reverse . dropWhile isSpace . reverse . dropWhile isSpace . drop 11
+    extract = takeWhile (not . isEnd) . dropWhile isSpace . drop 11
+    isEnd = or . sequence [isSpace, (==) '#']
 
 #endif
