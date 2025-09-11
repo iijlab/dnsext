@@ -17,6 +17,7 @@ data OutputFlag
     = Singleline
     | Multiline
     | JSONstyle
+    | Short
     deriving (Eq, Show)
 
 type Flags = [OutputFlag]
@@ -25,14 +26,41 @@ type Printer a = a -> Print ()
 
 ----------------------------------------------------------------
 
+{- FOURMOLU_DISABLE -}
 pprResult :: [OutputFlag] -> DNSMessage -> String
-pprResult = runPrinter result
+pprResult [Short] msg = runPrinter resultShort []    msg
+pprResult flags   msg = runPrinter result      flags msg
+{- FOURMOLU_ENABLE -}
 
 runPrinter :: Printer a -> Flags -> a -> String
 runPrinter p oflags x = execWriter (runReaderT (p x) oflags) `appEndo` ""
 
 getFlags :: Print Flags
 getFlags = ask
+
+----------------------------------------------------------------
+
+resultShort :: Printer DNSMessage
+resultShort DNSMessage{..} = rrsShort answer
+
+rrsShort :: Printer [ResourceRecord]
+rrsShort [] = return ()
+rrsShort (r0 : rs0) = do
+    rrShort r0
+    loop rs0
+  where
+    loop [] = return ()
+    loop (r : rs) = do
+        nl
+        rrShort r
+        loop rs
+
+rrShort :: Printer ResourceRecord
+rrShort ResourceRecord{..} = do
+    let prettyRData _ = show rdata
+    string . prettyRData =<< getFlags
+    let keyTag dnskey = string (" (key_tag: " ++ show (Verify.keyTag dnskey) ++ ")")
+    maybe (pure ()) keyTag $ fromRData rdata
 
 ----------------------------------------------------------------
 

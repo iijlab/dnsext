@@ -179,7 +179,7 @@ recursiveQuery ips port putLnSTM putLinesSTM qcs opt@Options{..} tq = do
         if optDoX == "auto"
             then resolveDDR opt conf
             else resolveDoX opt ris
-    let printHeader = optFormat /= JSONstyle
+    let printHeader = optFormat `notElem` [Short, JSONstyle]
     if null pipes
         then runUDP printHeader conf putLnSTM putLinesSTM qcs
         else runVC printHeader pipes putLnSTM putLinesSTM qcs

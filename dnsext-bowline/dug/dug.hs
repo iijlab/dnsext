@@ -179,7 +179,7 @@ main = do
             opts <- checkFallbackV4 opts1 [(ip, 53) | (ip, _) <- ips]
             recursiveQuery ips port putLnSTM putLinesSTM qs opts tq
     ------------------------
-    when (optFormat /= JSONstyle) $ putTime t0 putLines
+    when (optFormat `notElem` [Short, JSONstyle]) $ putTime t0 putLines
     killLogger
     sentinel tq
     deprecated
@@ -296,6 +296,7 @@ mkPutline format putLinesSTM msg = putLinesSTM Log.WARN Nothing [res msg]
     res = case format of
         JSONstyle -> showJSON
         Singleline -> pprResult []
+        Short -> pprResult [Short]
         Multiline -> pprResult [Multiline]
 
 ----------------------------------------------------------------
@@ -389,6 +390,7 @@ convDoX dox = case dox' of
 convOutputFlag :: String -> OutputFlag
 convOutputFlag "json"  = JSONstyle
 convOutputFlag "multi" = Multiline
+convOutputFlag "short" = Short
 convOutputFlag _       = Singleline
 
 ----------------------------------------------------------------
