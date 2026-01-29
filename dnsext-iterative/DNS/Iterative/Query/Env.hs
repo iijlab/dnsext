@@ -288,7 +288,7 @@ readAnchor path = do
 {- FOURMOLU_ENABLE -}
 
 setRootAnchor :: TrustAnchors -> Env -> Env
-setRootAnchor as env0 = maybe env0 (\v -> env0{rootAnchor_ = v}) $ Map.lookup (fromString ".") as
+setRootAnchor as env0 = env0{rootAnchor_ = fromMaybe (FilledDS []) $ Map.lookup (fromString ".") as}
 
 ---
 
