@@ -18,6 +18,7 @@ module DNS.Types.Type (
         OPT,
         TLSA,
         CSYNC,
+        IXFR,
         AXFR,
         ANY,
         CAA
@@ -120,6 +121,10 @@ pattern TLSA = TYPE 52 -- RFC 6698
 pattern CSYNC :: TYPE
 pattern CSYNC = TYPE 62 -- RFC 7477
 
+-- | Incremental zone transfer (RFC1995)
+pattern IXFR :: TYPE
+pattern IXFR = TYPE 251 -- RFC 1995
+
 -- | Zone transfer (RFC5936)
 pattern AXFR :: TYPE
 pattern AXFR = TYPE 252 -- RFC 5936
@@ -152,6 +157,7 @@ typeAndNames =
     , (OPT,   "OPT")
     , (TLSA,  "TLSA")
     , (CSYNC, "CSYNC")
+    , (IXFR,  "IXFR")
     , (AXFR,  "AXFR")
     , (ANY,   "ANY")
     , (CAA,   "CAA")

@@ -202,6 +202,7 @@ module DNS.Types (
         OPT,
         TLSA,
         CSYNC,
+        IXFR,
         AXFR,
         ANY,
         CAA
