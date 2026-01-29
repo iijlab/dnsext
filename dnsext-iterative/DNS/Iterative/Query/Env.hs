@@ -243,8 +243,17 @@ setRootHint md env0 = maybe env0 (\d -> env0{rootHint_ = d}) md
 type TrustAnchors = Map Domain MayFilledDS
 
 {- FOURMOLU_DISABLE -}
+defaultTrustAnchor :: TrustAnchors -> TrustAnchors
+defaultTrustAnchor as = maybe (Map.insert root (FilledDS rootSepDSs) as) (const as) $ Map.lookup root as
+    where root = fromString "."
+{- FOURMOLU_ENABLE -}
+
 readTrustAnchors :: [FilePath] -> IO TrustAnchors
-readTrustAnchors ps = do
+readTrustAnchors ps = defaultTrustAnchor <$> readTrustAnchors' ps
+
+{- FOURMOLU_DISABLE -}
+readTrustAnchors' :: [FilePath] -> IO TrustAnchors
+readTrustAnchors' ps = do
     pairs <- mapM readAnchor ps
     let (ds, ks) = unzip pairs
         dss  = ngroup $ concat ds
