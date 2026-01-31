@@ -5,18 +5,20 @@ license-file:       LICENSE
 maintainer:         ex8k.hibino@gmail.com, kazu@iij.ad.jp
 author:             Kei Hibino and Kazu Yamamoto
 build-type:         Configure
-extra-source-files: CHANGELOG.md
+data-files:
+    bowline/bowline.conf
+    bowline/local-example.conf
+    bowline/stub-example.conf
+    bowline/svcb-example.conf
+
+extra-source-files:
+    CHANGELOG.md
     config.guess
     config.sub
     configure.ac
     configure
     include/HsSockOptConfig.h.in
     include/HsSockOpt.h
-data-files:
-    bowline/bowline.conf
-    bowline/local-example.conf
-    bowline/stub-example.conf
-    bowline/svcb-example.conf
 
 extra-tmp-files:
     config.log
@@ -26,6 +28,7 @@ extra-tmp-files:
 
 executable bowline
     main-is:          bowline.hs
+    build-tools:      hsc2hs >=0
     hs-source-dirs:   bowline
     other-modules:
         Config
@@ -38,33 +41,30 @@ executable bowline
         Types
         WebAPI
 
-    build-tools:      hsc2hs >=0
-    include-dirs:     include
-
     default-language: Haskell2010
-    ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N4 -qn1 -T -A32m -kc2k"
+    include-dirs:     include
+    ghc-options:
+        -Wall -threaded -rtsopts "-with-rtsopts=-N4 -qn1 -T -A32m -kc2k"
+
     build-depends:
-        -- GHC bundled
         base,
+        async,
         bytestring,
-        stm,
-        transformers,
-        unix,
-        -- dnsext packages
         dnsext-dnssec,
         dnsext-do53,
         dnsext-iterative,
         dnsext-svcb,
         dnsext-types,
         dnsext-utils,
-        -- other packages
-        async,
         http-types,
         iproute,
-        network >= 3.2.3 && < 3.3,
+        network >=3.2.3 && <3.3,
         split,
-        tls >= 2.1.10,
+        stm,
+        tls >=2.1.10,
         tls-session-manager,
+        transformers,
+        unix,
         wai,
         warp
 
@@ -88,13 +88,12 @@ executable dug
     default-language: Haskell2010
     ghc-options:      -Wall -threaded
     build-depends:
-        -- GHC bundled
         base,
+        ansi-terminal,
+        async,
+        base16-bytestring,
         bytestring,
         directory,
-        stm,
-        transformers,
-        -- dnsext packages
         dnsext-dnssec,
         dnsext-do53,
         dnsext-dox,
@@ -102,17 +101,15 @@ executable dug
         dnsext-svcb,
         dnsext-types,
         dnsext-utils,
-        -- other packages
-        ansi-terminal,
-        async,
-        base16-bytestring,
         iproute,
         network,
         prettyprinter,
-        quic >= 0.2.14 && < 0.3,
+        quic >=0.2.14 && <0.3,
         random,
         serialise,
-        tls >= 2.1.10,
+        stm,
+        tls >=2.1.10,
+        transformers,
         unix-time
 
     if (os(windows) && impl(ghc >=9.0))
@@ -124,29 +121,24 @@ executable dug
 executable ddrd
     main-is:          ddrd.hs
     hs-source-dirs:   ddrd
-    other-modules:
-
     default-language: Haskell2010
     ghc-options:      -Wall -threaded
     build-depends:
-        -- GHC bundled
         base,
+        async,
         bytestring,
         containers,
-        stm,
-        unix,
-        -- dnsext packages
         dnsext-dnssec,
         dnsext-do53,
         dnsext-dox,
         dnsext-svcb,
         dnsext-types,
         dnsext-utils,
-        -- other packages
-        async,
         fast-logger,
         iproute,
-        network
+        network,
+        stm,
+        unix
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
@@ -160,14 +152,11 @@ executable dump
     default-language: Haskell2010
     ghc-options:      -Wall -threaded
     build-depends:
-        -- GHC bundled
         base,
-        -- dnsext packages
         dnsext-dnssec,
         dnsext-svcb,
         dnsext-types,
         dnsext-utils,
-        -- other packages
         network,
         pretty-simple
 
