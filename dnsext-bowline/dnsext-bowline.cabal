@@ -12,6 +12,11 @@ extra-source-files: CHANGELOG.md
     configure
     include/HsSockOptConfig.h.in
     include/HsSockOpt.h
+data-files:
+    bowline/bowline.conf
+    bowline/local-example.conf
+    bowline/stub-example.conf
+    bowline/svcb-example.conf
 
 extra-tmp-files:
     config.log
