@@ -3,7 +3,7 @@
 
 module Main where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
 import DNS.Types
@@ -29,9 +29,8 @@ main = do
     let kvs = map (\r -> ((rrname r, rrtype r), r)) rrs
         m = M.fromList kvs
     ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
-    s : ss <- mapM serverSocket ais
-    mapM_ (void . forkIO . clove m) ss
-    clove m s
+    ss <- mapM serverSocket ais
+    mapConcurrently_ (clove m) ss
 
 fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
@@ -62,11 +61,13 @@ clove m s = loop
         (bs, sa) <- NSB.recvFrom s 2048
         case decode bs of
             Left _e -> return ()
-            Right query -> do
-                let [q] = question query
-                    as = case M.lookup (qname q, qtype q) m of
-                        Nothing -> []
-                        Just a -> [a]
-                    bs' = encode $ query{answer = as}
-                void $ NSB.sendTo s bs' sa
+            Right query -> case question query of
+                [q] -> do
+                    let reply = query{flags = defaultResponseDNSFlags}
+                    let as = case M.lookup (qname q, qtype q) m of
+                            Nothing -> []
+                            Just a -> [a]
+                        bs' = encode $ reply{answer = as}
+                    void $ NSB.sendTo s bs' sa
+                _ -> return () -- fixme
         loop

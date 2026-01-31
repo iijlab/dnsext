@@ -155,6 +155,7 @@ executable clove
     build-depends:
         -- GHC bundled
         base,
+        async,
         network,
         containers,
         -- dnsext packages
