@@ -4,7 +4,7 @@
 module Config (
     Config (..),
     defaultConfig,
-    parseConfig,
+    loadConfig,
     showConfig,
 ) where
 
@@ -212,8 +212,8 @@ showConfig2 conf =
 ----------------------------------------------------------------
 
 -- | Parsing a configuration file to get an 'Config'.
-parseConfig :: FilePath -> [String] -> IO Config
-parseConfig file args =
+loadConfig :: FilePath -> [String] -> IO Config
+loadConfig file args =
     makeConfig defaultConfig =<< loadNested nestedLimit =<< (++) <$> mapM readArg args <*> loadFile file
 
 {- FOURMOLU_DISABLE -}
