@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
@@ -15,13 +16,16 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment
 
+import Config
+
 main :: IO ()
 main = do
-    [zonefile] <- getArgs
-    rrs <- catMaybes . map fromResource <$> ZF.parseFile zonefile
+    [conffile] <- getArgs
+    Config{..} <- loadConfig conffile
+    rrs <- catMaybes . map fromResource <$> ZF.parseFile cnf_zone_file
     let kvs = map (\r -> ((rrname r, rrtype r), r)) rrs
         m = M.fromList kvs
-    s <- serverResolve "127.0.0.1" "53" >>= serverSocket
+    s <- serverResolve "127.0.0.1" (show cnf_udp_port) >>= serverSocket
     clove s m
 
 fromResource :: ZF.Record -> Maybe ResourceRecord

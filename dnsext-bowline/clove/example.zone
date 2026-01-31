@@ -1,0 +1,45 @@
+$TTL 3600
+$ORIGIN mew.org.
+@	IN	SOA	ns1.mew.org. kazu.mew.org. (
+				2026013005	; Serial
+				3600		; Refresh
+				300		; Retry
+				3600000		; Expire
+				3600		; Minimum
+				)
+		IN	A	202.238.220.92
+		IN	AAAA	2001:240:bb82:2706::1:59
+		IN	NS	ns1.mew.org.
+		IN	NS	ns2.mew.org.
+		IN	MX 10	mail.mew.org.
+		IN	TXT	"v=spf1 +mx -all"
+
+;
+; DomainKeys/DKIM(OLD)
+;
+_domainkey	IN	TXT	"t=y; o=~"
+demo._domainkey	IN	TXT	"v=DKIM1; k=rsa; t=y; p=MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKfdU9wO/UlLh9Lq7Bqqfm4MhuUTTDLTsNoIaeOGDt/12jdmwZTYrtxNuIFSoDDAjuSyHG1z5EClTAma3usBgx0CAwEAAQ=="
+
+;
+; DKIM/SSP
+;
+_policy._domainkey IN	TXT	"t=y; o=~"
+main._domainkey	IN	TXT	"v=DKIM1; k=rsa; t=y; p=MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAM1utDGo5h9BQ2PK39PDjVjWbEBpD1iNLFnk47dYSuBCyjO9U1HiCzwXKg+/JxHtmLvGlaUaJKHmFRs2Iw7HX28CAwEAAQ=="
+
+;----------------------------------------------------------------------
+; Localhost
+;----------------------------------------------------------------------
+localhost	IN	CNAME	localhost.
+
+;----------------------------------------------------------------------
+; CNAMEs
+;----------------------------------------------------------------------
+www		IN	A	202.238.220.92
+		IN	AAAA	2001:240:bb82:2706::1:59
+mail		IN	A	202.238.220.92
+		IN	AAAA	2001:240:bb82:2706::1:59
+ns1		IN	A	202.238.220.92 ; glue
+ns2		IN	A	210.155.141.200 ; glue
+git             IN      A       202.238.220.92
+quic		IN	A	133.159.73.125
+		IN	AAAA	2001:240:bb82:2715::1:7a
