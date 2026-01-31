@@ -3,6 +3,7 @@
 
 module Main where
 
+import Control.Concurrent (forkIO)
 import qualified Control.Exception as E
 import Control.Monad
 import DNS.Types
@@ -18,6 +19,8 @@ import System.Environment
 
 import Config
 
+type DB = M.Map (Domain, TYPE) ResourceRecord
+
 main :: IO ()
 main = do
     [conffile] <- getArgs
@@ -25,8 +28,10 @@ main = do
     rrs <- catMaybes . map fromResource <$> ZF.parseFile cnf_zone_file
     let kvs = map (\r -> ((rrname r, rrtype r), r)) rrs
         m = M.fromList kvs
-    s <- serverResolve "127.0.0.1" (show cnf_udp_port) >>= serverSocket
-    clove s m
+    ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
+    s : ss <- mapM serverSocket ais
+    mapM_ (void . forkIO . clove m) ss
+    clove m s
 
 fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
@@ -34,9 +39,10 @@ fromResource _ = Nothing
 
 ----------------------------------------------------------------
 
-serverResolve :: HostName -> ServiceName -> IO AddrInfo
-serverResolve addr port = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just port)
+serverResolve :: PortNumber -> HostName -> IO AddrInfo
+serverResolve pn addr = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just port)
   where
+    port = show pn
     hints =
         defaultHints
             { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV, AI_PASSIVE]
@@ -49,8 +55,8 @@ serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
     bind s $ addrAddress ai
     return s
 
-clove :: Socket -> M.Map (Domain, TYPE) ResourceRecord -> IO ()
-clove s m = loop
+clove :: DB -> Socket -> IO ()
+clove m s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
