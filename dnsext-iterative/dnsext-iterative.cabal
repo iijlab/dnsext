@@ -6,8 +6,8 @@ maintainer:         ex8k.hibino@gmail.com
 author:             Kei Hibino
 build-type:         Simple
 extra-source-files:
-        CHANGELOG.md
-        root.hints.test
+    CHANGELOG.md
+    root.hints.test
 
 library
     exposed-modules:
@@ -57,39 +57,36 @@ library
     default-language: Haskell2010
     ghc-options:      -Wall
     build-depends:
-        -- GHC bundled
         base >=4 && <5,
+        ansi-terminal,
         array,
+        async,
+        base16-bytestring,
+        base64-bytestring,
         bytestring,
         containers,
-        stm,
-        transformers,
-        unix,
-        -- dnsext packages
+        crypton,
         dnsext-dnssec,
         dnsext-do53,
         dnsext-svcb,
         dnsext-types,
         dnsext-utils,
-        -- other packages
-        ansi-terminal,
-        async,
-        base16-bytestring,
-        base64-bytestring,
-        crypton,
         http-types,
-        http2 >= 5.4 && < 5.5,
-        http2-tls >= 0.5 && < 0.6,
-        http3 >= 0.1.2 && < 0.2,
+        http2 >=5.4 && <5.5,
+        http2-tls >=0.5 && <0.6,
+        http3 >=0.1.2 && <0.2,
         iproute,
         memory,
-        network >= 3.2.3 && < 3.3,
+        network >=3.2.3 && <3.3,
         network-run,
         psqueues,
-        quic >= 0.2.21 && < 0.3,
+        quic >=0.2.21 && <0.3,
         random,
+        stm,
         time-manager,
-        tls >= 2.1.10,
+        tls >=2.1.10,
+        transformers,
+        unix,
         word8
 
     if impl(ghc >=8)
@@ -101,17 +98,14 @@ executable workers-benchmark
     default-language: Haskell2010
     ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N2 -qn1"
     build-depends:
-        -- GHC packages
         base,
+        async,
         bytestring,
         deepseq,
-        -- dnsext-*
         dnsext-do53,
         dnsext-iterative,
         dnsext-types,
         dnsext-utils,
-        -- others
-        async,
         unix-time
 
     if (os(windows) && impl(ghc >=9.0))
@@ -126,31 +120,28 @@ test-suite spec
     build-tool-depends: hspec-discover:hspec-discover
     hs-source-dirs:     test
     other-modules:
-                        CtlRecvSpec
-                        QuerySpec
-                        SessionPropSpec
-                        SessionSpec
+        CtlRecvSpec
+        QuerySpec
+        SessionPropSpec
+        SessionSpec
+
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
-        -- GHC bundled
         base,
+        QuickCheck,
         array,
+        async,
         bytestring,
         containers,
-        stm,
-        -- this package
-        dnsext-iterative,
-        -- dnsext packages
         dnsext-dnssec,
         dnsext-do53,
+        dnsext-iterative,
         dnsext-types,
         dnsext-utils,
-        -- other packages
-        QuickCheck,
-        async,
         hspec,
-        hspec-expectations
+        hspec-expectations,
+        stm
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
