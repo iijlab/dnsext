@@ -19,7 +19,11 @@ import System.Environment
 
 import Config
 
+----------------------------------------------------------------
+
 type DB = M.Map (Domain, TYPE) ResourceRecord
+
+----------------------------------------------------------------
 
 main :: IO ()
 main = do
@@ -32,9 +36,41 @@ main = do
     ss <- mapM serverSocket ais
     mapConcurrently_ (clove m) ss
 
-fromResource :: ZF.Record -> Maybe ResourceRecord
-fromResource (ZF.R_RR r) = Just r
-fromResource _ = Nothing
+----------------------------------------------------------------
+
+clove :: DB -> Socket -> IO ()
+clove m s = loop
+  where
+    loop = do
+        (bs, sa) <- NSB.recvFrom s 2048
+        case decode bs of
+            Left _e -> return ()
+            Right query -> replyQuery m s sa query
+        loop
+
+replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
+replyQuery m s sa query = do
+    bs' <-
+        if opcode query == OP_STD
+            -- RFC 8906: Sec 3.1.3.1
+            --
+            -- A non-recursive
+            -- server is supposed to respond to recursive
+            -- queries as if the Recursion Desired (RD)
+            -- bit is not set
+            then case question query of
+                [Question{..}] -> do
+                    let as = case M.lookup (qname, qtype) m of
+                            Nothing -> []
+                            Just a -> [a]
+                    return $ encode $ reply{answer = as}
+                -- RFC 9619: "In the DNS, QDCOUNT Is (Usually) One"
+                _ -> return $ encode $ reply{rcode = FormatErr}
+            -- RFC 8906: Sec 3.1.4
+            else return $ encode $ reply{rcode = NotImpl}
+    void $ NSB.sendTo s bs' sa
+  where
+    reply = query{flags = defaultResponseDNSFlags}
 
 ----------------------------------------------------------------
 
@@ -54,20 +90,8 @@ serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
     bind s $ addrAddress ai
     return s
 
-clove :: DB -> Socket -> IO ()
-clove m s = loop
-  where
-    loop = do
-        (bs, sa) <- NSB.recvFrom s 2048
-        case decode bs of
-            Left _e -> return ()
-            Right query -> case question query of
-                [q] -> do
-                    let reply = query{flags = defaultResponseDNSFlags}
-                    let as = case M.lookup (qname q, qtype q) m of
-                            Nothing -> []
-                            Just a -> [a]
-                        bs' = encode $ reply{answer = as}
-                    void $ NSB.sendTo s bs' sa
-                _ -> return () -- fixme
-        loop
+----------------------------------------------------------------
+
+fromResource :: ZF.Record -> Maybe ResourceRecord
+fromResource (ZF.R_RR r) = Just r
+fromResource _ = Nothing
