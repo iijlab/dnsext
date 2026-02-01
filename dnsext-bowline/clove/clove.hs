@@ -44,6 +44,7 @@ clove m s = loop
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
         case decode bs of
+            -- fixme: which RFC?
             Left _e -> return ()
             Right query -> replyQuery m s sa query
         loop
@@ -70,7 +71,18 @@ replyQuery m s sa query = do
             else return $ encode $ reply{rcode = NotImpl}
     void $ NSB.sendTo s bs' sa
   where
-    reply = query{flags = defaultResponseDNSFlags}
+    flgs =
+        DNSFlags
+            { isResponse = True
+            , authAnswer = True
+            , trunCation = False
+            , -- RFC 1035 Sec 4.1.1 -- just copy
+              recDesired = recDesired $ flags query
+            , recAvailable = False
+            , authenData = False
+            , chkDisable = False
+            }
+    reply = query{flags = flgs}
 
 ----------------------------------------------------------------
 
