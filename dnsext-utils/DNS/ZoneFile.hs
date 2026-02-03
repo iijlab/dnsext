@@ -17,7 +17,7 @@ import DNS.Parser (runParser)
 import DNS.ZoneFile.IO
 import DNS.ZoneFile.Lexer hiding (Parser)
 import qualified DNS.ZoneFile.Lexer as L
-import DNS.ZoneFile.Parser hiding (Parser, parseFile, parseLineRR, runParser)
+import DNS.ZoneFile.Parser hiding (Parser, parseFile, parseFile', parseLineRR, runParser)
 import qualified DNS.ZoneFile.Parser as P
 import DNS.ZoneFile.Types
 

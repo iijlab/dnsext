@@ -335,3 +335,12 @@ parseLineRecord ts icontext = fst <$> runParser (record <* eof) icontext ts
 -- Right ([R_RR (ResourceRecord {rrname = "example.net.", rrtype = AAAA, rrclass = IN, rrttl = 7200(2 hours), rdata = 2001:db8::3})],Context "." "example.net." 7200 IN)
 parseFile :: [Token] -> Either String ([Record], Context)
 parseFile = (fst <$>) . runParser (file <* eof) defaultContext
+
+parseFile' :: Domain -> [Token] -> Either String ([Record], Context)
+parseFile' dom = (fst <$>) . runParser (file <* eof) ctx
+  where
+    ctx =
+        defaultContext
+            { cx_zone = dom
+            , cx_name = dom
+            }
