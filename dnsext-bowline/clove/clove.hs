@@ -7,7 +7,7 @@ import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
 import Data.Function (on)
-import Data.List (groupBy, sort)
+import Data.List (groupBy, nub, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes)
@@ -98,10 +98,11 @@ positiveProcess m Question{..} reply =
     reply
         { answer = ans
         , authority = auth
+        , additional = add
         }
   where
-    (ans, auth) = case M.lookup qname m of
-        Nothing -> ([], [])
+    (ans, auth, add) = case M.lookup qname m of
+        Nothing -> ([], [], [])
         Just x ->
             let ans' = case qtype of
                     A -> rrsetA x
@@ -109,7 +110,15 @@ positiveProcess m Question{..} reply =
                     NS -> rrsetNS x
                     _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
                 auth' = if null ans' && qtype /= NS then rrsetNS x else []
-             in (ans', auth')
+                ns' = nub $ sort $ catMaybes $ map extractNS auth'
+                add' = concat $ map lookupAdd ns'
+             in (ans', auth', add')
+    extractNS rr = case fromRData $ rdata rr of
+        Nothing -> Nothing
+        Just ns -> Just $ ns_domain ns
+    lookupAdd dom = case M.lookup dom m of
+        Nothing -> []
+        Just x -> rrsetA x ++ rrsetAAAA x
 
 ----------------------------------------------------------------
 
