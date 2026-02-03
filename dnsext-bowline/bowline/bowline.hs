@@ -90,9 +90,10 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
             | otherwise = do
                 let disabled _ = putStrLn "cnf_disable_v6_ns is False, but disabling, because IPv6 is not supported." $> True
                 foldAddrInfo disabled (\_ -> pure False) Datagram (Just "::") 53
-        readTrustAnchors' ps = do
+        readTrustAnchors' ps ins = do
             unless (null ps) $ putStrLn $ "loading trust-anchor-file: " ++ unwords ps
-            readTrustAnchors ps
+            unless (null ins) $ putStrLn $ "insecure domains: " ++ show ins
+            negateTrustAnchors ins <$> readTrustAnchors ps
         readRootHint' path = do
             putStrLn $ "loading root-hints: " ++ path
             readRootHint path
@@ -102,7 +103,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     --
     let rootpriv = do
             (runWriter, putDNSTAP) <- TAP.new conf putLines
-            trustAnchors <- readTrustAnchors' cnf_trust_anchor_file
+            trustAnchors <- readTrustAnchors' cnf_trust_anchor_file cnf_domain_insecures
             rootHint <- mapM readRootHint' cnf_root_hints
             let setOps = setRootHint rootHint . setRootAnchor trustAnchors . setRRCacheOps gcacheRRCacheOps . setTimeCache tcache
             chaosZones <- getIdentity conf <&> \id_ -> getChaosZones $ id_ ++ getVersion conf
