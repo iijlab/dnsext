@@ -5,9 +5,10 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as L8
 
 -- dnsext-* packages
-import DNS.Types (ResourceRecord)
+import DNS.Types (Domain, ResourceRecord)
 
 -- this package
+
 import DNS.ZoneFile.Lexer (lexLine)
 import DNS.ZoneFile.Parser (Context)
 import qualified DNS.ZoneFile.Parser as P
@@ -28,3 +29,9 @@ parseFile fn = do
     bslines <- L8.lines <$> LB.readFile fn
     tklines <- either fail pure $ mapM lexLine bslines
     either fail (pure . fst) $ P.parseFile $ T.normTokens tklines
+
+parseFile' :: FilePath -> Domain -> IO [Record]
+parseFile' fn dom = do
+    bslines <- L8.lines <$> LB.readFile fn
+    tklines <- either fail pure $ mapM lexLine bslines
+    either fail (pure . fst) $ P.parseFile' dom $ T.normTokens tklines
