@@ -212,7 +212,7 @@ main = do
         [] -> run ruid (return defaultConfig)
         a : _
             | a `elem` ["-h", "-help", "--help"] -> help
-        confFile : aargs -> run ruid (withRootConf ruid $ parseConfig confFile aargs)
+        confFile : aargs -> run ruid (withRootConf ruid $ loadConfig confFile aargs)
 
 ----------------------------------------------------------------
 
