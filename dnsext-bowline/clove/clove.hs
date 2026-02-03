@@ -70,17 +70,9 @@ processQuery zone m query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
     | otherwise = case question query of
-        [Question{..}]
-            | not (qname `isSubDomainOf` zone) -> reply{rcode = Refused}
-            | otherwise ->
-                let as = case M.lookup qname m of
-                        Nothing -> []
-                        Just x -> case qtype of
-                            A -> rrsetA x
-                            AAAA -> rrsetAAAA x
-                            NS -> rrsetNS x
-                            _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
-                 in reply{answer = as}
+        [q]
+            | not (qname q `isSubDomainOf` zone) -> reply{rcode = Refused}
+            | otherwise -> positiveProcess m q reply
         -- RFC 9619: "In the DNS, QDCOUNT Is (Usually) One"
         _ -> reply{rcode = FormatErr}
   where
@@ -100,6 +92,24 @@ processQuery zone m query
             , chkDisable = False
             }
     reply = query{flags = flgs, ednsHeader = ednsH}
+
+positiveProcess :: DB -> Question -> DNSMessage -> DNSMessage
+positiveProcess m Question{..} reply =
+    reply
+        { answer = ans
+        , authority = auth
+        }
+  where
+    (ans, auth) = case M.lookup qname m of
+        Nothing -> ([], [])
+        Just x ->
+            let ans' = case qtype of
+                    A -> rrsetA x
+                    AAAA -> rrsetAAAA x
+                    NS -> rrsetNS x
+                    _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
+                auth' = if null ans' && qtype /= NS then rrsetNS x else []
+             in (ans', auth')
 
 ----------------------------------------------------------------
 
