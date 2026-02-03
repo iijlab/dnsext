@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Parsers for Mighty
-module Parser (
+module DNS.Config.Parser (
     -- * Utilities
     parseFile,
     parseString,
