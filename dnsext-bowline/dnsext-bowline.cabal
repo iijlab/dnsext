@@ -34,7 +34,6 @@ executable bowline
         Config
         DNSTAP
         Monitor
-        Parser
         Prometheus
         SockOpt
         SocketUtil
