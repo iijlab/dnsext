@@ -713,6 +713,11 @@ data ResourceRecord = ResourceRecord
     deriving (Eq, Show)
 {- FOURMOLU_ENABLE -}
 
+instance Ord ResourceRecord where
+    r1 <= r2 =
+        rrname r1 < rrname r2
+            || (rrname r1 == rrname r2 && rrtype r1 <= rrtype r2)
+
 resourceRecordSize :: ResourceRecord -> Int
 resourceRecordSize ResourceRecord{..} = domainSize rrname + 10 + rdataSize rdata
 
