@@ -421,13 +421,13 @@ rootPriming =
                 (axRRs, cacheAX) = withSection Cache.rankedAdditional msgNS $ \rrs rank ->
                     (axList False (`Set.member` nsSet) (\_ rr -> rr) rrs, cacheSection axRRs rank)
                 result "."  ents
-                    | not $ rrsetValid nsRRset = do
-                          logK {- Call action for logging error info. -}
-                          logResult ents Red "verification failed - RRSIG of NS: \".\"" $> left "DNSSEC verification failed"
-                    | otherwise                = do
+                    | rrsetValid nsRRset       = do
                           logK *> cacheK *> cacheAX
                           logResult ents Green "verification success - RRSIG of NS: \".\""
-                          pure $ Right $ hint{delegationNS = ents, delegationFresh = FreshD}
+                          pure $ Right hint{delegationNS = ents, delegationFresh = FreshD}
+                    | otherwise                = do
+                          logK {- Call action for logging error info. -}
+                          logResult ents Red "verification failed - RRSIG of NS: \".\"" $> left "DNSSEC verification failed"
                 result apex _ents = pure $ left $ "inconsistent zone apex: " ++ show apex ++ ", not \".\""
             fromMaybe (pure $ left "no delegation") $ findDelegation' result nsps axRRs
       where
