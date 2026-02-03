@@ -10,31 +10,33 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:
         DNS.Array
+        DNS.Config
         DNS.Log
         DNS.Parser
+        DNS.RRCache
         DNS.TAP.FastStream
         DNS.TAP.ProtocolBuffer
         DNS.TAP.Schema
         DNS.ThreadAsync
         DNS.ThreadStats
         DNS.TimeCache
-        DNS.RRCache
         DNS.ZoneFile
 
     other-modules:
-        DNS.Utils.AutoUpdate
+        DNS.Config.Parser
+        DNS.Parser.Class
+        DNS.Parser.State
         DNS.RRCache.Managed
         DNS.RRCache.ReaperReduced
         DNS.RRCache.Types
-        DNS.Parser.Class
-        DNS.Parser.State
-        DNS.ZoneFile.Types
+        DNS.Utils.AutoUpdate
+        DNS.ZoneFile.IO
         DNS.ZoneFile.Lexer
+        DNS.ZoneFile.Parser
         DNS.ZoneFile.ParserBase
         DNS.ZoneFile.ParserDNSSEC
         DNS.ZoneFile.ParserSVCB
-        DNS.ZoneFile.Parser
-        DNS.ZoneFile.IO
+        DNS.ZoneFile.Types
 
     default-language: Haskell2010
     ghc-options:      -Wall
@@ -54,8 +56,10 @@ library
         network-byte-order,
         psqueues,
         recv,
+        split,
         stm,
         transformers,
+        unix,
         unix-time,
         word8
 
