@@ -425,12 +425,17 @@ rootPriming =
                           logK *> cacheK *> cacheAX
                           logResult ents Green "verification success - RRSIG of NS: \".\""
                           pure $ Right hint{delegationNS = ents, delegationFresh = FreshD}
+                    | FilledDS [] <- anchor    = do
+                          logK *> cacheK *> cacheAX
+                          logResult ents Yellow "trust anchor disabled, no verification"
+                          pure $ Right hint{delegationNS = ents, delegationFresh = FreshD}
                     | otherwise                = do
                           logK {- Call action for logging error info. -}
                           logResult ents Red "verification failed - RRSIG of NS: \".\"" $> left "DNSSEC verification failed"
                 result apex _ents = pure $ left $ "inconsistent zone apex: " ++ show apex ++ ", not \".\""
             fromMaybe (pure $ left "no delegation") $ findDelegation' result nsps axRRs
       where
+        anchor = delegationDS hint
         dnskeys = delegationDNSKEY hint
 
     getHint = do
