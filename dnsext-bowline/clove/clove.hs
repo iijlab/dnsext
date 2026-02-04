@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
@@ -14,6 +15,7 @@ import Data.Maybe (catMaybes)
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
+import System.Exit
 
 import DNS.Types
 import DNS.Types.Decode
@@ -39,12 +41,16 @@ main = do
     Config{..} <- loadConfig conffile
     let zone = fromRepresentation cnf_zone_name
     rrs <- catMaybes . map fromResource <$> ZF.parseFile' cnf_zone_file zone
+    soa <- case rrs of
+        soa' : _ -> case fromRData $ rdata soa' of
+            Just (_ :: RD_SOA) -> return soa'
+            Nothing -> die "SOA does not exit (1)"
+        _ -> die "SOA does not exit (2)"
     let gs = groupBy ((==) `on` rrname) $ sort rrs
-        ks = map (rrname . head) gs
+        ks = map (rrname . unsafeHead) gs
         vs = map makeRRsets gs
         -- RFC 1035 Sec 5.2
         -- Exactly one SOA RR should be present at the top of the zone.
-        soa = head rrs -- checkme
         kvs = zip ks vs
         m = M.fromList kvs
         db =
@@ -55,6 +61,10 @@ main = do
     ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
     ss <- mapM serverSocket ais
     mapConcurrently_ (clove zone db) ss
+
+unsafeHead :: [a] -> a
+unsafeHead (x : _) = x
+unsafeHead _ = error "unsafeHead"
 
 ----------------------------------------------------------------
 
