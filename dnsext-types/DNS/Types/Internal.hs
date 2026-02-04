@@ -12,6 +12,7 @@ module DNS.Types.Internal (
 
     -- * Misc
     section,
+    defaultQuestion,
 
     -- * Extension
     extendRR,

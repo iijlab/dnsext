@@ -128,7 +128,7 @@ querySpec disableV6NS putLines = describe "query" $ do
         getReply n0 ty ident = do
             let n = fromString n0
                 q = Question n ty DNS.IN
-            foldResponseIterative' Left (\_ -> Right) cxt ident [q] q mempty
+            foldResponseIterative' Left (\_ -> Right) cxt ident q q mempty
 
     let failLeft p = either (fail . ((p ++ ": ") ++) . show) pure
         printQueryError :: Show e => Either e a -> IO ()

@@ -59,9 +59,7 @@ pprMessage title DNSMessage{..} =
       , "edns-header: " ++ show ednsHeader
       ]
       ++
-      [ "question:" ]
-      ++
-      map (("  " ++) . show) question
+      [ "question:", "  ", show question]
       ++
       [ "answer:" ]
       ++

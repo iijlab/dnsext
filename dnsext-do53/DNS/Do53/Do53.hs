@@ -42,10 +42,7 @@ checkResp q seqno = isNothing . checkRespM q seqno
 checkRespM :: Question -> Identifier -> DNSMessage -> Maybe DNSError
 checkRespM q seqno resp
     | identifier resp /= seqno = Just SequenceNumberMismatch
-    | FormatErr <- rcode resp
-    , [] <- question resp =
-        Nothing
-    | [q] /= question resp = Just QuestionMismatch
+    | q /= question resp = Just QuestionMismatch
     | otherwise = Nothing
 
 ----------------------------------------------------------------

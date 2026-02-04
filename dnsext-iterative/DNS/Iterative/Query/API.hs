@@ -37,15 +37,15 @@ foldResponseIterative deny reply env@Env{..} reqM@DNSMessage{..} =
 
 -- | Folding a response corresponding to a query, from questions and control flags. The cache is maybe updated.
 foldResponseIterative'
-    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> [Question] -> Question -> QueryControls -> IO a
+    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> Question -> Question -> QueryControls -> IO a
 foldResponseIterative' deny reply env@Env{..} ident qs q =
     queryControls' $ \fl eh -> foldResponse' "resp-queried'" deny reply env ident qs q fl eh (resolveStub reply nsid_ ident qs eh)
 
-resolveStub :: MonadQuery m => (VResult -> DNSMessage -> a) -> Maybe OD_NSID -> Identifier -> [Question] -> EDNSheader -> m a
-resolveStub reply nsid ident qs eh = do
+resolveStub :: MonadQuery m => (VResult -> DNSMessage -> a) -> Maybe OD_NSID -> Identifier -> Question -> EDNSheader -> m a
+resolveStub reply nsid ident q eh = do
     ((cnrrs, _rn), etm) <- resolve =<< asksQP origQuestion_
     reqDO <- asksQP requestDO_
-    let result rc vans vauth = replyMessage reqDO cnrrs rc vans vauth ident qs eh nsid reply
+    let result rc vans vauth = replyMessage reqDO cnrrs rc vans vauth ident q eh nsid reply
     pure $ either (\(rc, vans, vauth) -> result rc vans vauth) (\(msg, vans, vauth) -> result (rcode msg) vans vauth) etm
 
 -- | Folding a response corresponding to a query from the cache.
@@ -59,39 +59,38 @@ foldResponseCached misshit deny reply env@Env{..} reqM@DNSMessage{..} = foldResp
 {- FOURMOLU_DISABLE -}
 replyMessage
     :: RequestDO -> [RRset] -> RCODE -> [RRset] -> [RRset]
-    -> Identifier -> [Question] -> EDNSheader -> Maybe OD_NSID -> (VResult -> DNSMessage -> a) -> a
-replyMessage reqDO cnrrs rc vans vauth ident qs eh nsid k = withResolvedRRs reqDO (cnrrs ++ vans) vauth withDO
+    -> Identifier -> Question -> EDNSheader -> Maybe OD_NSID -> (VResult -> DNSMessage -> a) -> a
+replyMessage reqDO cnrrs rc vans vauth ident q eh nsid k = withResolvedRRs reqDO (cnrrs ++ vans) vauth withDO
   where
     withDO vres fs ans auth = k vres $ filterWithDO reqDO (h fs) ans auth
-    h fs ans auth = replyDNSMessage eh nsid ident qs rc fs ans auth
+    h fs ans auth = replyDNSMessage eh nsid ident q rc fs ans auth
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
 foldResponse
     :: String -> (String -> a) -> (VResult -> DNSMessage -> a)
     -> Env -> DNSMessage -> DNSQuery a -> IO a
-foldResponse name deny reply env@Env{..} reqM@DNSMessage{question=qs,identifier=ident,flags=reqF,ednsHeader=reqEH} qaction =
+foldResponse name deny reply env@Env{..} reqM@DNSMessage{question=q0@(Question bn typ cls),identifier=ident,flags=reqF,ednsHeader=reqEH} qaction =
     handleRequest env prefix reqM (pure . deny) ereply  result
   where
-    ereply rc = pure $ reply VR_Insecure $ replyDNSMessage reqEH nsid_ ident qs rc resFlags [] []
-    result q = foldResponse' name deny reply env ident qs q reqF reqEH qaction
-    prefix = concat pws
-    pws = [name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": " | Question bn typ cls <- take 1 qs]
+    ereply rc = pure $ reply VR_Insecure $ replyDNSMessage reqEH nsid_ ident q0 rc resFlags [] []
+    result q = foldResponse' name deny reply env ident q0 q reqF reqEH qaction
+    prefix = name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": "
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
 foldResponse'
     :: String -> (String -> a) -> (VResult -> DNSMessage -> a)
-    -> Env -> Identifier -> [Question] -> Question -> DNSFlags -> EDNSheader -> DNSQuery a -> IO a
-foldResponse' name deny reply env@Env{..} ident qs q@(Question bn typ cls) reqF reqEH qaction  =
+    -> Env -> Identifier -> Question -> Question -> DNSFlags -> EDNSheader -> DNSQuery a -> IO a
+foldResponse' name deny reply env@Env{..} ident q0 q@(Question bn typ cls) reqF reqEH qaction  =
     takeLocalResult env q (pure $ deny "local-zone: query-denied") query (pure . local)
   where
     query = either eresult pure =<< runDNSQuery (logQueryErrors prefix qaction) env qparam
-    eresult = queryErrorReply reqEH nsid_ ident qs (pure . deny) ereplace
+    eresult = queryErrorReply reqEH nsid_ ident q0 (pure . deny) ereplace
     {- replace response-code only when query, not replace for request-error or local-result -}
     ereplace vr resM = replaceRCODE env "query-error" (rcode resM) <&> \rc1 -> reply vr resM{rcode = rc1}
     local (rc, vans, vauth) = withResolvedRRs (requestDO_ qparam) vans vauth h
-      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident qs rc fs ans
+      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident q0 rc fs ans
     qparam = queryParamH q reqF reqEH
     prefix = name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": "
 {- FOURMOLU_ENABLE -}
@@ -127,13 +126,12 @@ logQueryErrors prefix q = do
 
 {- FOURMOLU_DISABLE -}
 handleRequest :: Env -> String -> DNSMessage -> (String -> IO a) -> (RCODE -> IO a) -> (Question -> IO a) -> IO a
-handleRequest env prefix DNSMessage{flags = reqF,ednsHeader=reqEH,question=qs} deny ereply h
+handleRequest env prefix DNSMessage{flags = reqF,ednsHeader=reqEH,question=q} _deny ereply h
     | reqEH == DNS.InvalidEDNS   = ereply' DNS.ServFail   "InvalidEDNS"
     | not (DNS.recDesired reqF)  = ereply' DNS.Refused    "RD flag required"
-    | otherwise                  = list (deny' "empty question") (\q _ -> h q) qs
+    | otherwise                  = h q
   where
     ereply' rc s = elog s >> ereply rc
-    deny' s = elog s >> deny s
     elog s = logLines_ env Log.INFO Nothing ["request error: " ++ prefix ++ s]
 {- FOURMOLU_ENABLE -}
 
@@ -150,23 +148,23 @@ replaceRCODE env tag rc0 = unless (rc0 == rc1) putLog $> rc1
 {- FOURMOLU_DISABLE -}
 queryErrorReply
     :: EDNSheader -> Maybe OD_NSID
-    -> Identifier -> [Question]
+    -> Identifier -> Question
     -> (String -> a) -> (VResult -> DNSMessage -> a) -> QueryError -> a
-queryErrorReply reqEH nsid ident rqs left right qe = case qe of
+queryErrorReply reqEH nsid ident rq left right qe = case qe of
     DnsError e _       -> dnsError e
     ExtraError ee _ _  -> extraError (insec srvFail) (\_ -> insec srvFail) (insec . message) (\_ -> right VR_Bogus srvFail) ee
   where
     dnsError e = foldDNSErrorToRCODE (left $ "DNSError: " ++ show e) (insec . message) e
     insec = right VR_Insecure
     srvFail = message ServFail
-    message rc = replyDNSMessage reqEH nsid ident rqs rc resFlags [] []
+    message rc = replyDNSMessage reqEH nsid ident rq rc resFlags [] []
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
 replyDNSMessage
     :: EDNSheader -> Maybe OD_NSID
-    -> Identifier -> [Question] -> RCODE -> DNSFlags -> [RR] -> [RR] -> DNSMessage
-replyDNSMessage reqEH nsid ident rqs rcode flags rrs auth =
+    -> Identifier -> Question -> RCODE -> DNSFlags -> [RR] -> [RR] -> DNSMessage
+replyDNSMessage reqEH nsid ident rq rcode flags rrs auth =
     ednsHeaderCases (withRequestEDNS nsid res) res res reqEH
   where
     res = DNS.defaultResponse
@@ -175,7 +173,7 @@ replyDNSMessage reqEH nsid ident rqs rcode flags rrs auth =
           , DNS.flags = flags
           , DNS.answer = rrs
           , DNS.authority = auth
-          , DNS.question = rqs
+          , DNS.question = rq
           }
 
 withRequestEDNS :: Maybe OD_NSID -> DNSMessage -> EDNS -> DNSMessage

@@ -28,19 +28,18 @@ showJSON msg@DNSMessage{..} = toString $ object (hd ++ q ++ [an, au, ad])
         , ("CD", pretty $ fromBool chkDisable)
         , ("RCode", pretty $ fromRCODE rcode)
         , ("comment", string rcode)
-        , ("QDCOUNT", pretty $ length question)
+        , ("QDCOUNT", pretty (1 :: Int))
         , ("ANCOUNT", pretty $ length answer)
         , ("NSCOUNT", pretty $ length authority)
         , ("ARCOUNT", pretty $ arCountEDNS msg)
         ]
-    q = case question of
-        [] -> []
-        (Question{..} : _) ->
-            [ ("QNAME", domain qname)
-            , ("QTYPE", pretty $ fromTYPE qtype)
-            , ("QTYPEname", string qtype)
-            , ("QCLASS", pretty $ fromCLASS qclass)
-            ]
+    Question{..} = question
+    q =
+        [ ("QNAME", domain qname)
+        , ("QTYPE", pretty $ fromTYPE qtype)
+        , ("QTYPEname", string qtype)
+        , ("QCLASS", pretty $ fromCLASS qclass)
+        ]
     an = rrs "answerRRs" answer
     au = rrs "authorityRRs" authority
     ad = rrs "additionalRRs" additional

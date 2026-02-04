@@ -257,18 +257,17 @@ worker Op{..} contvar resolver = do
             Just x -> go tid x >> loop tid
     go tid (bs, sa) = case decode bs of
         Left _ -> putLog "Decode error\n"
-        Right msg -> case question msg of
-            [] -> putLog "No questions\n"
-            qry : _ -> do
-                putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
-                let idnt = identifier msg
-                erep <- resolver qry mempty
-                case erep of
-                    Left e -> putLog $ toLogStr $ tid ++ " E: " ++ show e ++ "\n"
-                    Right rep -> do
-                        let msg' = (replyDNSMessage rep){identifier = idnt}
-                        putLog $ toLogStr $ tid ++ " R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
-                        void $ send (encode msg', sa)
+        Right msg -> do
+            let qry = question msg
+            putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
+            let idnt = identifier msg
+            erep <- resolver qry mempty
+            case erep of
+                Left e -> putLog $ toLogStr $ tid ++ " E: " ++ show e ++ "\n"
+                Right rep -> do
+                    let msg' = (replyDNSMessage rep){identifier = idnt}
+                    putLog $ toLogStr $ tid ++ " R: " ++ intercalate "\n   " (map pprRR (answer msg')) ++ "\n"
+                    void $ send (encode msg', sa)
 
 mainLoop :: Options -> Op (ByteString, SockAddr) -> LookupEnv -> IO ()
 mainLoop opts op@Op{..} env = loop

@@ -220,7 +220,7 @@ benchQueries =
     setId mid qm = qm{DNS.identifier = mid}
     rootAs =
         [ DNS.defaultQuery
-            { DNS.question = [DNS.Question (fromString name) DNS.A DNS.IN]
+            { DNS.question = DNS.Question (fromString name) DNS.A DNS.IN
             }
         | c1 <- ["a", "b", "c", "d"]
         , let name = c1 ++ ".root-servers.net."

@@ -43,14 +43,14 @@ testQueryA :: DNSMessage
 testQueryA =
     defaultQuery
         { identifier = 1000
-        , question = [Question "www.mew.org." A IN]
+        , question = Question "www.mew.org." A IN
         }
 
 testQueryAAAA :: DNSMessage
 testQueryAAAA =
     defaultQuery
         { identifier = 1001
-        , question = [Question "www.mew.org." AAAA IN]
+        , question = Question "www.mew.org." AAAA IN
         }
 
 testResponseA :: DNSMessage
@@ -71,12 +71,11 @@ testResponseA =
                 }
         , ednsHeader = NoEDNS
         , question =
-            [ Question
+            Question
                 { qname = "492056364.qzone.qq.com."
                 , qtype = A
                 , qclass = IN
                 }
-            ]
         , answer =
             [ ResourceRecord
                 "492056364.qzone.qq.com."
@@ -177,12 +176,11 @@ testResponseTXT =
                 }
         , ednsHeader = EDNSheader defaultEDNS
         , question =
-            [ Question
+            Question
                 { qname = "492056364.qzone.qq.com."
                 , qtype = TXT
                 , qclass = IN
                 }
-            ]
         , answer =
             [ ResourceRecord
                 "492056364.qzone.qq.com."
