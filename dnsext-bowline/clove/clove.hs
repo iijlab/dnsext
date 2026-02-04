@@ -92,13 +92,10 @@ guardNegative :: Domain -> DB -> DNSMessage -> DNSMessage
 guardNegative zone m query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
-    | otherwise = case question query of
-        [q]
-            | not (check $ qname q) -> reply{rcode = Refused}
-            | otherwise -> processPositive m q check reply
-        -- RFC 9619: "In the DNS, QDCOUNT Is (Usually) One"
-        _ -> reply{rcode = FormatErr}
+    | not (check $ qname q) = reply{rcode = Refused}
+    | otherwise = processPositive m q check reply
   where
+    q = question query
     check = (`isSubDomainOf` zone)
     -- RFC 6891: Sec 6.1.1
     ednsH = case ednsHeader query of
