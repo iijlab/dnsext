@@ -24,7 +24,12 @@ import Config
 
 ----------------------------------------------------------------
 
-type DB = M.Map Domain RRsets
+data DB = DB
+    { dbSOA :: ResourceRecord
+    , dbMap :: M.Map Domain RRsets
+    }
+
+-- type DB = M.Map Domain RRsets
 
 ----------------------------------------------------------------
 
@@ -37,42 +42,50 @@ main = do
     let gs = groupBy ((==) `on` rrname) $ sort rrs
         ks = map (rrname . head) gs
         vs = map makeRRsets gs
-    let kvs = zip ks vs
+        -- RFC 1035 Sec 5.2
+        -- Exactly one SOA RR should be present at the top of the zone.
+        soa = head rrs -- checkme
+        kvs = zip ks vs
         m = M.fromList kvs
+        db =
+            DB
+                { dbSOA = soa
+                , dbMap = m
+                }
     ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
     ss <- mapM serverSocket ais
-    mapConcurrently_ (clove zone m) ss
+    mapConcurrently_ (clove zone db) ss
 
 ----------------------------------------------------------------
 
 clove :: Domain -> DB -> Socket -> IO ()
-clove zone m s = loop
+clove zone db s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
         case decode bs of
             -- fixme: which RFC?
             Left _e -> return ()
-            Right query -> replyQuery zone m s sa query
+            Right query -> replyQuery zone db s sa query
         loop
 
 replyQuery :: Domain -> DB -> Socket -> SockAddr -> DNSMessage -> IO ()
 replyQuery zone m s sa query = void $ NSB.sendTo s bs sa
   where
-    bs = encode $ processQuery zone m query
+    bs = encode $ guardNegative zone m query
 
 -- RFC 8906: Sec 3.1.3.1
 --
 -- A non-recursive server is supposed to respond to recursive
 -- queries as if the Recursion Desired (RD) bit is not set
-processQuery :: Domain -> DB -> DNSMessage -> DNSMessage
-processQuery zone m query
+guardNegative :: Domain -> DB -> DNSMessage -> DNSMessage
+guardNegative zone m query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
     | otherwise = case question query of
         [q]
             | not (qname q `isSubDomainOf` zone) -> reply{rcode = Refused}
-            | otherwise -> positiveProcess m q reply
+            | otherwise -> processPositive m q reply
         -- RFC 9619: "In the DNS, QDCOUNT Is (Usually) One"
         _ -> reply{rcode = FormatErr}
   where
@@ -87,22 +100,24 @@ processQuery zone m query
             , trunCation = False
             , -- RFC 1035 Sec 4.1.1 -- just copy
               recDesired = recDesired $ flags query
-            , recAvailable = False
+            , -- RFC 1034 Sec 4.3.1
+              recAvailable = False
             , authenData = False
             , chkDisable = False
             }
     reply = query{flags = flgs, ednsHeader = ednsH}
 
-positiveProcess :: DB -> Question -> DNSMessage -> DNSMessage
-positiveProcess m Question{..} reply =
+processPositive :: DB -> Question -> DNSMessage -> DNSMessage
+processPositive DB{..} Question{..} reply =
     reply
         { answer = ans
         , authority = auth
         , additional = add
+        , rcode = code
         }
   where
-    (ans, auth, add) = case M.lookup qname m of
-        Nothing -> ([], [], [])
+    (ans, auth, add, code) = case M.lookup qname dbMap of
+        Nothing -> ([], [dbSOA], [], NXDomain)
         Just x ->
             let ans' = case qtype of
                     A -> rrsetA x
@@ -112,11 +127,11 @@ positiveProcess m Question{..} reply =
                 auth' = if null ans' && qtype /= NS then rrsetNS x else []
                 ns' = nub $ sort $ catMaybes $ map extractNS auth'
                 add' = concat $ map lookupAdd ns'
-             in (ans', auth', add')
+             in (ans', auth', add', NoErr)
     extractNS rr = case fromRData $ rdata rr of
         Nothing -> Nothing
         Just ns -> Just $ ns_domain ns
-    lookupAdd dom = case M.lookup dom m of
+    lookupAdd dom = case M.lookup dom dbMap of
         Nothing -> []
         Just x -> rrsetA x ++ rrsetAAAA x
 
