@@ -137,7 +137,11 @@ processPositive DB{..} Question{..} reply =
                 auth' = if null ans' && qtype /= NS then rrsetNS x else []
                 ns' = nub $ sort $ catMaybes $ map extractNS auth'
                 add' = concat $ map lookupAdd ns'
-             in (ans', auth', add', NoErr)
+             in if null ans' && null auth' && null add'
+                    then
+                        ([], [dbSOA], [], NoErr)
+                    else
+                        (ans', auth', add', NoErr)
     extractNS rr = case fromRData $ rdata rr of
         Nothing -> Nothing
         Just ns -> Just $ ns_domain ns
