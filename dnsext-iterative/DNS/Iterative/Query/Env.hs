@@ -24,6 +24,7 @@ module DNS.Iterative.Query.Env (
     getChaosZones,
     getLocalZones,
     getStubZones,
+    negateTrustAnchors,
     getNegTrustAnchors,
     --
     LocalZoneType (..),
@@ -343,6 +344,9 @@ getStubZones zones anchors = either fail pure $ Stub.getStubMap zones'
 {- FOURMOLU_ENABLE -}
 
 ---
+
+negateTrustAnchors :: [Domain] -> TrustAnchors -> TrustAnchors
+negateTrustAnchors xs as = foldr Map.delete as xs
 
 getNegTrustAnchors :: [Domain] -> NegTrustAnchors
 getNegTrustAnchors xs = Map.fromList $ ZMap.subdomainSemilatticeOn id xs
