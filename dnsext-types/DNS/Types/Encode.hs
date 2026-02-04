@@ -27,7 +27,7 @@ encode msg@DNSMessage{..} = runBuilder siz $ putDNSMessage msg
     siz =
         16
             + mapEDNS ednsHeader ednsSize 0
-            + sum (map qsiz question)
+            + qsiz question
             + sum (map resourceRecordSize answer)
             + sum (map resourceRecordSize authority)
             + sum (map resourceRecordSize additional)

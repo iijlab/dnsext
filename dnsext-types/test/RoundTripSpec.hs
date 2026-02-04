@@ -25,6 +25,7 @@ import Test.QuickCheck (
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
+import DNS.Types.Internal
 import qualified DNS.Types.Opaque as Opaque
 
 spec :: Spec
@@ -72,7 +73,7 @@ spec = do
     prop "EDNS" . forAll genEDNSHeader $ \(edns, (fl, op, rc)) -> do
         let eh = EDNSheader edns
             m =
-                fromRight (error "prop EDNS") $ decode $ encode $ DNSMessage 1 op rc fl eh [] [] [] []
+                fromRight (error "prop EDNS") $ decode $ encode $ DNSMessage 1 op rc fl eh defaultQuestion [] [] []
         ednsHeader m `shouldBe` eh
 
 ----------------------------------------------------------------
@@ -85,7 +86,7 @@ genDNSMessage = do
         <*> genRCODE 0x0f
         <*> genDNSFlags
         <*> makeEDNS
-        <*> listOf genQuestion
+        <*> genQuestion
         <*> listOf genResourceRecord
         <*> listOf genResourceRecord
         <*> listOf genResourceRecord

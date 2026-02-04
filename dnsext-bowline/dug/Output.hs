@@ -69,7 +69,7 @@ result DNSMessage{..} = do
     putHeader (identifier, opcode, rcode, flags)
     nl
     putEDNSHeader ednsHeader
-    putQS question
+    putQ question
     putRRS answers answer
     putRRS authoritys authority
     putRRS additionals additional
@@ -126,11 +126,11 @@ putEDNSHeader _ = pure ()
 
 ----------------------------------------------------------------
 
-putQS :: [Question] -> Print ()
-putQS qs = do
+putQ :: Question -> Print ()
+putQ q = do
     nl
     dsemi *> sp *> string "QUESTION SECTION:" *> nl
-    mapM_ qq qs
+    qq q
 
 qq :: Printer Question
 qq Question{..} = do

@@ -108,7 +108,7 @@ data DNSMessage = DNSMessage
     -- ^ Flags
     , ednsHeader :: EDNSheader
     -- ^ EDNS pseudo-header
-    , question   :: [Question]
+    , question   :: Question
     -- ^ The question for the name server
     , answer     :: Answers
     -- ^ RRs answering the question
@@ -134,7 +134,7 @@ putDNSMessage DNSMessage{..} wbuf ref = do
     putIdentifier wbuf identifier
     putDNSFlags (flags, opcode, rcode') wbuf ref
     putNums
-    mapM_ putQ question
+    putQ question
     mapM_ putRR answer
     mapM_ putRR authority
     mapM_ putRR ad
@@ -143,7 +143,7 @@ putDNSMessage DNSMessage{..} wbuf ref = do
     putNums =
         mapM_
             (putInt16 wbuf)
-            [ length question
+            [ 1
             , length answer
             , length authority
             , length ad
@@ -179,10 +179,11 @@ getDNSMessage rbuf ref = do
     identifier <- getIdentifier rbuf
     (flags, opcode, rc0) <- getDNSFlags rbuf ref
     qdCount <- getInt16 rbuf
+    unless (qdCount == 1) $ fail "FormErr"
     anCount <- getInt16 rbuf
     nsCount <- getInt16 rbuf
     arCount <- getInt16 rbuf
-    question   <- getQuestions qdCount rbuf ref
+    question   <- getQuestion rbuf ref
     answer     <- getResourceRecords anCount rbuf ref
     authority  <- getResourceRecords nsCount rbuf ref
     addnrrs    <- getResourceRecords arCount rbuf ref
@@ -238,7 +239,7 @@ minUdpSize = 512
 -- the message 'DNSHeader' and 'EDNSheader'.
 --
 -- >>> defaultQuery
--- DNSMessage {identifier = 0, opcode = OP_STD, rcode = NoError, flags = DNSFlags {isResponse = False, authAnswer = False, trunCation = False, recDesired = True, recAvailable = False, authenData = False, chkDisable = False}, ednsHeader = EDNSheader (EDNS {ednsVersion = 0, ednsUdpSize = 1232, ednsDnssecOk = False, ednsOptions = []}), question = [], answer = [], authority = [], additional = []}
+-- DNSMessage {identifier = 0, opcode = OP_STD, rcode = NoError, flags = DNSFlags {isResponse = False, authAnswer = False, trunCation = False, recDesired = True, recAvailable = False, authenData = False, chkDisable = False}, ednsHeader = EDNSheader (EDNS {ednsVersion = 0, ednsUdpSize = 1232, ednsDnssecOk = False, ednsOptions = []}), question = Question {qname = ".", qtype = A, qclass = IN}, answer = [], authority = [], additional = []}
 defaultQuery :: DNSMessage
 defaultQuery =
     DNSMessage
@@ -247,7 +248,7 @@ defaultQuery =
         , rcode = NoErr
         , flags = defaultQueryDNSFlags
         , ednsHeader = EDNSheader defaultEDNS
-        , question = []
+        , question = defaultQuestion
         , answer = []
         , authority = []
         , additional = []
@@ -264,7 +265,7 @@ makeQuery
 makeQuery idt q =
     defaultQuery
         { identifier = idt
-        , question = [q]
+        , question = q
         }
 
 -- | Default response.  When responding to EDNS queries, the response must
@@ -281,7 +282,7 @@ makeQuery idt q =
 -- EDNS OPT record).  See 'EDNSheader' for more details.
 --
 -- >>> defaultResponse
--- DNSMessage {identifier = 0, opcode = OP_STD, rcode = NoError, flags = DNSFlags {isResponse = True, authAnswer = True, trunCation = False, recDesired = True, recAvailable = True, authenData = False, chkDisable = False}, ednsHeader = NoEDNS, question = [], answer = [], authority = [], additional = []}
+-- DNSMessage {identifier = 0, opcode = OP_STD, rcode = NoError, flags = DNSFlags {isResponse = True, authAnswer = True, trunCation = False, recDesired = True, recAvailable = True, authenData = False, chkDisable = False}, ednsHeader = NoEDNS, question = Question {qname = ".", qtype = A, qclass = IN}, answer = [], authority = [], additional = []}
 defaultResponse :: DNSMessage
 defaultResponse =
     DNSMessage
@@ -290,7 +291,7 @@ defaultResponse =
         , rcode = NoErr
         , flags = defaultResponseDNSFlags
         , ednsHeader = NoEDNS
-        , question = []
+        , question = defaultQuestion
         , answer = []
         , authority = []
         , additional = []
@@ -305,7 +306,7 @@ makeResponse
 makeResponse idt q as =
     defaultResponse
         { identifier = idt
-        , question = [q]
+        , question = q
         , answer = as
         }
 
@@ -636,14 +637,19 @@ data Question = Question
     deriving (Eq, Ord, Show)
 {- FOURMOLU_ENABLE -}
 
+defaultQuestion :: Question
+defaultQuestion =
+    Question
+        { qname = "."
+        , qtype = A
+        , qclass = IN
+        }
+
 putQuestion :: CanonicalFlag -> Question -> Builder ()
 putQuestion cf Question{..} wbuf ref = do
     putDomainRFC1035 cf qname wbuf ref
     put16 wbuf $ fromTYPE qtype
     putCLASS qclass wbuf ref
-
-getQuestions :: Int -> Parser [Question]
-getQuestions n rbuf ref = replicateM n $ getQuestion rbuf ref
 
 {- FOURMOLU_DISABLE -}
 getQuestion :: Parser Question

@@ -290,10 +290,10 @@ cacheSectionNegative zone dnskeys dom typ getRanked msg nws = do
             plogLines Log.WARN $ map ("\t" ++) (("SOA records in authority section:" :) $ map show soas)
       where
         key = showQ' "key" dom typ
-        query = [showQ "query" q | q <- take 1 (question msg)]
+        query = showQ "query" $ question msg
         plogLines lv xs = do
             orig <- showQ "orig-query" <$> asksQP origQuestion_
-            let context = intercalate ", " $ [key] ++ query ++ [orig] ++ ["zone " ++ show zone]
+            let context = intercalate ", " $ [key] ++ [query] ++ [orig] ++ ["zone " ++ show zone]
             logLines lv $ ("cacheSectionNegative: " ++ s ++ ": " ++ context ++ ":") : xs
         answer = DNS.answer msg
         soas = filter ((== SOA) . rrtype) $ DNS.authority msg

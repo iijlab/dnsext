@@ -279,9 +279,7 @@ record env Input{..} reply rspWire = do
         \s us -> applyProtoDNSTAP inputDoX $ \proto httpProto ->
             DNSTAP.composeMessage proto inputMysa peersa s (fromIntegral us * 1000) rspWire httpProto
     let st = stats_ env
-        Question{..} = case question inputQuery of
-          [] -> error "record"
-          q:_ -> q
+        Question{..} = question inputQuery
         DNSFlags{..} = flags reply
     case ednsHeader inputQuery of
         EDNSheader (EDNS{..})
