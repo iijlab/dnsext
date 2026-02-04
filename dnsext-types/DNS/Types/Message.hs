@@ -4,11 +4,13 @@
 
 module DNS.Types.Message where
 
+import qualified Control.Exception as E
 import Control.Monad.State.Strict (State)
 import qualified Control.Monad.State.Strict as ST
 
 import DNS.Types.Dict
 import DNS.Types.Domain
+import DNS.Types.Error (DNSError (DecodeError))
 import DNS.Types.EDNS
 import DNS.Types.Imports
 import DNS.Types.RData
@@ -179,7 +181,7 @@ getDNSMessage rbuf ref = do
     identifier <- getIdentifier rbuf
     (flags, opcode, rc0) <- getDNSFlags rbuf ref
     qdCount <- getInt16 rbuf
-    unless (qdCount == 1) $ fail "FormErr"
+    unless (qdCount == 1) $ E.throw $ DecodeError $ "QDCOUNT is " ++ show qdCount ++ ". must be 1"
     anCount <- getInt16 rbuf
     nsCount <- getInt16 rbuf
     arCount <- getInt16 rbuf
