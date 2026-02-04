@@ -82,7 +82,7 @@ import qualified DNS.Iterative.Query.StubZone as Stub
 import qualified DNS.Iterative.Query.Verify as Verify
 import qualified DNS.Iterative.Query.ZoneMap as ZMap
 import DNS.Iterative.RootServers (getRootServers)
-import DNS.Iterative.RootTrustAnchors (rootSepDS)
+import DNS.Iterative.RootTrustAnchors (rootSepDSs)
 import DNS.Iterative.Stats
 
 version :: String
@@ -103,7 +103,7 @@ newEmptyEnv = do
         , logLines_ = \_ _ ~_ -> pure ()
         , logDNSTAP_ = \_ -> pure ()
         , disableV6NS_ = False
-        , rootAnchor_ = FilledDS [rootSepDS]
+        , rootAnchor_ = FilledDS rootSepDSs
         , rootHint_ = rootHint
         , chaosZones_ = mempty
         , localZones_ = mempty
