@@ -13,5 +13,5 @@ takeLocalResult :: Env -> Question -> a -> a -> (ResultRRS -> a) -> a
 takeLocalResult env q@Question{qname=dom,qclass=cls} denied nothing just
     | CH <- cls, (apexes, names) <- chaosZones_ env, Just apex <- lookupApex apexes dom = maybe denied just $ lookupName names apex q
     | IN <- cls, (apexes, names) <- localZones_ env, Just apex <- lookupApex apexes dom = maybe denied just $ lookupName names apex q
-    | otherwise                          = nothing
+    | otherwise                                                                         = nothing
 {- FOURMOLU_ENABLE -}
