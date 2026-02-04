@@ -94,11 +94,12 @@ guardNegative zone m query
     | opcode query /= OP_STD = reply{rcode = NotImpl}
     | otherwise = case question query of
         [q]
-            | not (qname q `isSubDomainOf` zone) -> reply{rcode = Refused}
-            | otherwise -> processPositive m q reply
+            | not (check $ qname q) -> reply{rcode = Refused}
+            | otherwise -> processPositive m q check reply
         -- RFC 9619: "In the DNS, QDCOUNT Is (Usually) One"
         _ -> reply{rcode = FormatErr}
   where
+    check = (`isSubDomainOf` zone)
     -- RFC 6891: Sec 6.1.1
     ednsH = case ednsHeader query of
         EDNSheader _ -> EDNSheader defaultEDNS
@@ -117,8 +118,8 @@ guardNegative zone m query
             }
     reply = query{flags = flgs, ednsHeader = ednsH}
 
-processPositive :: DB -> Question -> DNSMessage -> DNSMessage
-processPositive DB{..} Question{..} reply =
+processPositive :: DB -> Question -> (Domain -> Bool) -> DNSMessage -> DNSMessage
+processPositive DB{..} Question{..} check reply =
     reply
         { answer = ans
         , authority = auth
@@ -126,8 +127,13 @@ processPositive DB{..} Question{..} reply =
         , rcode = code
         }
   where
-    (ans, auth, add, code) = case M.lookup qname dbMap of
-        Nothing -> ([], [dbSOA], [], NXDomain)
+    (ans, auth, add, code) = loop qname
+    loop dom = case M.lookup dom dbMap of
+        Nothing -> case unconsDomain dom of
+            Nothing -> ([], [dbSOA], [], NXDomain)
+            Just (_, dom')
+                | check dom' -> loop dom'
+                | otherwise -> ([], [dbSOA], [], NXDomain)
         Just x ->
             let ans' = case qtype of
                     A -> rrsetA x
