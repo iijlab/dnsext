@@ -92,11 +92,10 @@ guardNegative :: Domain -> DB -> DNSMessage -> DNSMessage
 guardNegative zone m query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
-    | not (check $ qname q) = reply{rcode = Refused}
-    | otherwise = processPositive m q check reply
+    | not (qname q `isSubDomainOf` zone) = reply{rcode = Refused}
+    | otherwise = processPositive m q zone reply
   where
     q = question query
-    check = (`isSubDomainOf` zone)
     -- RFC 6891: Sec 6.1.1
     ednsH = case ednsHeader query of
         EDNSheader _ -> EDNSheader defaultEDNS
@@ -115,8 +114,8 @@ guardNegative zone m query
             }
     reply = query{flags = flgs, ednsHeader = ednsH}
 
-processPositive :: DB -> Question -> (Domain -> Bool) -> DNSMessage -> DNSMessage
-processPositive DB{..} Question{..} check reply =
+processPositive :: DB -> Question -> Domain -> DNSMessage -> DNSMessage
+processPositive db@DB{..} q@Question{..} zone reply =
     reply
         { answer = ans
         , authority = auth
@@ -124,13 +123,8 @@ processPositive DB{..} Question{..} check reply =
         , rcode = code
         }
   where
-    (ans, auth, add, code) = loop qname
-    loop dom = case M.lookup dom dbMap of
-        Nothing -> case unconsDomain dom of
-            Nothing -> ([], [dbSOA], [], NXDomain)
-            Just (_, dom')
-                | check dom' -> loop dom'
-                | otherwise -> ([], [dbSOA], [], NXDomain)
+    (ans, auth, add, code) = case M.lookup qname dbMap of
+        Nothing -> findDelegation db q zone
         Just x ->
             let ans' = case qtype of
                     A -> rrsetA x
@@ -138,19 +132,46 @@ processPositive DB{..} Question{..} check reply =
                     NS -> rrsetNS x
                     _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
                 auth' = if null ans' && qtype /= NS then rrsetNS x else []
-                ns' = nub $ sort $ catMaybes $ map extractNS auth'
-                add' = concat $ map lookupAdd ns'
-             in if null ans' && null auth' && null add'
+             in if null ans' && null auth'
                     then
                         ([], [dbSOA], [], NoErr)
                     else
-                        (ans', auth', add', NoErr)
-    extractNS rr = case fromRData $ rdata rr of
-        Nothing -> Nothing
-        Just ns -> Just $ ns_domain ns
+                        let add' = findAdditional db auth'
+                         in (ans', auth', add', NoErr)
+
+findDelegation
+    :: DB
+    -> Question
+    -> Domain
+    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], RCODE)
+findDelegation db@DB{..} Question{..} zone = loop qname
+  where
+    loop dom
+        | dom == zone = ([], [dbSOA], [], NXDomain)
+        | otherwise = case unconsDomain dom of
+            Nothing -> ([], [dbSOA], [], NXDomain)
+            Just (_, dom') -> case M.lookup dom dbMap of
+                Nothing -> loop dom'
+                Just x ->
+                    let auth = rrsetNS x
+                     in if null auth
+                            then
+                                ([], [dbSOA], [], NoErr)
+                            else
+                                let add = findAdditional db auth
+                                 in ([], auth, add, NoErr)
+
+findAdditional :: DB -> [ResourceRecord] -> [ResourceRecord]
+findAdditional DB{..} auth' = add'
+  where
+    ns' = nub $ sort $ catMaybes $ map extractNS auth'
+    add' = concat $ map lookupAdd ns'
     lookupAdd dom = case M.lookup dom dbMap of
         Nothing -> []
         Just x -> rrsetA x ++ rrsetAAAA x
+    extractNS rr = case fromRData $ rdata rr of
+        Nothing -> Nothing
+        Just ns -> Just $ ns_domain ns
 
 ----------------------------------------------------------------
 
