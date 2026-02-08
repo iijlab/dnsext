@@ -46,42 +46,31 @@ getAnswer db query
     reply = query{flags = flgs, ednsHeader = ednsH}
 
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
-processPositive db@DB{..} q@Question{..} reply =
-    reply
-        { answer = ans
-        , authority = auth
-        , additional = add
-        , rcode = code
-        , flags = (flags reply){authAnswer = aa}
-        }
+processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
+    Nothing -> findAuthority db q reply
+    Just rs -> makeAnswer $ filter (\r -> rrtype r == qtype) rs
   where
-    (ans, auth, add, code, aa) = case M.lookup qname dbAnswer of
-        Nothing -> findDelegation db q
-        Just rs ->
-            let ans' = filter (\r -> rrtype r == qtype) rs
-             in if null ans'
-                    then
-                        ([], [dbSOA], [], NoErr, True)
-                    else
-                        (ans', [], [], NoErr, True)
+    makeAnswer [] = makeReply reply [] [dbSOA] [] NoErr True
+    makeAnswer ans = makeReply reply ans [] [] NoErr True
 
-findDelegation
+findAuthority
     :: DB
     -> Question
-    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], RCODE, Bool)
-findDelegation db@DB{..} Question{..} = loop qname
+    -> DNSMessage
+    -> DNSMessage
+findAuthority db@DB{..} Question{..} reply = loop qname
   where
     loop dom
-        | dom == dbZone = ([], [dbSOA], [], NXDomain, True)
+        | dom == dbZone = makeReply reply [] [dbSOA] [] NXDomain True
         | otherwise = case unconsDomain dom of
-            Nothing -> ([], [dbSOA], [], NXDomain, True)
+            Nothing -> makeReply reply [] [dbSOA] [] NXDomain True
             Just (_, dom') -> case M.lookup dom dbAuthority of
                 Nothing -> loop dom'
                 Just auth
-                    | null auth -> ([], [dbSOA], [], NoErr, True)
+                    | null auth -> makeReply reply [] [dbSOA] [] NoErr True
                     | otherwise ->
                         let add = findAdditional db auth
-                         in ([], auth, add, NoErr, False)
+                         in makeReply reply [] auth add NoErr False
 
 findAdditional :: DB -> [ResourceRecord] -> [ResourceRecord]
 findAdditional DB{..} auth0 = add
@@ -94,3 +83,13 @@ findAdditional DB{..} auth0 = add
     extractNS rr = case fromRData $ rdata rr of
         Nothing -> Nothing
         Just ns -> Just $ ns_domain ns
+
+makeReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage
+makeReply reply ans auth add code aa =
+    reply
+        { answer = ans
+        , authority = auth
+        , additional = add
+        , rcode = code
+        , flags = (flags reply){authAnswer = aa}
+        }
