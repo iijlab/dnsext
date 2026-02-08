@@ -1,6 +1,5 @@
 module DNS.Auth.DB (
     DB (..),
-    RRsets (..),
     loadDB,
 ) where
 
@@ -18,16 +17,11 @@ import qualified DNS.ZoneFile as ZF
 data DB = DB
     { dbZone :: Domain
     , dbSOA :: ResourceRecord
-    , dbMap :: M.Map Domain RRsets
-    , dbGlue :: M.Map Domain [ResourceRecord]
+    , dbAnswer :: M.Map Domain [ResourceRecord]
+    , dbAuthority :: M.Map Domain [ResourceRecord]
+    , dbAdditiona :: M.Map Domain [ResourceRecord]
     }
-
-data RRsets = RRsets
-    { rrsetA :: [ResourceRecord]
-    , rrsetAAAA :: [ResourceRecord]
-    , rrsetNS :: [ResourceRecord]
-    , rrsetOthers :: [ResourceRecord]
-    }
+    deriving (Show)
 
 ----------------------------------------------------------------
 
@@ -54,8 +48,9 @@ make (zone, soa : rrs)
             DB
                 { dbZone = zone
                 , dbSOA = soa
-                , dbMap = m
-                , dbGlue = g
+                , dbAnswer = ans
+                , dbAuthority = auth
+                , dbAdditiona = add
                 }
   where
     -- RFC 9471
@@ -63,9 +58,10 @@ make (zone, soa : rrs)
     -- Unrelated glues are ignored.
     (as, ns, _os) = partition3 zone rrs
     isDelegated = makeIsDelegated ns
-    (glue, inzone) = partition (\r -> isDelegated (rrname r)) as
-    m = makeMap makeRRsets $ [soa] ++ ns ++ inzone
-    g = makeMap id glue
+    (gs, zs) = partition (\r -> isDelegated (rrname r)) as
+    ans = makeMap $ [soa] ++ zs
+    auth = makeMap ns
+    add = makeMap gs
 
 partition3 :: Domain -> [ResourceRecord] -> ([ResourceRecord], [ResourceRecord], [ResourceRecord])
 partition3 dom rrs0 = loop rrs0 [] [] []
@@ -84,12 +80,11 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
-makeMap :: ([ResourceRecord] -> v) -> [ResourceRecord] -> M.Map Domain v
-makeMap conv rrs = M.fromList kvs
+makeMap :: [ResourceRecord] -> M.Map Domain [ResourceRecord]
+makeMap rrs = M.fromList kvs
   where
-    gs = groupBy ((==) `on` rrname) $ sort rrs
-    ks = map (rrname . unsafeHead) gs
-    vs = map conv gs
+    vs = groupBy ((==) `on` rrname) $ sort rrs
+    ks = map (rrname . unsafeHead) vs
     kvs = zip ks vs
 
 unsafeHead :: [a] -> a
@@ -101,20 +96,3 @@ unsafeHead _ = error "unsafeHead"
 fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
 fromResource _ = Nothing
-
-makeRRsets :: [ResourceRecord] -> RRsets
-makeRRsets rs0 =
-    let (as, aaaas, nss, others) = loop id id id id rs0
-     in RRsets
-            { rrsetA = as
-            , rrsetAAAA = aaaas
-            , rrsetNS = nss
-            , rrsetOthers = others
-            }
-  where
-    loop a b c d [] = (a [], b [], c [], d [])
-    loop a b c d (r : rs) = case rrtype r of
-        A -> loop (a . (r :)) b c d rs
-        AAAA -> loop a (b . (r :)) c d rs
-        NS -> loop a b (c . (r :)) d rs
-        _ -> loop a b c (d . (r :)) rs
