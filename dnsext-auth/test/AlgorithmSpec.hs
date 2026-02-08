@@ -21,6 +21,7 @@ spec = describe "authoritative algorithm" $ do
         answer ans `shouldSatisfy` include "exist.example.jp." A
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
     it "can answer an non-exiting domain" $ do
         let query = defaultQuery{question = Question "nonexist.example.jp." A IN}
             ans = getAnswer db query
@@ -28,6 +29,7 @@ spec = describe "authoritative algorithm" $ do
         length (answer ans) `shouldBe` 0
         authority ans `shouldSatisfy` include "example.jp." SOA
         length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
     it "can refuse unrelated domains" $ do
         let query = defaultQuery{question = Question "unrelated.com." A IN}
             ans = getAnswer db query
@@ -35,6 +37,7 @@ spec = describe "authoritative algorithm" $ do
         length (answer ans) `shouldBe` 0
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` not . authAnswer
     it "can answer referrals" $ do
         let query = defaultQuery{question = Question "foo.in.example.jp." A IN}
             ans = getAnswer db query
@@ -47,6 +50,7 @@ spec = describe "authoritative algorithm" $ do
         length (additional ans) `shouldBe` 2
         additional ans `shouldSatisfy` include "ns.in.example.jp." A
         additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
+        flags ans `shouldSatisfy` not . authAnswer
 
 includeNS :: Domain -> [ResourceRecord] -> Bool
 includeNS dom rs = any has rs
