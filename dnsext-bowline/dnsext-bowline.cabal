@@ -157,10 +157,8 @@ executable clove
         base,
         async,
         network,
-        containers,
         -- dnsext packages
-        dnsext-dnssec,
-        dnsext-svcb,
+        dnsext-auth,
         dnsext-types,
         dnsext-utils
 
