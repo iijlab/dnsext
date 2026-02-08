@@ -59,11 +59,19 @@ make (zone, soa : rrs)
     (as, ns, _os) = partition3 zone rrs
     isDelegated = makeIsDelegated ns
     (gs, zs) = partition (\r -> isDelegated (rrname r)) as
+    -- gs: glue (in delegated domain)
+    -- zs: in-domain
     ans = makeMap $ [soa] ++ zs
     auth = makeMap ns
     add = makeMap gs
 
-partition3 :: Domain -> [ResourceRecord] -> ([ResourceRecord], [ResourceRecord], [ResourceRecord])
+partition3
+    :: Domain
+    -> [ResourceRecord]
+    -> ( [ResourceRecord] -- Possible in-domain
+       , [ResourceRecord] -- NS except this domain
+       , [ResourceRecord] -- Unrelated, ignored
+       )
 partition3 dom rrs0 = loop rrs0 [] [] []
   where
     loop [] as ns os = (as, ns, os)
