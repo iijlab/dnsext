@@ -19,7 +19,11 @@ getAnswer :: DB -> DNSMessage -> DNSMessage
 getAnswer db query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
-    | not (qname q `isSubDomainOf` dbZone db) = reply{rcode = Refused}
+    | not (qname q `isSubDomainOf` dbZone db) =
+        reply
+            { rcode = Refused
+            , flags = flgs{authAnswer = False}
+            }
     | otherwise = processPositive db q reply
   where
     q = question query
@@ -48,9 +52,10 @@ processPositive db@DB{..} q@Question{..} reply =
         , authority = auth
         , additional = add
         , rcode = code
+        , flags = (flags reply){authAnswer = aa}
         }
   where
-    (ans, auth, add, code) = case M.lookup qname dbMap of
+    (ans, auth, add, code, aa) = case M.lookup qname dbMap of
         Nothing -> findDelegation db q
         Just x ->
             let ans' = case qtype of
@@ -59,33 +64,41 @@ processPositive db@DB{..} q@Question{..} reply =
                     NS -> rrsetNS x
                     _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
                 auth' = if null ans' && qtype /= NS then rrsetNS x else []
-             in if null ans' && null auth'
+             in if null ans'
                     then
-                        ([], [dbSOA], [], NoErr)
+                        if null auth'
+                            then
+                                ([], [dbSOA], [], NoErr, True)
+                            else
+                                let add' = findAdditional db auth'
+                                 in (ans', auth', add', NoErr, False)
                     else
-                        let add' = findAdditional db auth'
-                         in (ans', auth', add', NoErr)
+                        if qtype == NS
+                            then
+                                (ans', [], [], NoErr, False)
+                            else
+                                (ans', [], [], NoErr, True)
 
 findDelegation
     :: DB
     -> Question
-    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], RCODE)
+    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], RCODE, Bool)
 findDelegation db@DB{..} Question{..} = loop qname
   where
     loop dom
-        | dom == dbZone = ([], [dbSOA], [], NXDomain)
+        | dom == dbZone = ([], [dbSOA], [], NXDomain, True)
         | otherwise = case unconsDomain dom of
-            Nothing -> ([], [dbSOA], [], NXDomain)
+            Nothing -> ([], [dbSOA], [], NXDomain, True)
             Just (_, dom') -> case M.lookup dom dbMap of
                 Nothing -> loop dom'
                 Just x ->
                     let auth = rrsetNS x
                      in if null auth
                             then
-                                ([], [dbSOA], [], NoErr)
+                                ([], [dbSOA], [], NoErr, True)
                             else
                                 let add = findAdditional db auth
-                                 in ([], auth, add, NoErr)
+                                 in ([], auth, add, NoErr, False)
 
 findAdditional :: DB -> [ResourceRecord] -> [ResourceRecord]
 findAdditional DB{..} auth' = add'
