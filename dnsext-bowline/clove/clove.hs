@@ -51,7 +51,7 @@ clove db s = loop
 replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
 replyQuery db s sa query = void $ NSB.sendTo s bs sa
   where
-    bs = encode $ getReply db query
+    bs = encode $ getAnswer db query
 
 ----------------------------------------------------------------
 
