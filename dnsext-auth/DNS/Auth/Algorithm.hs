@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module DNS.Auth.Algorithm (
-    getReply,
+    getAnswer,
 ) where
 
 import Data.List (nub, sort)
@@ -15,8 +15,8 @@ import DNS.Types
 --
 -- A non-recursive server is supposed to respond to recursive
 -- queries as if the Recursion Desired (RD) bit is not set
-getReply :: DB -> DNSMessage -> DNSMessage
-getReply db query
+getAnswer :: DB -> DNSMessage -> DNSMessage
+getAnswer db query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
     | not (qname q `isSubDomainOf` dbZone db) = reply{rcode = Refused}
