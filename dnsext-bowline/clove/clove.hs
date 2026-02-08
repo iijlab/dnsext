@@ -27,7 +27,8 @@ import Config
 ----------------------------------------------------------------
 
 data DB = DB
-    { dbSOA :: ResourceRecord
+    { dbZone :: Domain
+    , dbSOA :: ResourceRecord
     , dbMap :: M.Map Domain RRsets
     , dbGlue :: M.Map Domain [ResourceRecord]
     }
@@ -40,17 +41,19 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     Config{..} <- loadConfig conffile
-    (zone, rrs) <- loadZoneFile cnf_zone_name cnf_zone_file
-    let db = make zone rrs
+    db <- loadDB cnf_zone_name cnf_zone_file
     ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
     ss <- mapM serverSocket ais
-    mapConcurrently_ (clove zone db) ss
+    mapConcurrently_ (clove db) ss
 
 unsafeHead :: [a] -> a
 unsafeHead (x : _) = x
 unsafeHead _ = error "unsafeHead"
 
 ----------------------------------------------------------------
+
+loadDB :: String -> FilePath -> IO DB
+loadDB zone file = make <$> loadZoneFile zone file
 
 loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
 loadZoneFile zone file = do
@@ -76,15 +79,16 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
-make :: Domain -> [ResourceRecord] -> DB
-make _ [] = error "make: no resource records"
+make :: (Domain, [ResourceRecord]) -> DB
+make (_, []) = error "make: no resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-make zone (soa : rrs)
+make (zone, soa : rrs)
     | rrtype soa /= SOA = error "make: no SOA"
     | otherwise =
         DB
-            { dbSOA = soa
+            { dbZone = zone
+            , dbSOA = soa
             , dbMap = m
             , dbGlue = g
             }
@@ -108,32 +112,32 @@ makeMap conv rrs = M.fromList kvs
 
 ----------------------------------------------------------------
 
-clove :: Domain -> DB -> Socket -> IO ()
-clove zone db s = loop
+clove :: DB -> Socket -> IO ()
+clove db s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
         case decode bs of
             -- fixme: which RFC?
             Left _e -> return ()
-            Right query -> replyQuery zone db s sa query
+            Right query -> replyQuery db s sa query
         loop
 
-replyQuery :: Domain -> DB -> Socket -> SockAddr -> DNSMessage -> IO ()
-replyQuery zone m s sa query = void $ NSB.sendTo s bs sa
+replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
+replyQuery db s sa query = void $ NSB.sendTo s bs sa
   where
-    bs = encode $ guardNegative zone m query
+    bs = encode $ guardNegative db query
 
 -- RFC 8906: Sec 3.1.3.1
 --
 -- A non-recursive server is supposed to respond to recursive
 -- queries as if the Recursion Desired (RD) bit is not set
-guardNegative :: Domain -> DB -> DNSMessage -> DNSMessage
-guardNegative zone m query
+guardNegative :: DB -> DNSMessage -> DNSMessage
+guardNegative db query
     -- RFC 8906: Sec 3.1.4
     | opcode query /= OP_STD = reply{rcode = NotImpl}
-    | not (qname q `isSubDomainOf` zone) = reply{rcode = Refused}
-    | otherwise = processPositive m q zone reply
+    | not (qname q `isSubDomainOf` dbZone db) = reply{rcode = Refused}
+    | otherwise = processPositive db q reply
   where
     q = question query
     -- RFC 6891: Sec 6.1.1
@@ -154,8 +158,8 @@ guardNegative zone m query
             }
     reply = query{flags = flgs, ednsHeader = ednsH}
 
-processPositive :: DB -> Question -> Domain -> DNSMessage -> DNSMessage
-processPositive db@DB{..} q@Question{..} zone reply =
+processPositive :: DB -> Question -> DNSMessage -> DNSMessage
+processPositive db@DB{..} q@Question{..} reply =
     reply
         { answer = ans
         , authority = auth
@@ -164,7 +168,7 @@ processPositive db@DB{..} q@Question{..} zone reply =
         }
   where
     (ans, auth, add, code) = case M.lookup qname dbMap of
-        Nothing -> findDelegation db q zone
+        Nothing -> findDelegation db q
         Just x ->
             let ans' = case qtype of
                     A -> rrsetA x
@@ -182,12 +186,11 @@ processPositive db@DB{..} q@Question{..} zone reply =
 findDelegation
     :: DB
     -> Question
-    -> Domain
     -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], RCODE)
-findDelegation db@DB{..} Question{..} zone = loop qname
+findDelegation db@DB{..} Question{..} = loop qname
   where
     loop dom
-        | dom == zone = ([], [dbSOA], [], NXDomain)
+        | dom == dbZone = ([], [dbSOA], [], NXDomain)
         | otherwise = case unconsDomain dom of
             Nothing -> ([], [dbSOA], [], NXDomain)
             Just (_, dom') -> case M.lookup dom dbMap of
