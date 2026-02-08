@@ -55,29 +55,15 @@ processPositive db@DB{..} q@Question{..} reply =
         , flags = (flags reply){authAnswer = aa}
         }
   where
-    (ans, auth, add, code, aa) = case M.lookup qname dbMap of
+    (ans, auth, add, code, aa) = case M.lookup qname dbAnswer of
         Nothing -> findDelegation db q
-        Just x ->
-            let ans' = case qtype of
-                    A -> rrsetA x
-                    AAAA -> rrsetAAAA x
-                    NS -> rrsetNS x
-                    _ -> filter (\r -> rrtype r == qtype) $ rrsetOthers x
-                auth' = if null ans' && qtype /= NS then rrsetNS x else []
+        Just rs ->
+            let ans' = filter (\r -> rrtype r == qtype) rs
              in if null ans'
                     then
-                        if null auth'
-                            then
-                                ([], [dbSOA], [], NoErr, True)
-                            else
-                                let add' = findAdditional db auth'
-                                 in (ans', auth', add', NoErr, False)
+                        ([], [dbSOA], [], NoErr, True)
                     else
-                        if qtype == NS
-                            then
-                                (ans', [], [], NoErr, False)
-                            else
-                                (ans', [], [], NoErr, True)
+                        (ans', [], [], NoErr, True)
 
 findDelegation
     :: DB
@@ -89,23 +75,20 @@ findDelegation db@DB{..} Question{..} = loop qname
         | dom == dbZone = ([], [dbSOA], [], NXDomain, True)
         | otherwise = case unconsDomain dom of
             Nothing -> ([], [dbSOA], [], NXDomain, True)
-            Just (_, dom') -> case M.lookup dom dbMap of
+            Just (_, dom') -> case M.lookup dom dbAuthority of
                 Nothing -> loop dom'
-                Just x ->
-                    let auth = rrsetNS x
-                     in if null auth
-                            then
-                                ([], [dbSOA], [], NoErr, True)
-                            else
-                                let add = findAdditional db auth
-                                 in ([], auth, add, NoErr, False)
+                Just auth
+                    | null auth -> ([], [dbSOA], [], NoErr, True)
+                    | otherwise ->
+                        let add = findAdditional db auth
+                         in ([], auth, add, NoErr, False)
 
 findAdditional :: DB -> [ResourceRecord] -> [ResourceRecord]
-findAdditional DB{..} auth' = add'
+findAdditional DB{..} auth0 = add
   where
-    ns' = nub $ sort $ catMaybes $ map extractNS auth'
-    add' = concat $ map lookupAdd ns'
-    lookupAdd dom = case M.lookup dom dbGlue of
+    doms = nub $ sort $ catMaybes $ map extractNS auth0
+    add = concat $ map lookupAdd doms
+    lookupAdd dom = case M.lookup dom dbAdditiona of
         Nothing -> []
         Just rs -> rs
     extractNS rr = case fromRData $ rdata rr of
