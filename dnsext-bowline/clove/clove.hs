@@ -16,6 +16,7 @@ import qualified Data.Set as Set
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
+import System.Exit
 
 import DNS.Types
 import DNS.Types.Decode
@@ -41,18 +42,17 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     Config{..} <- loadConfig conffile
-    db <- loadDB cnf_zone_name cnf_zone_file
-    ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
-    ss <- mapM serverSocket ais
-    mapConcurrently_ (clove db) ss
-
-unsafeHead :: [a] -> a
-unsafeHead (x : _) = x
-unsafeHead _ = error "unsafeHead"
+    edb <- loadDB cnf_zone_name cnf_zone_file
+    case edb of
+        Left emsg -> die emsg
+        Right db -> do
+            ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
+            ss <- mapM serverSocket ais
+            mapConcurrently_ (clove db) ss
 
 ----------------------------------------------------------------
 
-loadDB :: String -> FilePath -> IO DB
+loadDB :: String -> FilePath -> IO (Either String DB)
 loadDB zone file = make <$> loadZoneFile zone file
 
 loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
@@ -79,19 +79,20 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
-make :: (Domain, [ResourceRecord]) -> DB
-make (_, []) = error "make: no resource records"
+make :: (Domain, [ResourceRecord]) -> Either String DB
+make (_, []) = Left "make: no resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
 make (zone, soa : rrs)
-    | rrtype soa /= SOA = error "make: no SOA"
+    | rrtype soa /= SOA = Left "make: no SOA"
     | otherwise =
-        DB
-            { dbZone = zone
-            , dbSOA = soa
-            , dbMap = m
-            , dbGlue = g
-            }
+        Right $
+            DB
+                { dbZone = zone
+                , dbSOA = soa
+                , dbMap = m
+                , dbGlue = g
+                }
   where
     -- RFC 9471
     -- In-domain and sibling glues only.
@@ -109,6 +110,10 @@ makeMap conv rrs = M.fromList kvs
     ks = map (rrname . unsafeHead) gs
     vs = map conv gs
     kvs = zip ks vs
+
+unsafeHead :: [a] -> a
+unsafeHead (x : _) = x
+unsafeHead _ = error "unsafeHead"
 
 ----------------------------------------------------------------
 
