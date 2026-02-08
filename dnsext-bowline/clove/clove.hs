@@ -8,14 +8,14 @@ import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
 import Data.Function (on)
-import Data.List (groupBy, nub, sort)
+import Data.List (groupBy, nub, partition, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
-import System.Exit
 
 import DNS.Types
 import DNS.Types.Decode
@@ -29,6 +29,7 @@ import Config
 data DB = DB
     { dbSOA :: ResourceRecord
     , dbMap :: M.Map Domain RRsets
+    , dbGlue :: M.Map Domain [ResourceRecord]
     }
 
 -- type DB = M.Map Domain RRsets
@@ -39,25 +40,8 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     Config{..} <- loadConfig conffile
-    let zone = fromRepresentation cnf_zone_name
-    rrs <- catMaybes . map fromResource <$> ZF.parseFile' cnf_zone_file zone
-    soa <- case rrs of
-        soa' : _ -> case fromRData $ rdata soa' of
-            Just (_ :: RD_SOA) -> return soa'
-            Nothing -> die "SOA does not exit (1)"
-        _ -> die "SOA does not exit (2)"
-    let gs = groupBy ((==) `on` rrname) $ sort rrs
-        ks = map (rrname . unsafeHead) gs
-        vs = map makeRRsets gs
-        -- RFC 1035 Sec 5.2
-        -- Exactly one SOA RR should be present at the top of the zone.
-        kvs = zip ks vs
-        m = M.fromList kvs
-        db =
-            DB
-                { dbSOA = soa
-                , dbMap = m
-                }
+    (zone, rrs) <- loadZoneFile cnf_zone_name cnf_zone_file
+    let db = make zone rrs
     ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
     ss <- mapM serverSocket ais
     mapConcurrently_ (clove zone db) ss
@@ -65,6 +49,62 @@ main = do
 unsafeHead :: [a] -> a
 unsafeHead (x : _) = x
 unsafeHead _ = error "unsafeHead"
+
+----------------------------------------------------------------
+
+loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
+loadZoneFile zone file = do
+    rrs <- catMaybes . map fromResource <$> ZF.parseFile' file dom
+    return (dom, rrs)
+  where
+    dom = fromRepresentation zone
+
+partition3 :: Domain -> [ResourceRecord] -> ([ResourceRecord], [ResourceRecord], [ResourceRecord])
+partition3 dom rrs0 = loop rrs0 [] [] []
+  where
+    loop [] as ns os = (as, ns, os)
+    loop (r : rs) as ns os
+        | rrname r `isSubDomainOf` dom =
+            if rrtype r == NS && rrname r /= dom
+                then loop rs as (r : ns) os
+                else loop rs (r : as) ns os
+        | otherwise = loop rs as ns (r : os)
+
+makeIsDelegated :: [ResourceRecord] -> (Domain -> Bool)
+makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
+  where
+    s = Set.fromList $ map rrname rrs
+    ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
+
+make :: Domain -> [ResourceRecord] -> DB
+make _ [] = error "make: no resource records"
+-- RFC 1035 Sec 5.2
+-- Exactly one SOA RR should be present at the top of the zone.
+make zone (soa : rrs)
+    | rrtype soa /= SOA = error "make: no SOA"
+    | otherwise =
+        DB
+            { dbSOA = soa
+            , dbMap = m
+            , dbGlue = g
+            }
+  where
+    -- RFC 9471
+    -- In-domain and sibling glues only.
+    -- Unrelated glues are ignored.
+    (as, ns, _os) = partition3 zone rrs
+    isDelegated = makeIsDelegated ns
+    (glue, inzone) = partition (\r -> isDelegated (rrname r)) as
+    m = makeMap makeRRsets $ [soa] ++ ns ++ inzone
+    g = makeMap id glue
+
+makeMap :: ([ResourceRecord] -> v) -> [ResourceRecord] -> M.Map Domain v
+makeMap conv rrs = M.fromList kvs
+  where
+    gs = groupBy ((==) `on` rrname) $ sort rrs
+    ks = map (rrname . unsafeHead) gs
+    vs = map conv gs
+    kvs = zip ks vs
 
 ----------------------------------------------------------------
 
@@ -166,9 +206,9 @@ findAdditional DB{..} auth' = add'
   where
     ns' = nub $ sort $ catMaybes $ map extractNS auth'
     add' = concat $ map lookupAdd ns'
-    lookupAdd dom = case M.lookup dom dbMap of
+    lookupAdd dom = case M.lookup dom dbGlue of
         Nothing -> []
-        Just x -> rrsetA x ++ rrsetAAAA x
+        Just rs -> rs
     extractNS rr = case fromRData $ rdata rr of
         Nothing -> Nothing
         Just ns -> Just $ ns_domain ns
