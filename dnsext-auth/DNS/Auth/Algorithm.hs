@@ -77,7 +77,7 @@ findAdditional DB{..} auth0 = add
   where
     doms = nub $ sort $ catMaybes $ map extractNS auth0
     add = concat $ map lookupAdd doms
-    lookupAdd dom = case M.lookup dom dbAdditiona of
+    lookupAdd dom = case M.lookup dom dbAdditional of
         Nothing -> []
         Just rs -> rs
     extractNS rr = case fromRData $ rdata rr of
