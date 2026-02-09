@@ -203,13 +203,55 @@ showConfig1 Config{..} =
 
 showConfig2 :: Config -> [String]
 showConfig2 conf =
-    [ field'_ "log output" (showOut . cnf_log_output)
+    [ field' "user" cnf_user
+    , field' "group" cnf_group
+    , field' "log" cnf_log
+    , field'_ "log file" (maybe "<no logfile>" id . cnf_log_file)
+    , field'_ "log output" (showOut . cnf_log_output)
     , field' "log level" cnf_log_level
+    , field' "log timestamp" cnf_log_timestamp
     , field' "short log" cnf_short_log
+    , field'_ "cert file" cnf_cert_file
+    , field'_ "key file" cnf_key_file
+    , field'_ "trust anchor file" (unwords . cnf_trust_anchor_file)
+    , field'_ "root hints" (maybe "<default>" id . cnf_root_hints)
     , field' "max cache size" cnf_cache_size
     , field' "disable queries to IPv6 NS" cnf_disable_v6_ns
+    , field'_ "domain insecures" (unwords . map show . cnf_domain_insecures)
+    , field'_ "dns addrs" (unwords . cnf_dns_addrs)
+    , field' "resolve timeout" cnf_resolve_timeout
     , field' "cachers" cnf_cachers
     , field' "workers" cnf_workers
+    , field' "max global quota" cnf_max_global_quota
+    , field' "udp limit size" cnf_udp_limit_size
+    , field' "udp" cnf_udp
+    , field' "udp port" cnf_udp_port
+    , field' "tls" cnf_tls
+    , field' "tls port" cnf_tls_port
+    , field' "tls session ticket lifetime" cnf_tls_session_ticket_lifetime
+    , field' "quic" cnf_quic
+    , field' "quic port" cnf_quic_port
+    , field' "h2c" cnf_h2c
+    , field' "h2c port" cnf_h2c_port
+    , field' "h2" cnf_h2
+    , field' "h2 port" cnf_h2_port
+    , field' "h3" cnf_h3
+    , field' "h3 port" cnf_h3_port
+    , field' "early data size" cnf_early_data_size
+    , field' "monitor port" cnf_monitor_port
+    , field'_ "monitor addrs" (unwords . cnf_monitor_addrs)
+    , field' "monitor stdio" cnf_monitor_stdio
+    , field' "monitor keep interval" cnf_monitor_keep_interval
+    , field' "threads dumpoer" cnf_threads_dumper
+    , field' "dnstap" cnf_dnstap
+    , field'_ "dnstap socket path" cnf_dnstap_socket_path
+    , field' "dnstap reconnect interval" cnf_dnstap_reconnect_interval
+    , field' "webapi" cnf_webapi
+    , field'_ "webapi addr" cnf_webapi_addr
+    , field' "webapi port" cnf_webapi_port
+    , field' "cache max negative ttl" cnf_cache_max_negative_ttl
+    , field' "cache failure rcode ttl" cnf_cache_failure_rcode_ttl
+    , field' "interface automatic" cnf_interface_automatic
     ]
   where
     field' label' get = field'_ label' (show . get)
