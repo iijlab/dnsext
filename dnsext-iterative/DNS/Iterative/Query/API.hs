@@ -82,15 +82,15 @@ foldResponse name deny reply env@Env{..} reqM@DNSMessage{question=q0@(Question b
 foldResponse'
     :: String -> (String -> a) -> (VResult -> DNSMessage -> a)
     -> Env -> Identifier -> Question -> Question -> DNSFlags -> EDNSheader -> DNSQuery a -> IO a
-foldResponse' name deny reply env@Env{..} ident q0 q@(Question bn typ cls) reqF reqEH qaction  =
+foldResponse' name deny reply env@Env{..} ident _q0 q@(Question bn typ cls) reqF reqEH qaction  =
     takeLocalResult env q (pure $ deny "local-zone: query-denied") query (pure . local)
   where
     query = either eresult pure =<< runDNSQuery (logQueryErrors prefix qaction) env qparam
-    eresult = queryErrorReply reqEH nsid_ ident q0 (pure . deny) ereplace
+    eresult = queryErrorReply reqEH nsid_ ident q (pure . deny) ereplace
     {- replace response-code only when query, not replace for request-error or local-result -}
     ereplace vr resM = replaceRCODE env "query-error" (rcode resM) <&> \rc1 -> reply vr resM{rcode = rc1}
     local (rc, vans, vauth) = withResolvedRRs (requestDO_ qparam) vans vauth h
-      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident q0 rc fs ans
+      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident q rc fs ans
     qparam = queryParamH q reqF reqEH
     prefix = name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": "
 {- FOURMOLU_ENABLE -}
