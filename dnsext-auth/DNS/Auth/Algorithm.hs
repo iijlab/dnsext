@@ -48,10 +48,15 @@ getAnswer db query
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
     Nothing -> findAuthority db q reply
-    Just rs -> makeAnswer $ filter (\r -> rrtype r == qtype) rs
+    Just rs ->
+        let ans = filter (\r -> rrtype r == qtype) rs
+            add
+                | qtype == NS = findAdditional db rs
+                | otherwise = []
+         in makeAnswer ans add
   where
-    makeAnswer [] = makeReply reply [] [dbSOA] [] NoErr True
-    makeAnswer ans = makeReply reply ans [] [] NoErr True
+    makeAnswer [] add = makeReply reply [] [dbSOA] add NoErr True
+    makeAnswer ans add = makeReply reply ans [] add NoErr True
 
 findAuthority
     :: DB
@@ -72,10 +77,13 @@ findAuthority db@DB{..} Question{..} reply = loop qname
                         let add = findAdditional db auth
                          in makeReply reply [] auth add NoErr False
 
-findAdditional :: DB -> [ResourceRecord] -> [ResourceRecord]
-findAdditional DB{..} auth0 = add
+findAdditional
+    :: DB
+    -> [ResourceRecord] -- NSs in Answer or Authority
+    -> [ResourceRecord]
+findAdditional DB{..} rs0 = add
   where
-    doms = nub $ sort $ catMaybes $ map extractNS auth0
+    doms = nub $ sort $ catMaybes $ map extractNS rs0
     add = concat $ map lookupAdd doms
     lookupAdd dom = case M.lookup dom dbAdditional of
         Nothing -> []

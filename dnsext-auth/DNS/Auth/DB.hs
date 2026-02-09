@@ -63,7 +63,8 @@ make (zone, soa : rrs)
     -- zs: in-domain
     ans = makeMap $ [soa] ++ zs
     auth = makeMap ns
-    add = makeMap gs
+    xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
+    add = makeMap $ xs ++ gs
 
 partition3
     :: Domain
