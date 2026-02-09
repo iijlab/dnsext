@@ -49,7 +49,11 @@ processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
     Nothing -> findAuthority db q reply
     Just rs ->
-        let ans = filter (\r -> rrtype r == qtype) rs
+        let ans
+                -- RFC 8482 Sec 4.1
+                -- Answer with a Subset of Available RRsets
+                | qtype == ANY = take 1 rs
+                | otherwise = filter (\r -> rrtype r == qtype) rs
             add
                 | qtype == NS = findAdditional db rs
                 | otherwise = []
