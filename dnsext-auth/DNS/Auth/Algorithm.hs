@@ -66,6 +66,8 @@ processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
     makeAnswer [] add = makeReply reply [] [dbSOA] add NoErr True
     makeAnswer ans add = makeReply reply ans [] add NoErr True
 
+-- RFC 1912 Sec 2.4 CNAME records
+-- This function does not follow CNAME of CNAME.
 processCNAME :: DB -> Question -> DNSMessage -> ResourceRecord -> Domain -> DNSMessage
 processCNAME DB{..} Question{..} reply c cname
     | qtype == CNAME = makeReply reply [c] [] add NoErr True
