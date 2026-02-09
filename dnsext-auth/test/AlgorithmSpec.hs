@@ -61,6 +61,15 @@ spec = describe "authoritative algorithm" $ do
         length (additional ans) `shouldBe` 1
         additional ans `shouldSatisfy` include "ns.example.jp." A
         flags ans `shouldSatisfy` authAnswer
+    it "returns a single minimum RR for ANY" $ do
+        let query = defaultQuery{question = Question "exist.example.jp." ANY IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "exist.example.jp." A
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
 
 includeNS :: Domain -> [ResourceRecord] -> Bool
 includeNS dom rs = any has rs
