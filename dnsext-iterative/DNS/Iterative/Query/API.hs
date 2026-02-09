@@ -37,8 +37,8 @@ foldResponseIterative deny reply env@Env{..} reqM@DNSMessage{..} =
 
 -- | Folding a response corresponding to a query, from questions and control flags. The cache is maybe updated.
 foldResponseIterative'
-    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> Question -> Question -> QueryControls -> IO a
-foldResponseIterative' deny reply env@Env{..} ident _qs q =
+    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> Question -> QueryControls -> IO a
+foldResponseIterative' deny reply env@Env{..} ident q =
     queryControls' $ \fl eh -> foldResponse' "resp-queried'" deny reply env ident q fl eh (resolveStub reply nsid_ ident q eh)
 
 resolveStub :: MonadQuery m => (VResult -> DNSMessage -> a) -> Maybe OD_NSID -> Identifier -> Question -> EDNSheader -> m a
