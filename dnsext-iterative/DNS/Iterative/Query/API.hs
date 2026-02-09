@@ -37,9 +37,9 @@ foldResponseIterative deny reply env@Env{..} reqM@DNSMessage{..} =
 
 -- | Folding a response corresponding to a query, from questions and control flags. The cache is maybe updated.
 foldResponseIterative'
-    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> Question -> Question -> QueryControls -> IO a
-foldResponseIterative' deny reply env@Env{..} ident qs q =
-    queryControls' $ \fl eh -> foldResponse' "resp-queried'" deny reply env ident qs q fl eh (resolveStub reply nsid_ ident qs eh)
+    :: (String -> a) -> (VResult -> DNSMessage -> a) -> Env -> Identifier -> Question -> QueryControls -> IO a
+foldResponseIterative' deny reply env@Env{..} ident q =
+    queryControls' $ \fl eh -> foldResponse' "resp-queried'" deny reply env ident q fl eh (resolveStub reply nsid_ ident q eh)
 
 resolveStub :: MonadQuery m => (VResult -> DNSMessage -> a) -> Maybe OD_NSID -> Identifier -> Question -> EDNSheader -> m a
 resolveStub reply nsid ident q eh = do
@@ -74,23 +74,23 @@ foldResponse name deny reply env@Env{..} reqM@DNSMessage{question=q0@(Question b
     handleRequest env prefix reqM (pure . deny) ereply  result
   where
     ereply rc = pure $ reply VR_Insecure $ replyDNSMessage reqEH nsid_ ident q0 rc resFlags [] []
-    result q = foldResponse' name deny reply env ident q0 q reqF reqEH qaction
+    result q = foldResponse' name deny reply env ident q reqF reqEH qaction
     prefix = name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": "
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
 foldResponse'
     :: String -> (String -> a) -> (VResult -> DNSMessage -> a)
-    -> Env -> Identifier -> Question -> Question -> DNSFlags -> EDNSheader -> DNSQuery a -> IO a
-foldResponse' name deny reply env@Env{..} ident q0 q@(Question bn typ cls) reqF reqEH qaction  =
+    -> Env -> Identifier -> Question -> DNSFlags -> EDNSheader -> DNSQuery a -> IO a
+foldResponse' name deny reply env@Env{..} ident q@(Question bn typ cls) reqF reqEH qaction  =
     takeLocalResult env q (pure $ deny "local-zone: query-denied") query (pure . local)
   where
     query = either eresult pure =<< runDNSQuery (logQueryErrors prefix qaction) env qparam
-    eresult = queryErrorReply reqEH nsid_ ident q0 (pure . deny) ereplace
+    eresult = queryErrorReply reqEH nsid_ ident q (pure . deny) ereplace
     {- replace response-code only when query, not replace for request-error or local-result -}
     ereplace vr resM = replaceRCODE env "query-error" (rcode resM) <&> \rc1 -> reply vr resM{rcode = rc1}
     local (rc, vans, vauth) = withResolvedRRs (requestDO_ qparam) vans vauth h
-      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident q0 rc fs ans
+      where h vres fs ans = reply vres . replyDNSMessage reqEH nsid_ ident q rc fs ans
     qparam = queryParamH q reqF reqEH
     prefix = name ++ ": orig-query " ++ show bn ++ " " ++ show typ ++ " " ++ show cls ++ ": "
 {- FOURMOLU_ENABLE -}

@@ -19,4 +19,4 @@ import DNS.Iterative.Query.Types (VResult (..))
 import DNS.Types
 
 resolveResponseIterative :: Env -> Question -> QueryControls -> IO (Either String DNSMessage)
-resolveResponseIterative env q ictl = foldResponseIterative' Left (\_ -> Right) env 0 {- dummy id -} q q ictl
+resolveResponseIterative env q ictl = foldResponseIterative' Left (\_ -> Right) env 0 {- dummy id -} q ictl
