@@ -1,5 +1,5 @@
 @  IN SOA ns.example.jp. hostmaster.example.jp. (
-                            870769 ;serial
+                            870771 ;serial
                             1800 ;refresh every 30 minutes
                             300 ;retry every 5 minutes
                             604800 ;expire after a week
@@ -7,13 +7,14 @@
                             )
                        NS ns.example.jp.
 
-ns.example.jp.         3600 A    192.0.2.1
-exist.example.jp.      3600 A    192.0.2.2
-                       3600 AAAA 2001:0db8::2
-in.example.jp.         3600 NS   ns.in.example.jp.
-                       3600 NS   ns.sibling.example.jp.
-                       3600 NS   unrelated.com.
-ns.in.example.jp.      3600 A    192.0.2.3 ; glue
-sibling.example.jp.    3600 NS   ns.sibling.example.jp.
-ns.sibling.example.jp. 3600 A    192.0.2.4 ; glue
-unrelated.com.         3609 A    192.0.2.10 ; glue
+ns.example.jp.         3600 A     192.0.2.1
+exist.example.jp.      3600 A     192.0.2.2
+                       3600 AAAA  2001:0db8::2
+in.example.jp.         3600 NS    ns.in.example.jp.
+                       3600 NS    ns.sibling.example.jp.
+                       3600 NS    unrelated.com.
+ns.in.example.jp.      3600 A     192.0.2.3 ; glue
+sibling.example.jp.    3600 NS    ns.sibling.example.jp.
+ns.sibling.example.jp. 3600 A     192.0.2.4 ; glue
+unrelated.com.         3600 A     192.0.2.10 ; glue
+exist-cname.example.jp 3600 CNAME exist.example.jp.
