@@ -55,6 +55,7 @@ processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
                 | otherwise = []
          in makeAnswer ans add
   where
+    -- RFC2308 Sec 2.2 No Data
     makeAnswer [] add = makeReply reply [] [dbSOA] add NoErr True
     makeAnswer ans add = makeReply reply ans [] add NoErr True
 
