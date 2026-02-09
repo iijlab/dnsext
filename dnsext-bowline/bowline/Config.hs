@@ -203,8 +203,7 @@ showConfig1 Config{..} =
 
 showConfig2 :: Config -> [String]
 showConfig2 conf =
-    [ -- field "capabilities" numCapabilities
-      field'_ "log output" (showOut . cnf_log_output)
+    [ field'_ "log output" (showOut . cnf_log_output)
     , field' "log level" cnf_log_level
     , field' "short log" cnf_short_log
     , field' "max cache size" cnf_cache_size
