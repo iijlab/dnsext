@@ -48,16 +48,14 @@ getAnswer db query
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
     Nothing -> findAuthority db q reply
-    Just rs ->
-        let ans
-                -- RFC 8482 Sec 4.1
-                -- Answer with a Subset of Available RRsets
-                | qtype == ANY = take 1 rs
-                | otherwise = filter (\r -> rrtype r == qtype) rs
-            add
-                | qtype == NS = findAdditional db rs
-                | otherwise = []
-         in makeAnswer ans add
+    Just rs -> case qtype of
+        -- RFC 8482 Sec 4.1
+        -- Answer with a Subset of Available RRsets
+        ANY -> makeAnswer (take 1 rs) []
+        _ ->
+            let ans = filter (\r -> rrtype r == qtype) rs
+                add = if qtype == NS then findAdditional db ans else []
+             in makeAnswer ans add
   where
     -- RFC2308 Sec 2.2 No Data
     makeAnswer [] add = makeReply reply [] [dbSOA] add NoErr True
