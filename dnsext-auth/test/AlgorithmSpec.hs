@@ -70,6 +70,45 @@ spec = describe "authoritative algorithm" $ do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
+    it "can handle existing CNAME" $ do
+        let query = defaultQuery{question = Question "exist-cname.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 2
+        answer ans `shouldSatisfy` include "exist-cname.example.jp." CNAME
+        answer ans `shouldSatisfy` include "exist.example.jp." A
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+    it "can handle non-existing CNAME" $ do
+        let query = defaultQuery{question = Question "fault-cname.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "fault-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+    it "can handle unrelated CNAME" $ do
+        let query = defaultQuery{question = Question "ext-cname.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "ext-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+    it "can handle existing CNAME for CNAME query" $ do
+        let query = defaultQuery{question = Question "exist-cname.example.jp." CNAME IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "exist-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 2
+        additional ans `shouldSatisfy` include "exist.example.jp." A
+        additional ans `shouldSatisfy` include "exist.example.jp." AAAA
+        flags ans `shouldSatisfy` authAnswer
 
 includeNS :: Domain -> [ResourceRecord] -> Bool
 includeNS dom rs = any has rs

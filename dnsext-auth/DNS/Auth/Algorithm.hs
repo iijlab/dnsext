@@ -6,7 +6,7 @@ module DNS.Auth.Algorithm (
 
 import Data.List (nub, sort)
 import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 
 import DNS.Auth.DB
 import DNS.Types
@@ -52,14 +52,30 @@ processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
         | qtype == ANY -> makeAnswer (take 1 rs) []
-        | otherwise ->
-            let ans = filter (\r -> rrtype r == qtype) rs
-                add = if qtype == NS then findAdditional db ans else []
-             in makeAnswer ans add
+        | otherwise -> case filter (\r -> rrtype r == CNAME) rs of
+            [] ->
+                let ans = filter (\r -> rrtype r == qtype) rs
+                    add = if qtype == NS then findAdditional db ans else []
+                 in makeAnswer ans add
+            [c] | length rs == 1 -> case fromRData $ rdata c of
+                Nothing -> error "processPositive: never reached"
+                Just cname -> processCNAME db q reply c $ cname_domain cname
+            _ -> error "processPositive: multiple CNAMEs"
   where
     -- RFC2308 Sec 2.2 No Data
     makeAnswer [] add = makeReply reply [] [dbSOA] add NoErr True
     makeAnswer ans add = makeReply reply ans [] add NoErr True
+
+processCNAME :: DB -> Question -> DNSMessage -> ResourceRecord -> Domain -> DNSMessage
+processCNAME DB{..} Question{..} reply c cname
+    | qtype == CNAME = makeReply reply [c] [] add NoErr True
+  where
+    add = fromMaybe [] $ M.lookup cname dbAdditional
+processCNAME DB{..} Question{..} reply c cname = makeReply reply ans [] [] NoErr True
+  where
+    ans = case M.lookup cname dbAnswer of
+        Nothing -> [c]
+        Just rs -> [c] ++ filter (\r -> rrtype r == qtype) rs
 
 findAuthority
     :: DB
@@ -88,12 +104,8 @@ findAdditional DB{..} rs0 = add
   where
     doms = nub $ sort $ catMaybes $ map extractNS rs0
     add = concat $ map lookupAdd doms
-    lookupAdd dom = case M.lookup dom dbAdditional of
-        Nothing -> []
-        Just rs -> rs
-    extractNS rr = case fromRData $ rdata rr of
-        Nothing -> Nothing
-        Just ns -> Just $ ns_domain ns
+    lookupAdd dom = fromMaybe [] $ M.lookup dom dbAdditional
+    extractNS rr = ns_domain <$> fromRData (rdata rr)
 
 makeReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage
 makeReply reply ans auth add code aa =
