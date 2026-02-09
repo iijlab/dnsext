@@ -87,7 +87,7 @@ import DNS.Iterative.RootTrustAnchors (rootSepDSs)
 import DNS.Iterative.Stats
 
 version :: String
-version = "0.0.0.20260204"
+version = "0.0.0.20260209"
 
 {- FOURMOLU_DISABLE -}
 -- | Creating a new 'Env'.
