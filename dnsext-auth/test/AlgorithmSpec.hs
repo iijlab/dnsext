@@ -51,6 +51,16 @@ spec = describe "authoritative algorithm" $ do
         additional ans `shouldSatisfy` include "ns.in.example.jp." A
         additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
         flags ans `shouldSatisfy` not . authAnswer
+    it "returns AA for NS of this domain" $ do
+        let query = defaultQuery{question = Question "example.jp." NS IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` includeNS "ns.example.jp."
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 1
+        additional ans `shouldSatisfy` include "ns.example.jp." A
+        flags ans `shouldSatisfy` authAnswer
 
 includeNS :: Domain -> [ResourceRecord] -> Bool
 includeNS dom rs = any has rs
