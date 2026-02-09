@@ -72,7 +72,10 @@ processCNAME :: DB -> Question -> DNSMessage -> ResourceRecord -> Domain -> DNSM
 processCNAME DB{..} Question{..} reply c cname
     | qtype == CNAME = makeReply reply [c] [] add NoErr True
   where
-    add = fromMaybe [] $ M.lookup cname dbAdditional
+    add
+        | cname `isSubDomainOf` dbZone =
+            fromMaybe [] $ M.lookup cname dbAdditional
+        | otherwise = []
 processCNAME DB{..} Question{..} reply c cname = makeReply reply ans [] [] NoErr True
   where
     ans = case M.lookup cname dbAnswer of
@@ -104,7 +107,8 @@ findAdditional
     -> [ResourceRecord]
 findAdditional DB{..} rs0 = add
   where
-    doms = nub $ sort $ catMaybes $ map extractNS rs0
+    doms0 = nub $ sort $ catMaybes $ map extractNS rs0
+    doms = filter (\d -> d `isSubDomainOf` dbZone) doms0
     add = concat $ map lookupAdd doms
     lookupAdd dom = fromMaybe [] $ M.lookup dom dbAdditional
     extractNS rr = ns_domain <$> fromRData (rdata rr)
