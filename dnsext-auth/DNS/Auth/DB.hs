@@ -20,6 +20,7 @@ data DB = DB
     , dbAnswer :: M.Map Domain [ResourceRecord]
     , dbAuthority :: M.Map Domain [ResourceRecord]
     , dbAdditional :: M.Map Domain [ResourceRecord]
+    , dbAll :: [ResourceRecord]
     }
     deriving (Show)
 
@@ -51,6 +52,7 @@ make (zone, soa : rrs)
                 , dbAnswer = ans
                 , dbAuthority = auth
                 , dbAdditional = add
+                , dbAll = [soa] ++ rrs ++ [soa]
                 }
   where
     -- RFC 9471
