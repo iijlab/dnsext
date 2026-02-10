@@ -3,6 +3,7 @@
 module DNS.Auth.Algorithm (
     getAnswer,
     DB (..),
+    fromQuery,
 ) where
 
 import Data.List (nub, sort)
@@ -12,27 +13,15 @@ import Data.Maybe (catMaybes, fromMaybe)
 import DNS.Auth.DB
 import DNS.Types
 
--- RFC 8906: Sec 3.1.3.1
---
--- A non-recursive server is supposed to respond to recursive
--- queries as if the Recursion Desired (RD) bit is not set
-getAnswer :: DB -> DNSMessage -> DNSMessage
-getAnswer db query
-    -- RFC 8906: Sec 3.1.4
-    | opcode query /= OP_STD = reply{rcode = NotImpl}
-    | isResponse (flags query) = reply{rcode = Refused}
-    | qtype q `elem` [AXFR, IXFR] = reply{rcode = Refused}
-    | not (qname q `isSubDomainOf` dbZone db) =
-        reply
-            { rcode = Refused
-            , flags = flgs{authAnswer = False}
-            }
-    -- RFC 8906 Sec3.1.3.1. Recursive Queries
-    -- A non-recursive server is supposed to respond to recursive
-    -- queries as if the Recursion Desired (RD) bit is not set.
-    | otherwise = processPositive db q reply
+fromQuery :: DNSMessage -> DNSMessage
+fromQuery query =
+    query
+        { -- Copy identifier
+          -- Copy question
+          flags = flgs
+        , ednsHeader = ednsH
+        }
   where
-    q = question query
     -- RFC 6891: Sec 6.1.1
     ednsH = case ednsHeader query of
         EDNSheader _ -> EDNSheader defaultEDNS
@@ -49,12 +38,29 @@ getAnswer db query
             , authenData = False
             , chkDisable = False
             }
-    reply =
-        query
-            { identifier = identifier query
-            , flags = flgs
-            , ednsHeader = ednsH
+
+-- RFC 8906: Sec 3.1.3.1
+--
+-- A non-recursive server is supposed to respond to recursive
+-- queries as if the Recursion Desired (RD) bit is not set
+getAnswer :: DB -> DNSMessage -> DNSMessage
+getAnswer db query
+    -- RFC 8906: Sec 3.1.4
+    | opcode query /= OP_STD = reply{rcode = NotImpl}
+    | isResponse (flags query) = reply{rcode = Refused}
+    | qtype q `elem` [AXFR, IXFR] = reply{rcode = Refused}
+    | not (qname q `isSubDomainOf` dbZone db) =
+        reply
+            { rcode = Refused
+            , flags = (flags reply){authAnswer = False}
             }
+    -- RFC 8906 Sec3.1.3.1. Recursive Queries
+    -- A non-recursive server is supposed to respond to recursive
+    -- queries as if the Recursion Desired (RD) bit is not set.
+    | otherwise = processPositive db q reply
+  where
+    q = question query
+    reply = fromQuery query
 
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
