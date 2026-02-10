@@ -2,6 +2,7 @@
 
 module DNS.Auth.Algorithm (
     getAnswer,
+    DB (..),
 ) where
 
 import Data.List (nub, sort)
