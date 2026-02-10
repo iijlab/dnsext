@@ -4,10 +4,12 @@
 
 module Main where
 
+import Control.Concurrent
 import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
 import qualified Data.List.NonEmpty as NE
+import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
@@ -19,6 +21,7 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 
+import Axfr
 import Config
 
 ----------------------------------------------------------------
@@ -33,6 +36,9 @@ main = do
         Right db -> do
             ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
             ss <- mapM serverSocket ais
+            _ <- forkIO $
+                runTCPServer 10 (Just "127.0.0.1") "53" $
+                    \_ _ s -> axfr db s
             mapConcurrently_ (clove db) ss
 
 ----------------------------------------------------------------
