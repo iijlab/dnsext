@@ -4,7 +4,6 @@
 
 module Main where
 
-import Control.Concurrent
 import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
@@ -34,14 +33,11 @@ main = do
     case edb of
         Left emsg -> die emsg
         Right db -> do
-            _ <-
-                forkIO $
-                    mapConcurrently_
-                        (axfrServer db (show cnf_tcp_port))
-                        cnf_tcp_addrs
+            let as = map (axfrServer db (show cnf_tcp_port)) cnf_tcp_addrs
             ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
             ss <- mapM serverSocket ais
-            mapConcurrently_ (clove db) ss
+            let cs = map (clove db) ss
+            foldr1 concurrently_ $ as ++ cs
 
 ----------------------------------------------------------------
 
