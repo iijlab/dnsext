@@ -1,18 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 module Main where
 
 import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
+import Data.IP
+import Data.IP.RouteTable
 import qualified Data.List.NonEmpty as NE
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
 import System.Exit
+import Text.Read
 
 import DNS.Auth.Algorithm
 import DNS.Auth.DB
@@ -33,7 +37,10 @@ main = do
     case edb of
         Left emsg -> die emsg
         Right db -> do
-            let as = map (axfrServer db (show cnf_tcp_port)) cnf_tcp_addrs
+            let (a4, a6) = readIPRange cnf_allow_axfr
+                t4 = fromList $ map (,True) a4
+                t6 = fromList $ map (,True) a6
+            let as = map (axfrServer db t4 t6 (show cnf_tcp_port)) cnf_tcp_addrs
             ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
             ss <- mapM serverSocket ais
             let cs = map (clove db) ss
@@ -41,10 +48,16 @@ main = do
 
 ----------------------------------------------------------------
 
-axfrServer :: DB -> ServiceName -> HostName -> IO ()
-axfrServer db port addr =
+axfrServer
+    :: DB
+    -> IPRTable IPv4 Bool
+    -> IPRTable IPv6 Bool
+    -> ServiceName
+    -> HostName
+    -> IO ()
+axfrServer db t4 t6 port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> axfr db s
+        \_ _ s -> axfr db t4 t6 s
 
 clove :: DB -> Socket -> IO ()
 clove db s = loop
@@ -79,3 +92,13 @@ serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
     setSocketOption s ReuseAddr 1
     bind s $ addrAddress ai
     return s
+
+readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
+readIPRange ss0 = loop id id ss0
+  where
+    loop b4 b6 [] = (b4 [], b6 [])
+    loop b4 b6 (s : ss) = case readMaybe s :: Maybe (AddrRange IPv6) of
+        Just a6 -> loop b4 (b6 . (a6 :)) ss
+        Nothing -> case readMaybe s :: Maybe (AddrRange IPv4) of
+            Just a4 -> loop (b4 . (a4 :)) b6 ss
+            Nothing -> loop b4 b6 ss

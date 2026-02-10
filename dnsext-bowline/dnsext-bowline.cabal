@@ -163,6 +163,7 @@ executable clove
         dnsext-do53,
         dnsext-types,
         dnsext-utils,
+        iproute,
         network-run
 
     if (os(windows) && impl(ghc >=9.0))
