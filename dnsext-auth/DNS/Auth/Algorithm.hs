@@ -48,7 +48,12 @@ getAnswer db query
             , authenData = False
             , chkDisable = False
             }
-    reply = query{flags = flgs, ednsHeader = ednsH}
+    reply =
+        query
+            { identifier = identifier query
+            , flags = flgs
+            , ednsHeader = ednsH
+            }
 
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
