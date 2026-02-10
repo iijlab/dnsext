@@ -148,7 +148,8 @@ executable ddrd
 executable clove
     main-is:          clove.hs
     hs-source-dirs:   clove
-    other-modules:    Config
+    other-modules:    Axfr
+                      Config
 
     default-language: Haskell2010
     ghc-options:      -Wall -threaded
@@ -159,8 +160,10 @@ executable clove
         network,
         -- dnsext packages
         dnsext-auth,
+        dnsext-do53,
         dnsext-types,
-        dnsext-utils
+        dnsext-utils,
+        network-run
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
