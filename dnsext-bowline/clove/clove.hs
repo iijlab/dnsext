@@ -34,14 +34,21 @@ main = do
     case edb of
         Left emsg -> die emsg
         Right db -> do
-            ais <- mapM (serverResolve cnf_udp_port) cnf_dns_addrs
+            _ <-
+                forkIO $
+                    mapConcurrently_
+                        (axfrServer db (show cnf_tcp_port))
+                        cnf_tcp_addrs
+            ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
             ss <- mapM serverSocket ais
-            _ <- forkIO $
-                runTCPServer 10 (Just "127.0.0.1") "53" $
-                    \_ _ s -> axfr db s
             mapConcurrently_ (clove db) ss
 
 ----------------------------------------------------------------
+
+axfrServer :: DB -> ServiceName -> HostName -> IO ()
+axfrServer db port addr =
+    runTCPServer 10 (Just addr) port $
+        \_ _ s -> axfr db s
 
 clove :: DB -> Socket -> IO ()
 clove db s = loop
