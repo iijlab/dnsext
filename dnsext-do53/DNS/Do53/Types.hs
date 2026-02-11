@@ -109,11 +109,11 @@ newtype VCLimit = VCLimit {unVCLimit :: Int} deriving (Eq, Ord, Num, Show)
 --
 --  An example to use Google's public DNS cache instead of resolv.conf:
 --
---  > let conf = defaultLookupConf { lconfInfo = SeedsAddr "8.8.8.8" }
+--  > let conf = defaultLookupConf { lconfSeeds = SeedsAddr "8.8.8.8" }
 --
 --  An example to use multiple Google's public DNS cache concurrently:
 --
---  > let conf = defaultLookupConf { lconfInfo = SeedsAddrs ["8.8.8.8","8.8.4.4"], lconfConcurrent = True }
+--  > let conf = defaultLookupConf { lconfSeeds = SeedsAddrs ["8.8.8.8","8.8.4.4"], lconfConcurrent = True }
 --
 --  An example to disable EDNS:
 --
