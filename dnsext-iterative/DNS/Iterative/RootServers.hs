@@ -75,7 +75,7 @@ rootServers =
 -- [("M.ROOT-SERVERS.NET.",202.12.27.33),("M.ROOT-SERVERS.NET.",2001:dc3::35)]
 getRootServers :: FilePath -> IO ([ResourceRecord], [ResourceRecord])
 getRootServers hintPath = do
-    rs <- Zone.parseFile hintPath
+    rs <- Zone.parseFile hintPath "."
     let rrs = [rr | R_RR rr <- rs]
         ns = [rr | rr@ResourceRecord{rrname = ".", rrtype = NS} <- rrs]
         ax = [rr | rr <- rrs, rrtype rr == A || rrtype rr == AAAA]
