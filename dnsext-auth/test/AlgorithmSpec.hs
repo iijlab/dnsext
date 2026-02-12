@@ -80,6 +80,15 @@ spec = describe "authoritative algorithm" $ do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
+    it "can handle no-data CNAME" $ do
+        let query = defaultQuery{question = Question "exist-cname.example.jp." TXT IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "exist-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
     it "can handle nx-domain CNAME" $ do
         let query = defaultQuery{question = Question "fault-cname.example.jp." A IN}
             ans = getAnswer db query
