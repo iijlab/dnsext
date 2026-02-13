@@ -62,7 +62,7 @@ executable bowline
         split,
         stm,
         tls >=2.1.10,
-        tls-session-manager,
+        tls-session-manager >= 0.0.9,
         transformers,
         unix,
         wai,

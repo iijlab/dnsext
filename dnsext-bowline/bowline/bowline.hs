@@ -131,13 +131,13 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                         , timeout_ = tmout
                         }
             --  filled env available
-            sm <- ST.newSessionTicketManager ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}
+            (sm, killSM) <- ST.newSessionTicketManager' ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}
             addrs <- mapM (bindServers cnf_dns_addrs) $ trans cnf_credentials sm
             (mas, monInfo) <- Mon.bindMonitor conf env
             masock <- API.bindAPI conf
-            return (runWriter, env, addrs, mas, monInfo, masock)
+            return (runWriter, env, addrs, mas, monInfo, masock, killSM)
     -- recover root-privilege to bind network-port and to access private-key on reloading
-    (runWriter, env, addrs, mas, monInfo, masock) <- withRoot ruid conf rootpriv
+    (runWriter, env, addrs, mas, monInfo, masock, killSM) <- withRoot ruid conf rootpriv
     -- actions list for threads
     cacherStats <- Server.getWorkerStats cnf_cachers
     workerStats <- Server.getWorkerStats cnf_workers
@@ -172,6 +172,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
             mapM_ maybeKill [tidA, tidW]
             killSSLKeyLogger
             killLogger
+            killSM
     threadDelay 500000 -- avoiding address already in use
   where
     maybeKill = maybe (return ()) killThread
