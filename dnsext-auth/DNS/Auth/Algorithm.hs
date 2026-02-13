@@ -93,11 +93,14 @@ processCNAME DB{..} Question{..} reply c cname
         | cname `isSubDomainOf` dbZone =
             fromMaybe [] $ M.lookup cname dbAdditional
         | otherwise = []
-processCNAME DB{..} Question{..} reply c cname = makeReply reply ans [] [] NoErr True
+processCNAME DB{..} Question{..} reply c cname = makeReply reply ans [] [] code True
   where
-    ans = case M.lookup cname dbAnswer of
-        Nothing -> [c]
-        Just rs -> [c] ++ filter (\r -> rrtype r == qtype) rs
+    (ans, code)
+        | cname `isSubDomainOf` dbZone = case M.lookup cname dbAnswer of
+            -- RFC 2308 Sec 2.1 - Name Error
+            Nothing -> ([c], NXDomain)
+            Just rs -> ([c] ++ filter (\r -> rrtype r == qtype) rs, NoErr)
+        | otherwise = ([c], NoErr)
 
 findAuthority
     :: DB
