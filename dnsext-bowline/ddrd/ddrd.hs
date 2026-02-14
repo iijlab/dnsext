@@ -297,7 +297,11 @@ mainLoop opts op@Op{..} env = loop
                     piplineResolver $ \resolver -> do
                         let runWorkers = foldr1 concurrently_ $ replicate numberOfWorkers $ worker op contvar resolver
                         runWorkers
-    ignore (E.SomeException se) = putLog $ toLogStr $ show se ++ "\n"
+    -- SomeException: asynchronous exceptions are re-thrown
+    ignore se@(E.SomeException _)
+        | Just (E.SomeAsyncException _) <- E.fromException se =
+            E.throwIO se
+        | otherwise = putLog $ toLogStr $ show se ++ "\n"
 
 ----------------------------------------------------------------
 

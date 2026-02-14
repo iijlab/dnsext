@@ -84,6 +84,7 @@ control Config{..} body = loop
         ex <- E.try body
         case ex of
             Right () -> return ()
+            -- SomeException: asynchronous exceptions are re-thrown
             Left se@(E.SomeException _)
                 | Just (E.SomeAsyncException _) <- E.fromException se ->
                     E.throwIO se
