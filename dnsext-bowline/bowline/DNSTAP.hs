@@ -84,6 +84,9 @@ control Config{..} body = loop
         ex <- E.try body
         case ex of
             Right () -> return ()
-            Left (E.SomeException _e) -> do
-                threadDelay (cnf_dnstap_reconnect_interval * 1000000)
-                loop
+            Left se@(E.SomeException _)
+                | Just (E.SomeAsyncException _) <- E.fromException se ->
+                    E.throwIO se
+                | otherwise -> do
+                    threadDelay (cnf_dnstap_reconnect_interval * 1000000)
+                    loop
