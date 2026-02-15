@@ -23,6 +23,7 @@ import DNS.Auth.DB
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
+import Data.IORef
 
 import Axfr
 import Config
@@ -37,37 +38,40 @@ main = do
     case edb of
         Left emsg -> die emsg
         Right db -> do
+            dbref <- newIORef db
             let (a4, a6) = readIPRange cnf_transfer_addrs
                 t4 = fromList $ map (,True) a4
                 t6 = fromList $ map (,True) a6
-            let as = map (axfrServer db t4 t6 (show cnf_tcp_port)) cnf_tcp_addrs
+            let as = map (axfrServer dbref t4 t6 (show cnf_tcp_port)) cnf_tcp_addrs
             ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
             ss <- mapM serverSocket ais
-            let cs = map (clove db) ss
+            let cs = map (authServer dbref) ss
             foldr1 concurrently_ $ as ++ cs
 
 ----------------------------------------------------------------
 
 axfrServer
-    :: DB
+    :: IORef DB
     -> IPRTable IPv4 Bool
     -> IPRTable IPv6 Bool
     -> ServiceName
     -> HostName
     -> IO ()
-axfrServer db t4 t6 port addr =
+axfrServer dbref t4 t6 port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> axfr db t4 t6 s
+        \_ _ s -> axfrResponder dbref t4 t6 s
 
-clove :: DB -> Socket -> IO ()
-clove db s = loop
+authServer :: IORef DB -> Socket -> IO ()
+authServer dbref s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
         case decode bs of
             -- fixme: which RFC?
             Left _e -> return ()
-            Right query -> replyQuery db s sa query
+            Right query -> do
+                db <- readIORef dbref
+                replyQuery db s sa query
         loop
 
 replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
