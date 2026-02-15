@@ -30,6 +30,14 @@ import Config
 
 ----------------------------------------------------------------
 
+data Source
+    = FromFile FilePath
+    | FromUpstream4 IPv4
+    | FromUpstream6 IPv6
+    deriving (Eq, Show)
+
+----------------------------------------------------------------
+
 main :: IO ()
 main = do
     [conffile] <- getArgs
@@ -101,8 +109,13 @@ readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
 readIPRange ss0 = loop id id ss0
   where
     loop b4 b6 [] = (b4 [], b6 [])
-    loop b4 b6 (s : ss) = case readMaybe s :: Maybe (AddrRange IPv6) of
-        Just a6 -> loop b4 (b6 . (a6 :)) ss
-        Nothing -> case readMaybe s :: Maybe (AddrRange IPv4) of
-            Just a4 -> loop (b4 . (a4 :)) b6 ss
-            Nothing -> loop b4 b6 ss
+    loop b4 b6 (s : ss)
+        | Just a6 <- readMaybe s = loop b4 (b6 . (a6 :)) ss
+        | Just a4 <- readMaybe s = loop (b4 . (a4 :)) b6 ss
+        | otherwise = loop b4 b6 ss
+
+readSource :: String -> Source
+readSource s
+    | Just a6 <- readMaybe s = FromUpstream6 a6
+    | Just a4 <- readMaybe s = FromUpstream4 a4
+    | otherwise = FromFile s
