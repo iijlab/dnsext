@@ -233,7 +233,7 @@ cv_string' :: MonadParser W8 s m => m String
 cv_string' =
     squote *> many (noneOf "'\n")  <* squote <|>
     dquote *> many (noneOf "\"\n") <* dquote <|>
-    some (noneOf "\"# \t\n")
+    some (noneOf "\"# \t\n,")
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -245,8 +245,16 @@ cv_string' =
 cv_strings :: MonadParser W8 s m => m ConfValue
 cv_strings = do
     v1 <- cv_string'
-    vs <- many (spcs1 *> cv_string')
+    vs <- many (separator *> cv_string')
     pure $ if null vs
            then CV_String v1
            else CV_Strings $ v1:vs
 {- FOURMOLU_ENABLE -}
+
+separator :: MonadParser W8 s m => m ()
+separator = comma <|> spcs1
+  where
+    comma = do
+        spcs
+        void (Just <$> char ',' <|> return Nothing)
+        spcs
