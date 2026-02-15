@@ -33,11 +33,11 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     Config{..} <- loadConfig conffile
-    edb <- loadDB cnf_zone_name cnf_zone_file
+    edb <- loadDB cnf_zone_name cnf_source
     case edb of
         Left emsg -> die emsg
         Right db -> do
-            let (a4, a6) = readIPRange cnf_allow_axfr
+            let (a4, a6) = readIPRange cnf_transfer_addrs
                 t4 = fromList $ map (,True) a4
                 t6 = fromList $ map (,True) a6
             let as = map (axfrServer db t4 t6 (show cnf_tcp_port)) cnf_tcp_addrs
