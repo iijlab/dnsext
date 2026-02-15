@@ -1,4 +1,6 @@
-module Axfr where
+module Axfr (
+    axfrResponder,
+) where
 
 import DNS.Auth.Algorithm
 import DNS.Do53.Internal
@@ -6,14 +8,20 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 
+import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
 import qualified Data.IP.RouteTable as T
 import Data.Maybe
 import Network.Socket
 
-axfr :: DB -> IPRTable IPv4 Bool -> IPRTable IPv6 Bool -> Socket -> IO ()
-axfr db t4 t6 sock = do
+axfrResponder
+    :: IORef DB
+    -> IPRTable IPv4 Bool
+    -> IPRTable IPv6 Bool
+    -> Socket
+    -> IO ()
+axfrResponder dbref t4 t6 sock = do
     sa <- getSocketName sock
     let ok = case fromSockAddr sa of
             Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
@@ -24,6 +32,7 @@ axfr db t4 t6 sock = do
         Left _ -> return ()
         Right query
             | ok -> do
+                db <- readIORef dbref
                 let reply = makeReply db query
                 sendVC (sendTCP sock) $ encode reply
             | otherwise -> do
