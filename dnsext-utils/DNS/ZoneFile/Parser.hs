@@ -331,7 +331,7 @@ parseLineRecord :: [Token] -> Context -> Either String (Record, Context)
 parseLineRecord ts icontext = fst <$> runParser (record <* eof) icontext ts
 
 -- |
--- >>> parseFile [CS "example",Dot,CS "net",Dot,Blank,CS "7200",Blank,CS "IN",Blank,CS "AAAA",Blank,CS "2001:db8::3",RSep]
+-- >>> parseFile "." [CS "example",Dot,CS "net",Dot,Blank,CS "7200",Blank,CS "IN",Blank,CS "AAAA",Blank,CS "2001:db8::3",RSep]
 -- Right ([R_RR (ResourceRecord {rrname = "example.net.", rrtype = AAAA, rrclass = IN, rrttl = 7200(2 hours), rdata = 2001:db8::3})],Context "." "example.net." 7200 IN)
-parseFile :: [Token] -> Either String ([Record], Context)
-parseFile = (fst <$>) . runParser (file <* eof) defaultContext
+parseFile :: Domain -> [Token] -> Either String ([Record], Context)
+parseFile dom = (fst <$>) . runParser (file <* eof) defaultContext{cx_zone = dom, cx_name = dom}

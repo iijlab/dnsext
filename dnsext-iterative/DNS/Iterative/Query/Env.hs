@@ -281,7 +281,7 @@ readTrustAnchors' ps = do
 {- FOURMOLU_DISABLE -}
 readAnchor :: FilePath -> IO ([(Domain, RD_DS)], [(Domain, RD_DNSKEY)])
 readAnchor path = do
-    rs <- Zone.parseFile path
+    rs <- Zone.parseFile path $ fromString "."
     let rrs = [ rr | R_RR rr <- rs ]
         dss  = [ (rrname, ds) | ResourceRecord{ rrtype = DS    , .. } <- rrs, Just ds <- [fromRData rdata] ]
         keys = [ (rrname, ky) | ResourceRecord{ rrtype = DNSKEY, .. } <- rrs, Just ky <- [fromRData rdata] ]
