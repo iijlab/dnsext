@@ -52,7 +52,8 @@ instance FromConf Bool where
 instance FromConf String where
     fromConf (CV_String s) = pure s
     fromConf (CV_Strings []) = pure ""
-    fromConf (CV_Strings (s : _)) = pure s
+    fromConf (CV_Strings [s]) = pure s
+    fromConf cv@(CV_Strings _) = failWith cv "fromConf string"
     fromConf cv = failWith cv "fromConf string"
 
 instance FromConf (Maybe String) where
