@@ -118,6 +118,22 @@ spec = describe "authoritative algorithm" $ do
         additional ans `shouldSatisfy` include "exist.example.jp." A
         additional ans `shouldSatisfy` include "exist.example.jp." AAAA
         flags ans `shouldSatisfy` authAnswer
+    it "can handle Empty Non-Terminal node" $ do
+        let query = defaultQuery{question = Question "ent1.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 0
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+    it "can handle Empty Non-Terminal node nested" $ do
+        let query = defaultQuery{question = Question "ent2.ent1.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 0
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
 
 includeNS :: Domain -> [ResourceRecord] -> Bool
 includeNS dom rs = any has rs
