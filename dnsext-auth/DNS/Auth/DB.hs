@@ -66,6 +66,7 @@ makeDB (zone, soa : rrs)
     (gs, zs) = partition (\r -> isDelegated (rrname r)) as
     -- gs: glue (in delegated domain)
     -- zs: in-domain
+    -- expand is for RFC 4592 Sec 2.2.2.Empty Non-terminals
     ans = makeMap $ [soa] ++ concat (map (expand zone) zs)
     auth = makeMap ns
     xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
@@ -112,6 +113,7 @@ fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
 fromResource _ = Nothing
 
+-- For RFC 4592 Sec 2.2.2.Empty Non-terminals
 expand :: Domain -> ResourceRecord -> [ResourceRecord]
 expand dom rr = loop r0
   where
