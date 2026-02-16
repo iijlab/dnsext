@@ -14,7 +14,7 @@ spec = describe "authoritative algorithm" $ do
     let db = case edb of
             Left _ -> error "DB"
             Right db' -> db'
-    it "can answer an exiting domain" $ do
+    it "can answer an existing domain" $ do
         let query = defaultQuery{question = Question "exist.example.jp." A IN}
             ans = getAnswer db query
         rcode ans `shouldBe` NoErr
@@ -22,7 +22,7 @@ spec = describe "authoritative algorithm" $ do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
-    it "can answer an non-exiting domain" $ do
+    it "can answer an non-existing domain" $ do
         let query = defaultQuery{question = Question "nonexist.example.jp." A IN}
             ans = getAnswer db query
         rcode ans `shouldBe` NXDomain
