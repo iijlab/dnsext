@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module DNS.Auth.DB (
     DB (..),
     loadDB,
@@ -64,7 +66,7 @@ makeDB (zone, soa : rrs)
     (gs, zs) = partition (\r -> isDelegated (rrname r)) as
     -- gs: glue (in delegated domain)
     -- zs: in-domain
-    ans = makeMap $ [soa] ++ zs
+    ans = makeMap $ [soa] ++ concat (map (expand zone) zs)
     auth = makeMap ns
     xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
     add = makeMap $ xs ++ gs
@@ -95,8 +97,9 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
 makeMap :: [ResourceRecord] -> M.Map Domain [ResourceRecord]
 makeMap rrs = M.fromList kvs
   where
-    vs = groupBy ((==) `on` rrname) $ sort rrs
-    ks = map (rrname . unsafeHead) vs
+    ts = groupBy ((==) `on` rrname) $ sort rrs
+    vs = map (filter (\rr -> rrtype rr /= NULL)) ts
+    ks = map (rrname . unsafeHead) ts
     kvs = zip ks vs
 
 unsafeHead :: [a] -> a
@@ -108,3 +111,21 @@ unsafeHead _ = error "unsafeHead"
 fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
 fromResource _ = Nothing
+
+expand :: Domain -> ResourceRecord -> [ResourceRecord]
+expand dom rr = loop r0
+  where
+    r0 = rrname rr
+    loop r
+        | r == dom = [rr]
+        | otherwise = case unconsDomain r of
+            Nothing -> [rr]
+            Just (_, r1) -> rrnull r : loop r1
+    rrnull r =
+        ResourceRecord
+            { rrname = r
+            , rrtype = NULL
+            , rrclass = IN
+            , rrttl = 0
+            , rdata = rd_null ""
+            }
