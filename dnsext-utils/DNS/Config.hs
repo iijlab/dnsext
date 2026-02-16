@@ -61,6 +61,9 @@ instance FromConf (Maybe String) where
     fromConf cv = failWith cv "fromConf maybe string"
 
 instance FromConf [String] where
+    -- splitOn is for backward compatibly only so
+    -- it should be removed in the future.
+    --     fromConf (CV_String s) = pure [s]
     fromConf (CV_String s) = pure $ filter (/= "") $ splitOn "," s
     fromConf (CV_Strings ss) = pure ss
     fromConf cv = failWith cv "fromConf string list"
