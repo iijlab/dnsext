@@ -51,6 +51,8 @@ instance FromConf Bool where
 
 instance FromConf String where
     fromConf (CV_String s) = pure s
+    fromConf (CV_Strings []) = pure ""
+    fromConf (CV_Strings (s : _)) = pure s
     fromConf cv = failWith cv "fromConf string"
 
 instance FromConf (Maybe String) where
@@ -238,15 +240,20 @@ cv_string' =
 
 {- FOURMOLU_DISABLE -}
 -- |
+-- >>> parse cv_strings "" ""
+-- Right (CV_Strings [])
 -- >>> parse cv_strings "" "\"conf.txt\""
 -- Right (CV_String "conf.txt")
 -- >>> parse cv_strings "" "\"example. 1800 TXT 'abc'\" static"
 -- Right (CV_Strings ["example. 1800 TXT 'abc'","static"])
 cv_strings :: MonadParser W8 s m => m ConfValue
-cv_strings = do
-    v1 <- cv_string'
-    vs <- many (spcs1 *> cv_string')
-    pure $ if null vs
-           then CV_String v1
-           else CV_Strings $ v1:vs
+cv_strings = strings <|> pure (CV_Strings [])
+  where
+    strings = do
+        v1 <- cv_string'
+        vs <- many (spcs1 *> cv_string')
+        pure $
+            if null vs
+                then CV_String v1
+                else CV_Strings $ v1 : vs
 {- FOURMOLU_ENABLE -}
