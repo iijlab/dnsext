@@ -20,3 +20,4 @@ unrelated.com.          3600 A     192.0.2.10 ; glue
 exist-cname.example.jp. 3600 CNAME exist.example.jp.
 fault-cname.example.jp. 3600 CNAME nonexist.example.jp.
 ext-cname.example.jp.   3600 CNAME foo.unrelated.com.
+a.ent2.ent1.example.jp. 3600 A     192.0.2.5
