@@ -40,8 +40,6 @@ import qualified Data.List.NonEmpty as NE
 -- configuration with any additional overrides from the caller.
 --
 resolve :: ResolveEnv -> Resolver
-resolve _ Question{..} _
-    | qtype == AXFR = return $ Left InvalidAXFRLookup
 resolve ResolveEnv{..} q qctl = case renvResolveInfos of
     ri :| [] -> resolver ri q qctl
     ris
