@@ -54,6 +54,7 @@ client ip name = do
     let riActions =
             defaultResolveActions
                 { ractionTimeoutTime = 3000000
+                , ractionLog = \_lvl _mclr ss -> mapM_ putStrLn ss
                 }
         ris =
             [ defaultResolveInfo
