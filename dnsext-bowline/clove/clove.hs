@@ -25,7 +25,7 @@ import DNS.Types.Decode
 import DNS.Types.Encode
 import Data.IORef
 
-import Axfr
+import qualified Axfr as Axfr
 import Config
 
 ----------------------------------------------------------------
@@ -42,7 +42,7 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     Config{..} <- loadConfig conffile
-    edb <- loadDB cnf_zone_name cnf_source
+    edb <- loadSource cnf_zone_name cnf_source
     case edb of
         Left emsg -> die emsg
         Right db -> do
@@ -67,7 +67,7 @@ axfrServer
     -> IO ()
 axfrServer dbref t4 t6 port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> axfrResponder dbref t4 t6 s
+        \_ _ s -> Axfr.server dbref t4 t6 s
 
 authServer :: IORef DB -> Socket -> IO ()
 authServer dbref s = loop
@@ -119,3 +119,19 @@ readSource s
     | Just a6 <- readMaybe s = FromUpstream6 a6
     | Just a4 <- readMaybe s = FromUpstream4 a4
     | otherwise = FromFile s
+
+loadSource :: String -> String -> IO (Either String DB)
+loadSource zone src = case readSource src of
+    FromUpstream4 ip4 -> do
+        emsg <- Axfr.client (IPv4 ip4) dom
+        case emsg of
+            Left _e -> return $ Left $ show _e
+            Right reply -> return $ makeDB (dom, answer reply)
+    FromUpstream6 ip6 -> do
+        emsg <- Axfr.client (IPv6 ip6) dom
+        case emsg of
+            Left _e -> return $ Left $ show _e
+            Right reply -> return $ makeDB (dom, answer reply)
+    FromFile fn -> loadDB zone fn
+  where
+    dom = fromRepresentation zone

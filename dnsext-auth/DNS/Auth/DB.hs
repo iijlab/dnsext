@@ -1,6 +1,7 @@
 module DNS.Auth.DB (
     DB (..),
     loadDB,
+    makeDB,
 ) where
 
 import Data.Function (on)
@@ -27,7 +28,7 @@ data DB = DB
 ----------------------------------------------------------------
 
 loadDB :: String -> FilePath -> IO (Either String DB)
-loadDB zone file = make <$> loadZoneFile zone file
+loadDB zone file = makeDB <$> loadZoneFile zone file
 
 loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
 loadZoneFile zone file = do
@@ -38,12 +39,12 @@ loadZoneFile zone file = do
 
 ----------------------------------------------------------------
 
-make :: (Domain, [ResourceRecord]) -> Either String DB
-make (_, []) = Left "make: no resource records"
+makeDB :: (Domain, [ResourceRecord]) -> Either String DB
+makeDB (_, []) = Left "makeDB: no resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-make (zone, soa : rrs)
-    | rrtype soa /= SOA = Left "make: no SOA"
+makeDB (zone, soa : rrs)
+    | rrtype soa /= SOA = Left "makeDB: no SOA"
     | otherwise =
         Right $
             DB
