@@ -7,7 +7,6 @@ module Axfr (
 
 import Data.IORef
 import Data.IP
-import Data.IP.RouteTable
 import qualified Data.IP.RouteTable as T
 import Data.List.NonEmpty ()
 import Data.Maybe
@@ -20,14 +19,17 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 
+import Types
+
 server
-    :: IORef DB
-    -> IPRTable IPv4 Bool
-    -> IPRTable IPv6 Bool
+    :: IORef Control
     -> Socket
     -> IO ()
-server dbref t4 t6 sock = do
+server ctlref sock = do
     sa <- getPeerName sock
+    ctl <- readIORef ctlref
+    let t4 = ctlAllowTransfer4 ctl
+        t6 = ctlAllowTransfer6 ctl
     let ok = case fromSockAddr sa of
             Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
             Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
@@ -37,7 +39,7 @@ server dbref t4 t6 sock = do
         Left _ -> return ()
         Right query
             | ok -> do
-                db <- readIORef dbref
+                let db = ctlDB ctl
                 let reply = makeReply db query
                 sendVC (sendTCP sock) $ encode reply
             | otherwise -> do

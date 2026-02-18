@@ -1,25 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 module Main where
 
 import Control.Concurrent.Async
 import qualified Control.Exception as E
 import Control.Monad
-import Data.IP
-import Data.IP.RouteTable
 import qualified Data.List.NonEmpty as NE
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
-import System.Exit
-import Text.Read
 
 import DNS.Auth.Algorithm
-import DNS.Auth.DB
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
@@ -27,50 +21,35 @@ import Data.IORef
 
 import qualified Axfr as Axfr
 import Config
-
-----------------------------------------------------------------
-
-data Source
-    = FromFile FilePath
-    | FromUpstream4 IPv4
-    | FromUpstream6 IPv6
-    deriving (Eq, Show)
+import Control
+import Types
 
 ----------------------------------------------------------------
 
 main :: IO ()
 main = do
     [conffile] <- getArgs
-    Config{..} <- loadConfig conffile
-    edb <- loadSource cnf_zone cnf_source
-    case edb of
-        Left emsg -> die emsg
-        Right db -> do
-            dbref <- newIORef db
-            let (a4, a6) = readIPRange cnf_allow_transfer_addrs
-                t4 = fromList $ map (,True) a4
-                t6 = fromList $ map (,True) a6
-            let as = map (axfrServer dbref t4 t6 (show cnf_tcp_port)) cnf_tcp_addrs
-            ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
-            ss <- mapM serverSocket ais
-            let cs = map (authServer dbref) ss
-            foldr1 concurrently_ $ as ++ cs
+    cnf@Config{..} <- loadConfig conffile
+    ctlref <- newControl cnf
+    let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
+    ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
+    ss <- mapM serverSocket ais
+    let cs = map (authServer ctlref) ss
+    foldr1 concurrently_ $ as ++ cs
 
 ----------------------------------------------------------------
 
 axfrServer
-    :: IORef DB
-    -> IPRTable IPv4 Bool
-    -> IPRTable IPv6 Bool
+    :: IORef Control
     -> ServiceName
     -> HostName
     -> IO ()
-axfrServer dbref t4 t6 port addr =
+axfrServer ctlref port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> Axfr.server dbref t4 t6 s
+        \_ _ s -> Axfr.server ctlref s
 
-authServer :: IORef DB -> Socket -> IO ()
-authServer dbref s = loop
+authServer :: IORef Control -> Socket -> IO ()
+authServer ctlref s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
@@ -78,8 +57,8 @@ authServer dbref s = loop
             -- fixme: which RFC?
             Left _e -> return ()
             Right query -> do
-                db <- readIORef dbref
-                replyQuery db s sa query
+                ctl <- readIORef ctlref
+                replyQuery (ctlDB ctl) s sa query
         loop
 
 replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
@@ -104,34 +83,3 @@ serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
     setSocketOption s ReuseAddr 1
     bind s $ addrAddress ai
     return s
-
-readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
-readIPRange ss0 = loop id id ss0
-  where
-    loop b4 b6 [] = (b4 [], b6 [])
-    loop b4 b6 (s : ss)
-        | Just a6 <- readMaybe s = loop b4 (b6 . (a6 :)) ss
-        | Just a4 <- readMaybe s = loop (b4 . (a4 :)) b6 ss
-        | otherwise = loop b4 b6 ss
-
-readSource :: String -> Source
-readSource s
-    | Just a6 <- readMaybe s = FromUpstream6 a6
-    | Just a4 <- readMaybe s = FromUpstream4 a4
-    | otherwise = FromFile s
-
-loadSource :: String -> String -> IO (Either String DB)
-loadSource zone src = case readSource src of
-    FromUpstream4 ip4 -> do
-        emsg <- Axfr.client (IPv4 ip4) dom
-        case emsg of
-            Left _e -> return $ Left $ show _e
-            Right reply -> return $ makeDB (dom, answer reply)
-    FromUpstream6 ip6 -> do
-        emsg <- Axfr.client (IPv6 ip6) dom
-        case emsg of
-            Left _e -> return $ Left $ show _e
-            Right reply -> return $ makeDB (dom, answer reply)
-    FromFile fn -> loadDB zone fn
-  where
-    dom = fromRepresentation zone

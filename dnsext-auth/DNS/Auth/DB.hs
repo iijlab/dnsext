@@ -4,6 +4,7 @@ module DNS.Auth.DB (
     DB (..),
     loadDB,
     makeDB,
+    emptyDB,
 ) where
 
 import Data.Function (on)
@@ -26,6 +27,17 @@ data DB = DB
     , dbAll :: [ResourceRecord]
     }
     deriving (Show)
+
+emptyDB :: DB
+emptyDB =
+    DB
+        { dbZone = ""
+        , dbSOA = rrnull ""
+        , dbAnswer = M.empty
+        , dbAuthority = M.empty
+        , dbAdditional = M.empty
+        , dbAll = []
+        }
 
 ----------------------------------------------------------------
 
@@ -123,11 +135,13 @@ expand dom rr = loop r0
         | otherwise = case unconsDomain r of
             Nothing -> [rr]
             Just (_, r1) -> rrnull r : loop r1
-    rrnull r =
-        ResourceRecord
-            { rrname = r
-            , rrtype = NULL
-            , rrclass = IN
-            , rrttl = 0
-            , rdata = rd_null ""
-            }
+
+rrnull :: Domain -> ResourceRecord
+rrnull r =
+    ResourceRecord
+        { rrname = r
+        , rrtype = NULL
+        , rrclass = IN
+        , rrttl = 0
+        , rdata = rd_null ""
+        }
