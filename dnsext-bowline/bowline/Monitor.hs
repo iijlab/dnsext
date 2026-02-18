@@ -233,7 +233,7 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
             let showDump1 (Question{..}, (ts, Cache.Val rd rk)) =
                     unwords [toRepresentation qname, show qtype, show qclass, show (ts - now), show (rd, rk)]
             mapM_ outLn . filter (ws `allInfixOf`) . map showDump1 . Cache.dump =<< getCache_ env
-        dispatch (Lookup dom typ) = print cmd *> (maybe (outLn "miss.") hit =<< lookupCache)
+        dispatch (Lookup dom typ) = (maybe (outLn "miss.") hit =<< lookupCache)
           where
             lookupCache = do
                 let lk cache now = Cache.lookup now dom typ DNS.IN cache
