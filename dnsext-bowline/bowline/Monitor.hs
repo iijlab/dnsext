@@ -29,6 +29,7 @@ import System.IO (
     stdin,
     stdout,
  )
+import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 -- dnsext-* packages
@@ -141,8 +142,8 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
   where
     runStdConsole = console conf env mng gch srvInfo monInfo stdin stdout "<std>"
     logLn level = logLines_ env level Nothing . (: [])
-    handle :: (SomeException -> IO a) -> IO a -> IO a
-    handle onError = either onError return <=< try
+    handle :: (IOError -> IO a) -> IO a -> IO a
+    handle onError = either onError return <=< tryIOError
     monitorServer s = do
         let step = do
                 socketWaitRead s
@@ -180,8 +181,8 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
     mapM_ outLn =<< getShowParam'
     loggingException logLn repl
   where
-    handle :: (SomeException -> IO a) -> IO a -> IO a
-    handle onError = either onError return <=< try
+    handle :: (IOError -> IO a) -> IO a -> IO a
+    handle onError = either onError return <=< tryIOError
 
     logLn = logLines_ env Log.INFO Nothing . (: [])
 
