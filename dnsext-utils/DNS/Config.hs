@@ -204,6 +204,8 @@ config = commentLines *> many cfield <* eof
 -- Right ("list",CV_Strings ["a b","c"])
 -- >>> parse field "" "listc: \"d e\" f # comment \n"
 -- Right ("listc",CV_Strings ["d e","f"])
+-- >>> parse field "" "  bool: yes\n"
+-- Right ("bool",CV_Bool True)
 field :: MonadParser W8 s m => m Conf
 field = (,) <$> key <*> (sep *> value) <* trailing
 
@@ -211,7 +213,7 @@ arg :: MonadParser W8 s m => m Conf
 arg = (,) <$> key <*> (char '=' *> value)
 
 key :: MonadParser W8 s m => m String
-key = some (oneOf $ ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "_-") <* spcs
+key = spcs *> some (oneOf $ ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "_-") <* spcs
 
 sep :: MonadParser W8 s m => m ()
 sep = void $ char ':' *> spcs
