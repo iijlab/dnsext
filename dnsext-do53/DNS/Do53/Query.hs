@@ -4,6 +4,7 @@ module DNS.Do53.Query (
     QueryControls (..),
     FlagControls (..),
     EdnsControls (..),
+    CodeControls (..),
     FlagOp (..),
     rdFlag,
     adFlag,
@@ -69,15 +70,16 @@ import qualified Data.Semigroup as Sem
 data QueryControls = QueryControls
     { qctlFlag :: FlagControls
     , qctlEdns :: EdnsControls
+    , qctlCode :: CodeControls
     }
     deriving (Eq)
 
 instance Sem.Semigroup QueryControls where
-    (QueryControls fl1 ex1) <> (QueryControls fl2 ex2) =
-        QueryControls (fl1 <> fl2) (ex1 <> ex2)
+    (QueryControls fl1 ex1 cc1) <> (QueryControls fl2 ex2 cc2) =
+        QueryControls (fl1 <> fl2) (ex1 <> ex2) (cc1 <> cc2)
 
 instance Monoid QueryControls where
-    mempty = QueryControls mempty mempty
+    mempty = QueryControls mempty mempty mempty
 #if !(MIN_VERSION_base(4,11,0))
     -- this is redundant starting with base-4.11 / GHC 8.4
     -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
@@ -85,7 +87,7 @@ instance Monoid QueryControls where
 #endif
 
 instance Show QueryControls where
-    show (QueryControls fl ex) = _showOpts [show fl, show ex]
+    show (QueryControls fl ex cc) = _showOpts [show fl, show ex, show cc]
 
 ----------------------------------------------------------------
 
@@ -296,6 +298,34 @@ instance Show EdnsControls where
 
 ----------------------------------------------------------------
 
+data CodeControls = CodeControls
+    { ccOpcode :: Maybe OPCODE
+    }
+    deriving (Eq)
+
+instance Sem.Semigroup CodeControls where
+    (CodeControls op1) <> (CodeControls op2) =
+        CodeControls (op1 <|> op2)
+
+instance Monoid CodeControls where
+    mempty = CodeControls Nothing
+#if !(MIN_VERSION_base(4,11,0))
+    -- this is redundant starting with base-4.11 / GHC 8.4
+    -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
+    mappend = (Sem.<>)
+#endif
+
+instance Show CodeControls where
+    show (CodeControls op) =
+        _showOpts
+            [ _show "edns.version" op
+            ]
+      where
+        _show :: Show a => String -> Maybe a -> String
+        _show nm w = maybe _skipDefault (\s -> nm ++ ":" ++ show s) w
+
+----------------------------------------------------------------
+
 -- | Boolean flag operations. These form a 'Monoid'.  When combined via
 -- `mappend`, as with function composition, the left-most value has
 -- the last say.
@@ -376,16 +406,26 @@ modifyQuery
     -- ^ Flag and EDNS overrides
     -> DNSMessage
     -> DNSMessage
-modifyQuery ctls query = queryControls (\mf eh -> query{flags = mf (flags query), ednsHeader = eh}) ctls
+modifyQuery ctls query =
+    queryControls
+        ( \mf eh op ->
+            query
+                { flags = mf (flags query)
+                , ednsHeader = eh
+                , opcode = op
+                }
+        )
+        ctls
 
 queryControls
-    :: ((DNSFlags -> DNSFlags) -> EDNSheader -> a)
+    :: ((DNSFlags -> DNSFlags) -> EDNSheader -> OPCODE -> a)
     -> QueryControls
     -> a
-queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls)
+queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls) (queryOpcode opctls)
   where
     hctls = qctlFlag ctls
     ehctls = qctlEdns ctls
+    opctls = qctlCode ctls
 
     -- \| Apply the given 'FlagOp' to a default boolean value to produce the final
     -- setting.
@@ -430,3 +470,7 @@ queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls)
             , chkDisable = applyFlag cd $ chkDisable d
             , authAnswer = applyFlag aa $ authAnswer d
             }
+
+    queryOpcode :: CodeControls -> OPCODE
+    queryOpcode (CodeControls (Just op)) = op
+    queryOpcode _ = OP_STD
