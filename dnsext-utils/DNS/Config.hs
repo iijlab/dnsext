@@ -28,6 +28,9 @@ import System.Posix (GroupID, UserID, getGroupEntryForName, getUserEntryForName,
 
 import DNS.Config.Parser
 
+-- $setup
+-- >>> :seti -XOverloadedStrings
+
 ----------------------------------------------------------------
 
 type Conf = (String, ConfValue)
