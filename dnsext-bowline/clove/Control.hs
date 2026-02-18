@@ -35,8 +35,15 @@ readSource s
     | Just a4 <- readMaybe s = FromUpstream4 a4
     | otherwise = FromFile s
 
-loadSource :: String -> String -> IO (Either String DB)
-loadSource zone src = case readSource src of
+loadSource :: Config -> IO (DB, Bool)
+loadSource Config{..} = do
+    edb <- loadSource' cnf_zone cnf_source
+    case edb of
+        Left _ -> return (emptyDB, False)
+        Right db' -> return (db', True)
+
+loadSource' :: String -> String -> IO (Either String DB)
+loadSource' zone src = case readSource src of
     FromUpstream4 ip4 -> do
         emsg <- Axfr.client (IPv4 ip4) dom
         case emsg of
@@ -52,11 +59,8 @@ loadSource zone src = case readSource src of
     dom = fromRepresentation zone
 
 newControl :: Config -> IO (IORef Control)
-newControl Config{..} = do
-    edb <- loadSource cnf_zone cnf_source
-    let (db, ready) = case edb of
-            Left _ -> (emptyDB, False)
-            Right db' -> (db', True)
+newControl cnf@Config{..} = do
+    (db, ready) <- loadSource cnf
     let (a4, a6) = readIPRange cnf_allow_transfer_addrs
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
@@ -69,3 +73,16 @@ newControl Config{..} = do
             , ctlAllowTransfer4 = t4
             , ctlAllowTransfer6 = t6
             }
+
+updateControl :: Config -> IORef Control -> IO ()
+updateControl cnf ctlref = do
+    (db, ready) <- loadSource cnf
+    atomicModifyIORef' ctlref $ modify db ready
+  where
+    modify db ready ctl = (ctl', ())
+      where
+        ctl' =
+            ctl
+                { ctlReady = ready
+                , ctlDB = db
+                }

@@ -167,7 +167,9 @@ executable clove
         dnsext-types,
         dnsext-utils,
         iproute,
-        network-run
+        network-run,
+        stm,
+        unix
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native

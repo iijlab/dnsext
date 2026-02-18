@@ -3,12 +3,15 @@
 
 module Main where
 
-import Control.Concurrent.Async
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Async hiding (wait)
+import Control.Concurrent.STM
 import Control.Monad
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Environment (getArgs)
+import System.Posix (Handler (Catch), installHandler, sigHUP)
 
 import DNS.Auth.Algorithm
 import DNS.Types
@@ -29,6 +32,14 @@ main = do
     [conffile] <- getArgs
     cnf@Config{..} <- loadConfig conffile
     ctlref <- newControl cnf
+    var <- newTVarIO False
+    let wakeup = atomically $ writeTVar var True
+        reset = atomically $ writeTVar var False
+        wait = atomically $ do
+            v <- readTVar var
+            check v
+    void $ installHandler sigHUP (Catch wakeup) Nothing
+    _ <- forkIO $ syncZone cnf ctlref (wait >> reset)
     let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
     ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
     ss <- mapM serverSocket ais
@@ -65,3 +76,23 @@ replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
 replyQuery db s sa query = void $ NSB.sendTo s bs sa
   where
     bs = encode $ getAnswer db query
+
+----------------------------------------------------------------
+
+syncZone :: Config -> IORef Control -> IO () -> IO ()
+syncZone cnf ctlref wait = loop
+  where
+    loop = do
+        wait
+        -- reading zone source
+        updateControl cnf ctlref
+        -- notify
+        {-
+                Control{..} <- readIORef ctlref
+                let addrs = ctlNotifyAddrs
+                notify addrs
+        -}
+        -- refresh timer
+        loop
+
+----------------------------------------------------------------
