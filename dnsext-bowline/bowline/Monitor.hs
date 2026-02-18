@@ -156,7 +156,7 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
                         waitQuit
                         (handle (logLn Log.DEBUG . ("monitor io-error: " ++) . show) step)
         S.listen s 5
-        loop
+        loggingException (logLn Log.INFO) loop
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -178,10 +178,12 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
             either (const $ return ()) (\exit -> unless exit repl) =<< withWait waitQuit (handle (($> False) . print) step)
 
     mapM_ outLn =<< getShowParam'
-    repl
+    loggingException logLn repl
   where
     handle :: (SomeException -> IO a) -> IO a -> IO a
     handle onError = either onError return <=< try
+
+    logLn = logLines_ env Log.INFO Nothing . (: [])
 
     parseTYPE s =
         find match types
