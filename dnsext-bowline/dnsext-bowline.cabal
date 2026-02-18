@@ -152,6 +152,7 @@ executable clove
                       Config
                       Control
                       Net
+                      Notify
                       Types
 
     default-language: Haskell2010
