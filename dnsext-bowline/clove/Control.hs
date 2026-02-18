@@ -6,6 +6,7 @@ module Control where
 import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
+import Data.List
 import Data.Maybe
 import Text.Read
 
@@ -48,15 +49,30 @@ loadSource' zone src = case readSource src of
         emsg <- Axfr.client (IPv4 ip4) dom
         case emsg of
             Left _e -> return $ Left $ show _e
-            Right reply -> return $ makeDB (dom, answer reply)
+            Right reply -> case checkSOA $ answer reply of
+                Nothing -> return $ Left "loadSource'"
+                Just rrs -> return $ makeDB (dom, rrs)
     FromUpstream6 ip6 -> do
         emsg <- Axfr.client (IPv6 ip6) dom
         case emsg of
             Left _e -> return $ Left $ show _e
-            Right reply -> return $ makeDB (dom, answer reply)
+            Right reply -> case checkSOA $ answer reply of
+                Nothing -> return $ Left "loadSource'"
+                Just rrs -> return $ makeDB (dom, rrs)
     FromFile fn -> loadDB zone fn
   where
     dom = fromRepresentation zone
+
+checkSOA :: [ResourceRecord] -> Maybe [ResourceRecord]
+checkSOA [] = Nothing
+checkSOA (soa : rrs)
+    | rrtype soa == SOA =
+        case unsnoc rrs of
+            Nothing -> Nothing
+            Just (rrs', soa')
+                | rrtype soa' == SOA -> Just (soa : rrs')
+                | otherwise -> Nothing
+    | otherwise = Nothing
 
 newControl :: Config -> IO (IORef Control)
 newControl cnf@Config{..} = do
