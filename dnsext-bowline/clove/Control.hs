@@ -58,6 +58,7 @@ newControl Config{..} = do
         Control
             { ctlDB = db
             , ctlReady = ready
+            , ctlShouldRefresh = shouldReload source
             , ctlNotifyAddrs = notify_addrs
             , ctlAllowTransfer4 = t4
             , ctlAllowTransfer6 = t6
@@ -84,3 +85,7 @@ updateControl Config{..} ctlref = do
                 { ctlReady = True
                 , ctlDB = db
                 }
+
+shouldReload :: Source -> Bool
+shouldReload (FromFile _) = False
+shouldReload _ = True

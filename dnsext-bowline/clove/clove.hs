@@ -80,7 +80,12 @@ syncZone :: Config -> IORef Control -> (Int -> IO ()) -> IO ()
 syncZone cnf ctlref wait = loop
   where
     loop = do
-        wait 5
+        Control{..} <- readIORef ctlref
+        let tm
+                | not ctlShouldRefresh = 0
+                | not ctlReady = 10
+                | otherwise = fromIntegral $ soa_refresh $ dbSOA ctlDB
+        wait tm
         -- reading zone source
         updateControl cnf ctlref
         -- notify

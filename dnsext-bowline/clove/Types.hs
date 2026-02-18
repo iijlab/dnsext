@@ -15,6 +15,7 @@ data Source
 data Control = Control
     { ctlDB :: DB
     , ctlReady :: Bool
+    , ctlShouldRefresh :: Bool
     , ctlNotifyAddrs :: [IP]
     , ctlAllowTransfer4 :: IPRTable IPv4 Bool
     , ctlAllowTransfer6 :: IPRTable IPv6 Bool

@@ -1,6 +1,6 @@
 @  IN SOA ns.example.jp. hostmaster.example.jp. (
-                            870776 ;serial
-                            1800 ;refresh every 30 minutes
+                            870779 ;serial
+                            5 ;refresh every 30 minutes
                             300 ;retry every 5 minutes
                             604800 ;expire after a week
                             86400 ;minimum of a day
