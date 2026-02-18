@@ -244,11 +244,6 @@ isTypeOf t ResourceRecord{..} = rrtype == t
 --             authority = [],
 --             additional = []})
 --  @
---
---  AXFR requests cannot be performed with this interface.
---
---   >>> withLookupConf defaultLookupConf $ \env -> lookupRaw env $ Question "mew.org" AXFR IN
---   Left InvalidAXFRLookup
 lookupRaw
     :: LookupEnv
     -- ^ LookupEnv obtained via 'withLookupConf'
