@@ -34,7 +34,7 @@ main = do
     [conffile] <- getArgs
     cnf@Config{..} <- loadConfig conffile
     ctlref <- newControl cnf
-    (wakeup, wait) <- initSync 5
+    (wakeup, wait) <- initSync
     void $ installHandler sigHUP (Catch wakeup) Nothing
     _ <- forkIO $ syncZone cnf ctlref wait
     let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
@@ -76,11 +76,11 @@ replyQuery db s sa query = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
-syncZone :: Config -> IORef Control -> IO () -> IO ()
+syncZone :: Config -> IORef Control -> (Int -> IO ()) -> IO ()
 syncZone cnf ctlref wait = loop
   where
     loop = do
-        wait
+        wait 5
         -- reading zone source
         updateControl cnf ctlref
         -- notify
@@ -93,24 +93,19 @@ syncZone cnf ctlref wait = loop
 
 ----------------------------------------------------------------
 
-initSync :: Int -> IO (IO (), IO ())
-initSync refresh = do
+initSync :: IO (IO (), Int -> IO ())
+initSync = do
     var <- newTVarIO False
-    let wakeup = atomically $ writeTVar var True
-    if refresh > 0
-        then do
-            wait <- newWait var wakeup
-            return (wakeup, wait)
-        else
-            return (wakeup, waitBody var)
+    tmgr <- getSystemTimerManager
+    return (wakeup var, wait var tmgr)
   where
-    newWait var wakeup = do
-        tmgr <- getSystemTimerManager
-        let register = registerTimeout tmgr (refresh * 1000000) wakeup
-            cancel = unregisterTimeout tmgr
-        return $ E.bracket register cancel $ \_ -> waitBody var
+    wakeup var = atomically $ writeTVar var True
+    wait var tmgr tout
+        | tout == 0 = waitBody var
+        | otherwise = E.bracket register cancel $ \_ -> waitBody var
       where
-
+        register = registerTimeout tmgr (tout * 1000000) $ wakeup var
+        cancel = unregisterTimeout tmgr
     waitBody var = atomically $ do
         v <- readTVar var
         check v
