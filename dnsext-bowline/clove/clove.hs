@@ -4,9 +4,11 @@
 module Main where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.Async hiding (wait)
+import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM
+import qualified Control.Exception as E
 import Control.Monad
+import GHC.Event
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -32,14 +34,9 @@ main = do
     [conffile] <- getArgs
     cnf@Config{..} <- loadConfig conffile
     ctlref <- newControl cnf
-    var <- newTVarIO False
-    let wakeup = atomically $ writeTVar var True
-        reset = atomically $ writeTVar var False
-        wait = atomically $ do
-            v <- readTVar var
-            check v
+    (wakeup, wait) <- initSync 5
     void $ installHandler sigHUP (Catch wakeup) Nothing
-    _ <- forkIO $ syncZone cnf ctlref (wait >> reset)
+    _ <- forkIO $ syncZone cnf ctlref wait
     let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
     ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
     ss <- mapM serverSocket ais
@@ -92,7 +89,19 @@ syncZone cnf ctlref wait = loop
                 let addrs = ctlNotifyAddrs
                 notify addrs
         -}
-        -- refresh timer
         loop
 
 ----------------------------------------------------------------
+
+initSync :: Int -> IO (IO (), IO ())
+initSync refresh = do
+    tmgr <- getSystemTimerManager
+    var <- newTVarIO False
+    let wakeup = atomically $ writeTVar var True
+        register = registerTimeout tmgr (refresh * 1000000) wakeup
+        cancel = unregisterTimeout tmgr
+        wait = E.bracket register cancel $ \_ -> atomically $ do
+            v <- readTVar var
+            check v
+            writeTVar var False
+    return (wakeup, wait)
