@@ -5,9 +5,7 @@
 module Main where
 
 import Control.Concurrent.Async
-import qualified Control.Exception as E
 import Control.Monad
-import qualified Data.List.NonEmpty as NE
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -22,6 +20,7 @@ import Data.IORef
 import qualified Axfr as Axfr
 import Config
 import Control
+import Net
 import Types
 
 ----------------------------------------------------------------
@@ -48,6 +47,8 @@ axfrServer ctlref port addr =
     runTCPServer 10 (Just addr) port $
         \_ _ s -> Axfr.server ctlref s
 
+----------------------------------------------------------------
+
 authServer :: IORef Control -> Socket -> IO ()
 authServer ctlref s = loop
   where
@@ -65,21 +66,3 @@ replyQuery :: DB -> Socket -> SockAddr -> DNSMessage -> IO ()
 replyQuery db s sa query = void $ NSB.sendTo s bs sa
   where
     bs = encode $ getAnswer db query
-
-----------------------------------------------------------------
-
-serverResolve :: PortNumber -> HostName -> IO AddrInfo
-serverResolve pn addr = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just port)
-  where
-    port = show pn
-    hints =
-        defaultHints
-            { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV, AI_PASSIVE]
-            , addrSocketType = Datagram
-            }
-
-serverSocket :: AddrInfo -> IO Socket
-serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
-    setSocketOption s ReuseAddr 1
-    bind s $ addrAddress ai
-    return s
