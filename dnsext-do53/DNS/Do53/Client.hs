@@ -61,7 +61,7 @@ module DNS.Do53.Client (
 
     -- ** Query control
     QueryControls (..),
-    HeaderControls (..),
+    FlagControls (..),
     EdnsControls (..),
     FlagOp (..),
     rdFlag,
