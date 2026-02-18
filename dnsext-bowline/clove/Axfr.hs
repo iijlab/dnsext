@@ -8,6 +8,7 @@ module Axfr (
 import Data.IORef
 import Data.IP
 import qualified Data.IP.RouteTable as T
+import Data.List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
@@ -20,6 +21,8 @@ import DNS.Types.Decode
 import DNS.Types.Encode
 
 import Types
+
+----------------------------------------------------------------
 
 server
     :: IORef Control
@@ -51,28 +54,88 @@ makeReply db query
     | qtype (question query) == AXFR = (fromQuery query){answer = dbAll db}
     | otherwise = getAnswer db query
 
-client :: IP -> Domain -> IO (Either DNSError DNSMessage)
-client ip name = do
-    let riActions =
-            defaultResolveActions
-                { ractionTimeoutTime = 3000000
-                , ractionLog = \_lvl _mclr ss -> mapM_ putStrLn ss
-                }
-        ris =
-            [ defaultResolveInfo
-                { rinfoIP = ip
-                , rinfoPort = 53
-                , rinfoActions = riActions
-                , rinfoUDPRetry = 1
-                , rinfoVCLimit = 32 * 1024
-                }
-            ]
-        renv =
-            ResolveEnv
-                { renvResolver = tcpResolver
-                , renvConcurrent = True -- should set True if multiple RIs are provided
-                , renvResolveInfos = ris
-                }
-        q = Question name AXFR IN
-        qctl = rdFlag FlagClear <> doFlag FlagClear
-    fmap replyDNSMessage <$> resolve renv q qctl
+----------------------------------------------------------------
+
+client :: Serial -> IP -> Domain -> IO [ResourceRecord]
+client serial0 ip dom = do
+    mserial <- serialQuery ip dom
+    case mserial of
+        Nothing -> return []
+        Just serial
+            | serial /= serial0 -> axfrQuery ip dom
+            | otherwise -> return []
+
+serialQuery :: IP -> Domain -> IO (Maybe Serial)
+serialQuery ip dom = do
+    emsg <- fmap replyDNSMessage <$> resolve renv q qctl
+    case emsg of
+        Left _ -> return Nothing
+        Right msg -> case answer msg of
+            [] -> return Nothing
+            soa : _ -> case fromRData $ rdata soa of
+                Nothing -> return Nothing
+                Just s -> return $ Just $ soa_serial s
+  where
+    riActions =
+        defaultResolveActions
+            { ractionTimeoutTime = 3000000
+            , ractionLog = \_lvl _mclr ss -> mapM_ putStrLn ss
+            }
+    ris =
+        [ defaultResolveInfo
+            { rinfoIP = ip
+            , rinfoPort = 53
+            , rinfoActions = riActions
+            , rinfoUDPRetry = 3
+            , rinfoVCLimit = 0
+            }
+        ]
+    renv =
+        ResolveEnv
+            { renvResolver = udpResolver
+            , renvConcurrent = True -- should set True if multiple RIs are provided
+            , renvResolveInfos = ris
+            }
+    q = Question dom SOA IN
+    qctl = rdFlag FlagClear <> doFlag FlagClear
+
+axfrQuery :: IP -> Domain -> IO [ResourceRecord]
+axfrQuery ip dom = do
+    emsg <- fmap replyDNSMessage <$> resolve renv q qctl
+    case emsg of
+        Left _ -> return []
+        Right msg -> return $ checkSOA $ answer msg
+  where
+    riActions =
+        defaultResolveActions
+            { ractionTimeoutTime = 30000000
+            , ractionLog = \_lvl _mclr ss -> mapM_ putStrLn ss
+            }
+    ris =
+        [ defaultResolveInfo
+            { rinfoIP = ip
+            , rinfoPort = 53
+            , rinfoActions = riActions
+            , rinfoUDPRetry = 1
+            , rinfoVCLimit = 32 * 1024
+            }
+        ]
+    renv =
+        ResolveEnv
+            { renvResolver = tcpResolver
+            , renvConcurrent = True -- should set True if multiple RIs are provided
+            , renvResolveInfos = ris
+            }
+    q = Question dom AXFR IN
+    qctl = rdFlag FlagClear <> doFlag FlagClear
+
+checkSOA :: [ResourceRecord] -> [ResourceRecord]
+checkSOA [] = []
+checkSOA (soa : rrs)
+    | rrtype soa == SOA =
+        case unsnoc rrs of
+            Nothing -> []
+            Just (rrs', soa')
+                | rrtype soa' == SOA -> soa : rrs'
+                | otherwise -> []
+    | otherwise = []

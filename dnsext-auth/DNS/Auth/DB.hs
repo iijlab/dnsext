@@ -12,6 +12,7 @@ import Data.List (groupBy, partition, sort)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
+import Data.Word
 
 import DNS.Types
 import qualified DNS.ZoneFile as ZF
@@ -20,6 +21,7 @@ import qualified DNS.ZoneFile as ZF
 
 data DB = DB
     { dbZone :: Domain
+    , dbSerial :: Word32
     , dbSOA :: ResourceRecord
     , dbAnswer :: M.Map Domain [ResourceRecord]
     , dbAuthority :: M.Map Domain [ResourceRecord]
@@ -32,6 +34,7 @@ emptyDB :: DB
 emptyDB =
     DB
         { dbZone = ""
+        , dbSerial = 0
         , dbSOA = rrnull ""
         , dbAnswer = M.empty
         , dbAuthority = M.empty
@@ -41,7 +44,7 @@ emptyDB =
 
 ----------------------------------------------------------------
 
-loadDB :: String -> FilePath -> IO (Either String DB)
+loadDB :: String -> FilePath -> IO (Maybe DB)
 loadDB zone file = makeDB <$> loadZoneFile zone file
 
 loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
@@ -53,22 +56,25 @@ loadZoneFile zone file = do
 
 ----------------------------------------------------------------
 
-makeDB :: (Domain, [ResourceRecord]) -> Either String DB
-makeDB (_, []) = Left "makeDB: no resource records"
+makeDB :: (Domain, [ResourceRecord]) -> Maybe DB
+makeDB (_, []) = Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
 makeDB (zone, soa : rrs)
-    | rrtype soa /= SOA = Left "makeDB: no SOA"
-    | otherwise =
-        Right $
-            DB
-                { dbZone = zone
-                , dbSOA = soa
-                , dbAnswer = ans
-                , dbAuthority = auth
-                , dbAdditional = add
-                , dbAll = [soa] ++ rrs ++ [soa]
-                }
+    | rrtype soa /= SOA = Nothing
+    | otherwise = case fromRData $ rdata soa of
+        Nothing -> Nothing
+        Just s ->
+            Just $
+                DB
+                    { dbZone = zone
+                    , dbSerial = soa_serial s
+                    , dbSOA = soa
+                    , dbAnswer = ans
+                    , dbAuthority = auth
+                    , dbAdditional = add
+                    , dbAll = [soa] ++ rrs ++ [soa] -- for AXFR
+                    }
   where
     -- RFC 9471
     -- In-domain and sibling glues only.

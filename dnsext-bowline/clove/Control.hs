@@ -6,7 +6,6 @@ module Control where
 import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
-import Data.List
 import Data.Maybe
 import Text.Read
 
@@ -36,47 +35,23 @@ readSource s
     | Just a4 <- readMaybe s = FromUpstream4 a4
     | otherwise = FromFile s
 
-loadSource :: Config -> IO (DB, Bool)
-loadSource Config{..} = do
-    edb <- loadSource' cnf_zone cnf_source
-    case edb of
-        Left _ -> return (emptyDB, False)
-        Right db' -> return (db', True)
-
-loadSource' :: String -> String -> IO (Either String DB)
-loadSource' zone src = case readSource src of
-    FromUpstream4 ip4 -> do
-        emsg <- Axfr.client (IPv4 ip4) dom
-        case emsg of
-            Left _e -> return $ Left $ show _e
-            Right reply -> case checkSOA $ answer reply of
-                Nothing -> return $ Left "loadSource'"
-                Just rrs -> return $ makeDB (dom, rrs)
-    FromUpstream6 ip6 -> do
-        emsg <- Axfr.client (IPv6 ip6) dom
-        case emsg of
-            Left _e -> return $ Left $ show _e
-            Right reply -> case checkSOA $ answer reply of
-                Nothing -> return $ Left "loadSource'"
-                Just rrs -> return $ makeDB (dom, rrs)
+loadSource :: Serial -> Config -> IO (Maybe DB)
+loadSource serial cnf = case readSource $ cnf_source cnf of
+    FromUpstream4 ip4 -> toDB <$> Axfr.client serial (IPv4 ip4) dom
+    FromUpstream6 ip6 -> toDB <$> Axfr.client serial (IPv6 ip6) dom
     FromFile fn -> loadDB zone fn
   where
+    zone = cnf_zone cnf
     dom = fromRepresentation zone
-
-checkSOA :: [ResourceRecord] -> Maybe [ResourceRecord]
-checkSOA [] = Nothing
-checkSOA (soa : rrs)
-    | rrtype soa == SOA =
-        case unsnoc rrs of
-            Nothing -> Nothing
-            Just (rrs', soa')
-                | rrtype soa' == SOA -> Just (soa : rrs')
-                | otherwise -> Nothing
-    | otherwise = Nothing
+    toDB [] = Nothing
+    toDB rrs = makeDB (dom, rrs)
 
 newControl :: Config -> IO (IORef Control)
 newControl cnf@Config{..} = do
-    (db, ready) <- loadSource cnf
+    mdb <- loadSource 0 cnf
+    let (db, ready) = case mdb of
+            Nothing -> (emptyDB, False)
+            Just db' -> (db', True)
     let (a4, a6) = readIPRange cnf_allow_transfer_addrs
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
@@ -92,13 +67,16 @@ newControl cnf@Config{..} = do
 
 updateControl :: Config -> IORef Control -> IO ()
 updateControl cnf ctlref = do
-    (db, ready) <- loadSource cnf
-    atomicModifyIORef' ctlref $ modify db ready
+    Control{..} <- readIORef ctlref
+    mdb <- loadSource (dbSerial ctlDB) cnf
+    case mdb of
+        Nothing -> return ()
+        Just db -> atomicModifyIORef' ctlref $ modify db
   where
-    modify db ready ctl = (ctl', ())
+    modify db ctl = (ctl', ())
       where
         ctl' =
             ctl
-                { ctlReady = ready
+                { ctlReady = True
                 , ctlDB = db
                 }

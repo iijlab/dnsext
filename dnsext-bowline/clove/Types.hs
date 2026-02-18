@@ -2,6 +2,7 @@ module Types where
 
 import Data.IP
 import Data.IP.RouteTable
+import Data.Word
 
 import DNS.Auth.Algorithm
 
@@ -18,3 +19,5 @@ data Control = Control
     , ctlAllowTransfer4 :: IPRTable IPv4 Bool
     , ctlAllowTransfer6 :: IPRTable IPv6 Bool
     }
+
+type Serial = Word32

@@ -12,8 +12,8 @@ spec :: Spec
 spec = describe "authoritative algorithm" $ do
     edb <- runIO $ loadDB "example.jp." "test/example.zone"
     let db = case edb of
-            Left _ -> error "DB"
-            Right db' -> db'
+            Nothing -> error "DB"
+            Just db' -> db'
     it "can answer an existing domain" $ do
         let query = defaultQuery{question = Question "exist.example.jp." A IN}
             ans = getAnswer db query
