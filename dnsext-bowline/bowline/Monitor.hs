@@ -155,7 +155,7 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
                 either (const $ return ()) (const loop)
                     =<< withWait
                         waitQuit
-                        (handle (logLn Log.DEBUG . ("monitor io-error: " ++) . show) step)
+                        (handle (logLn Log.INFO . ("monitor io-error: " ++) . show) step)
         S.listen s 5
         loggingException (logLn Log.INFO) loop
 {- FOURMOLU_ENABLE -}
@@ -176,7 +176,8 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
 
         repl = do
             hPutStr outH "monitor> " *> hFlush outH
-            either (const $ return ()) (\exit -> unless exit repl) =<< withWait waitQuit (handle (($> False) . print) step)
+            either (const $ return ()) (\exit -> unless exit repl)
+                =<< withWait waitQuit (handle (($> False) . logLn . ("monitor console io-error: " ++) . show) step)
 
     mapM_ outLn =<< getShowParam'
     loggingException logLn repl
