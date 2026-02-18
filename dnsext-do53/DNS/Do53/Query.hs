@@ -9,6 +9,7 @@ module DNS.Do53.Query (
     adFlag,
     cdFlag,
     doFlag,
+    aaFlag,
     ednsEnabled,
     ednsSetVersion,
     ednsSetUdpSize,
@@ -102,6 +103,9 @@ rdFlag rd = mempty{qctlFlag = mempty{rdBit = rd}}
 adFlag :: FlagOp -> QueryControls
 adFlag ad = mempty{qctlFlag = mempty{adBit = ad}}
 
+aaFlag :: FlagOp -> QueryControls
+aaFlag aa = mempty{qctlFlag = mempty{aaBit = aa}}
+
 -- | Generator of 'QueryControls' that adjusts the CD (Checking Disabled) bit.
 --
 -- >>> cdFlag FlagSet
@@ -158,15 +162,16 @@ data FlagControls = FlagControls
     { rdBit :: FlagOp
     , adBit :: FlagOp
     , cdBit :: FlagOp
+    , aaBit :: FlagOp
     }
     deriving (Eq)
 
 instance Sem.Semigroup FlagControls where
-    (FlagControls rd1 ad1 cd1) <> (FlagControls rd2 ad2 cd2) =
-        FlagControls (rd1 <> rd2) (ad1 <> ad2) (cd1 <> cd2)
+    (FlagControls rd1 ad1 cd1 aa1) <> (FlagControls rd2 ad2 cd2 aa2) =
+        FlagControls (rd1 <> rd2) (ad1 <> ad2) (cd1 <> cd2) (aa1 <> aa2)
 
 instance Monoid FlagControls where
-    mempty = FlagControls FlagKeep FlagKeep FlagKeep
+    mempty = FlagControls FlagKeep FlagKeep FlagKeep FlagKeep
 #if !(MIN_VERSION_base(4,11,0))
     -- this is redundant starting with base-4.11 / GHC 8.4
     -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
@@ -174,11 +179,12 @@ instance Monoid FlagControls where
 #endif
 
 instance Show FlagControls where
-    show (FlagControls rd ad cd) =
+    show (FlagControls rd ad cd aa) =
         _showOpts
             [ _showFlag "rd" rd
             , _showFlag "ad" ad
             , _showFlag "cd" cd
+            , _showFlag "aa" aa
             ]
 
 ----------------------------------------------------------------
@@ -417,9 +423,10 @@ queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls)
     -- 'DNS.Do53.lookupRawCtl' which takes an additional
     -- 'QueryControls' argument to augment the default overrides.
     queryDNSFlags :: FlagControls -> DNSFlags -> DNSFlags
-    queryDNSFlags (FlagControls rd ad cd) d =
+    queryDNSFlags (FlagControls rd ad cd aa) d =
         d
             { recDesired = applyFlag rd $ recDesired d
             , authenData = applyFlag ad $ authenData d
             , chkDisable = applyFlag cd $ chkDisable d
+            , authAnswer = applyFlag aa $ authAnswer d
             }
