@@ -10,7 +10,7 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (forkFinally, getNumCapabilities, threadWaitRead)
 import Control.Concurrent.Async (waitSTM)
 import Control.Concurrent.STM (STM, atomically)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy.Char8 as BL
@@ -29,6 +29,7 @@ import System.IO (
     stdin,
     stdout,
  )
+import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 -- dnsext-* packages
@@ -141,8 +142,8 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
   where
     runStdConsole = console conf env mng gch srvInfo monInfo stdin stdout "<std>"
     logLn level = logLines_ env level Nothing . (: [])
-    handle :: (SomeException -> IO a) -> IO a -> IO a
-    handle onError = either onError return <=< try
+    handle :: (IOError -> IO a) -> IO a -> IO a
+    handle onError = either onError return <=< tryIOError
     monitorServer s = do
         let step = do
                 socketWaitRead s
@@ -154,9 +155,9 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
                 either (const $ return ()) (const loop)
                     =<< withWait
                         waitQuit
-                        (handle (logLn Log.DEBUG . ("monitor io-error: " ++) . show) step)
+                        (handle (logLn Log.INFO . ("monitor io-error: " ++) . show) step)
         S.listen s 5
-        loop
+        loggingException (logLn Log.INFO) loop
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -175,13 +176,16 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
 
         repl = do
             hPutStr outH "monitor> " *> hFlush outH
-            either (const $ return ()) (\exit -> unless exit repl) =<< withWait waitQuit (handle (($> False) . print) step)
+            either (const $ return ()) (\exit -> unless exit repl)
+                =<< withWait waitQuit (handle (($> False) . logLn . ("monitor console io-error: " ++) . show) step)
 
     mapM_ outLn =<< getShowParam'
-    repl
+    loggingException logLn repl
   where
-    handle :: (SomeException -> IO a) -> IO a -> IO a
-    handle onError = either onError return <=< try
+    handle :: (IOError -> IO a) -> IO a -> IO a
+    handle onError = either onError return <=< tryIOError
+
+    logLn = logLines_ env Log.INFO Nothing . (: [])
 
     parseTYPE s =
         find match types
@@ -281,6 +285,13 @@ console conf env ctl@Control{..} GlobalCache{gcacheControl=CacheControl{..}} srv
             , ("help",            ("help", "show this help"))
             ]
 {- FOURMOLU_ENABLE -}
+
+loggingException :: (String -> IO a) -> IO b -> IO b
+loggingException logging action = try action >>= either left pure
+  where
+    -- SomeException: asynchronous exceptions are re-thrown
+    left :: SomeException -> IO b
+    left e = logging ("Monitor: un-expected exception: " ++ show e) >> throwIO e
 
 withWait :: STM a -> IO b -> IO (Either a b)
 withWait qstm blockAct =
