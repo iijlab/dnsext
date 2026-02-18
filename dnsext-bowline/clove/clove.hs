@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -17,7 +16,7 @@ import DNS.Types.Decode
 import DNS.Types.Encode
 import Data.IORef
 
-import qualified Axfr as Axfr
+import qualified Axfr
 import Config
 import Control
 import Net

@@ -13,12 +13,12 @@ import DNS.Auth.Algorithm
 import DNS.Auth.DB
 import DNS.Types
 
-import qualified Axfr as Axfr
+import qualified Axfr
 import Config
 import Types
 
 readIP :: [String] -> [IP]
-readIP ss = catMaybes $ map readMaybe ss
+readIP ss = mapMaybe readMaybe ss
 
 readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
 readIPRange ss0 = loop id id ss0
