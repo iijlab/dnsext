@@ -10,9 +10,8 @@ module DNS.Auth.DB (
 import Data.Function (on)
 import Data.List (groupBy, partition, sort)
 import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromJust)
 import qualified Data.Set as Set
-import Data.Word
 
 import DNS.Types
 import qualified DNS.ZoneFile as ZF
@@ -21,8 +20,8 @@ import qualified DNS.ZoneFile as ZF
 
 data DB = DB
     { dbZone :: Domain
-    , dbSerial :: Word32
-    , dbSOA :: ResourceRecord
+    , dbSOA :: RD_SOA
+    , dbSOArr :: ResourceRecord
     , dbAnswer :: M.Map Domain [ResourceRecord]
     , dbAuthority :: M.Map Domain [ResourceRecord]
     , dbAdditional :: M.Map Domain [ResourceRecord]
@@ -33,47 +32,54 @@ data DB = DB
 emptyDB :: DB
 emptyDB =
     DB
-        { dbZone = ""
-        , dbSerial = 0
-        , dbSOA = rrnull ""
+        { dbZone = "."
+        , dbSOA = soa
+        , dbSOArr = soarr
         , dbAnswer = M.empty
         , dbAuthority = M.empty
         , dbAdditional = M.empty
         , dbAll = []
         }
-
-----------------------------------------------------------------
-
-loadDB :: String -> FilePath -> IO (Maybe DB)
-loadDB zone file = makeDB <$> loadZoneFile zone file
-
-loadZoneFile :: String -> FilePath -> IO (Domain, [ResourceRecord])
-loadZoneFile zone file = do
-    rrs <- catMaybes . map fromResource <$> ZF.parseFile file dom
-    return (dom, rrs)
   where
-    dom = fromRepresentation zone
+    soard = rd_soa "." "." 0 0 0 0 0
+    soa = fromJust $ fromRData soard
+    soarr =
+        ResourceRecord
+            { rrname = "."
+            , rrtype = SOA
+            , rrclass = IN
+            , rrttl = 0
+            , rdata = soard
+            }
 
 ----------------------------------------------------------------
 
-makeDB :: (Domain, [ResourceRecord]) -> Maybe DB
-makeDB (_, []) = Nothing
+loadDB :: Domain -> FilePath -> IO (Maybe DB)
+loadDB zone file = makeDB zone <$> loadZoneFile zone file
+
+loadZoneFile :: Domain -> FilePath -> IO [ResourceRecord]
+loadZoneFile zone file = catMaybes . map fromResource <$> ZF.parseFile file zone
+
+----------------------------------------------------------------
+
+makeDB :: Domain -> [ResourceRecord] -> Maybe DB
+makeDB _ [] = Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDB (zone, soa : rrs)
-    | rrtype soa /= SOA = Nothing
-    | otherwise = case fromRData $ rdata soa of
+makeDB zone (soarr : rrs)
+    | rrtype soarr /= SOA = Nothing
+    | otherwise = case fromRData $ rdata soarr of
         Nothing -> Nothing
-        Just s ->
+        Just soa ->
             Just $
                 DB
                     { dbZone = zone
-                    , dbSerial = soa_serial s
                     , dbSOA = soa
+                    , dbSOArr = soarr
                     , dbAnswer = ans
                     , dbAuthority = auth
                     , dbAdditional = add
-                    , dbAll = [soa] ++ rrs ++ [soa] -- for AXFR
+                    , dbAll = [soarr] ++ rrs ++ [soarr] -- for AXFR
                     }
   where
     -- RFC 9471
@@ -85,7 +91,7 @@ makeDB (zone, soa : rrs)
     -- gs: glue (in delegated domain)
     -- zs: in-domain
     -- expand is for RFC 4592 Sec 2.2.2.Empty Non-terminals
-    ans = makeMap $ [soa] ++ concat (map (expand zone) zs)
+    ans = makeMap $ [soarr] ++ concat (map (expand zone) zs)
     auth = makeMap ns
     xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
     add = makeMap $ xs ++ gs

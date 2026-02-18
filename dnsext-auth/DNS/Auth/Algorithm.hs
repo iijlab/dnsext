@@ -109,13 +109,13 @@ findAuthority
 findAuthority db@DB{..} Question{..} reply = loop qname
   where
     loop dom
-        | dom == dbZone = makeReply reply [] [dbSOA] [] NXDomain True
+        | dom == dbZone = makeReply reply [] [dbSOArr] [] NXDomain True
         | otherwise = case unconsDomain dom of
-            Nothing -> makeReply reply [] [dbSOA] [] NXDomain True
+            Nothing -> makeReply reply [] [dbSOArr] [] NXDomain True
             Just (_, dom') -> case M.lookup dom dbAuthority of
                 Nothing -> loop dom'
                 Just auth
-                    | null auth -> makeReply reply [] [dbSOA] [] NoErr True
+                    | null auth -> makeReply reply [] [dbSOArr] [] NoErr True
                     | otherwise ->
                         let add = findAdditional db auth
                          in makeReply reply [] auth add NoErr False

@@ -95,13 +95,23 @@ syncZone cnf ctlref wait = loop
 
 initSync :: Int -> IO (IO (), IO ())
 initSync refresh = do
-    tmgr <- getSystemTimerManager
     var <- newTVarIO False
     let wakeup = atomically $ writeTVar var True
-        register = registerTimeout tmgr (refresh * 1000000) wakeup
-        cancel = unregisterTimeout tmgr
-        wait = E.bracket register cancel $ \_ -> atomically $ do
-            v <- readTVar var
-            check v
-            writeTVar var False
-    return (wakeup, wait)
+    if refresh > 0
+        then do
+            wait <- newWait var wakeup
+            return (wakeup, wait)
+        else
+            return (wakeup, waitBody var)
+  where
+    newWait var wakeup = do
+        tmgr <- getSystemTimerManager
+        let register = registerTimeout tmgr (refresh * 1000000) wakeup
+            cancel = unregisterTimeout tmgr
+        return $ E.bracket register cancel $ \_ -> waitBody var
+      where
+
+    waitBody var = atomically $ do
+        v <- readTVar var
+        check v
+        writeTVar var False

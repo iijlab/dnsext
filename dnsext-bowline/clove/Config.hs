@@ -12,7 +12,7 @@ import System.IO.Error (ioeGetErrorString, ioeSetErrorString, tryIOError)
 {- FOURMOLU_DISABLE -}
 data Config = Config
     { cnf_zone                 :: String
-    , cnf_source               :: FilePath
+    , cnf_source               :: String
     , cnf_dnssec               :: Bool
     , cnf_notify               :: Bool
     , cnf_notify_addrs         :: [String]
