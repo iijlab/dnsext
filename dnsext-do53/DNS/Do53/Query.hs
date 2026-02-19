@@ -2,17 +2,20 @@
 
 module DNS.Do53.Query (
     QueryControls (..),
-    HeaderControls (..),
+    FlagControls (..),
     EdnsControls (..),
+    CodeControls (..),
     FlagOp (..),
     rdFlag,
     adFlag,
     cdFlag,
     doFlag,
+    aaFlag,
     ednsEnabled,
     ednsSetVersion,
     ednsSetUdpSize,
     ednsSetOptions,
+    opCode,
     queryControls,
     modifyQuery,
     encodeQuery,
@@ -66,17 +69,18 @@ import qualified Data.Semigroup as Sem
 -- :}
 -- edns.version:1,edns.options:[NSID,ClientSubnet]
 data QueryControls = QueryControls
-    { qctlHeader :: HeaderControls
+    { qctlFlag :: FlagControls
     , qctlEdns :: EdnsControls
+    , qctlCode :: CodeControls
     }
     deriving (Eq)
 
 instance Sem.Semigroup QueryControls where
-    (QueryControls fl1 ex1) <> (QueryControls fl2 ex2) =
-        QueryControls (fl1 <> fl2) (ex1 <> ex2)
+    (QueryControls fl1 ex1 cc1) <> (QueryControls fl2 ex2 cc2) =
+        QueryControls (fl1 <> fl2) (ex1 <> ex2) (cc1 <> cc2)
 
 instance Monoid QueryControls where
-    mempty = QueryControls mempty mempty
+    mempty = QueryControls mempty mempty mempty
 #if !(MIN_VERSION_base(4,11,0))
     -- this is redundant starting with base-4.11 / GHC 8.4
     -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
@@ -84,7 +88,7 @@ instance Monoid QueryControls where
 #endif
 
 instance Show QueryControls where
-    show (QueryControls fl ex) = _showOpts [show fl, show ex]
+    show (QueryControls fl ex cc) = _showOpts [show fl, show ex, show cc]
 
 ----------------------------------------------------------------
 
@@ -93,21 +97,24 @@ instance Show QueryControls where
 -- >>> rdFlag FlagClear
 -- rd:0
 rdFlag :: FlagOp -> QueryControls
-rdFlag rd = mempty{qctlHeader = mempty{rdBit = rd}}
+rdFlag rd = mempty{qctlFlag = mempty{rdBit = rd}}
 
 -- | Generator of 'QueryControls' that adjusts the AD (Authentic Data) bit.
 --
 -- >>> adFlag FlagSet
 -- ad:1
 adFlag :: FlagOp -> QueryControls
-adFlag ad = mempty{qctlHeader = mempty{adBit = ad}}
+adFlag ad = mempty{qctlFlag = mempty{adBit = ad}}
+
+aaFlag :: FlagOp -> QueryControls
+aaFlag aa = mempty{qctlFlag = mempty{aaBit = aa}}
 
 -- | Generator of 'QueryControls' that adjusts the CD (Checking Disabled) bit.
 --
 -- >>> cdFlag FlagSet
 -- cd:1
 cdFlag :: FlagOp -> QueryControls
-cdFlag cd = mempty{qctlHeader = mempty{cdBit = cd}}
+cdFlag cd = mempty{qctlFlag = mempty{cdBit = cd}}
 
 -- | Generator of 'QueryControls' that enables or disables EDNS support.
 --   When EDNS is disabled, the rest of the 'EDNS' controls are ignored.
@@ -154,31 +161,33 @@ ednsSetOptions od = mempty{qctlEdns = mempty{extOd = od}}
 
 -- | Control over query-related DNS header flags. As with function composition,
 -- the left-most value has the last say.
-data HeaderControls = HeaderControls
+data FlagControls = FlagControls
     { rdBit :: FlagOp
     , adBit :: FlagOp
     , cdBit :: FlagOp
+    , aaBit :: FlagOp
     }
     deriving (Eq)
 
-instance Sem.Semigroup HeaderControls where
-    (HeaderControls rd1 ad1 cd1) <> (HeaderControls rd2 ad2 cd2) =
-        HeaderControls (rd1 <> rd2) (ad1 <> ad2) (cd1 <> cd2)
+instance Sem.Semigroup FlagControls where
+    (FlagControls rd1 ad1 cd1 aa1) <> (FlagControls rd2 ad2 cd2 aa2) =
+        FlagControls (rd1 <> rd2) (ad1 <> ad2) (cd1 <> cd2) (aa1 <> aa2)
 
-instance Monoid HeaderControls where
-    mempty = HeaderControls FlagKeep FlagKeep FlagKeep
+instance Monoid FlagControls where
+    mempty = FlagControls FlagKeep FlagKeep FlagKeep FlagKeep
 #if !(MIN_VERSION_base(4,11,0))
     -- this is redundant starting with base-4.11 / GHC 8.4
     -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
     mappend = (Sem.<>)
 #endif
 
-instance Show HeaderControls where
-    show (HeaderControls rd ad cd) =
+instance Show FlagControls where
+    show (FlagControls rd ad cd aa) =
         _showOpts
             [ _showFlag "rd" rd
             , _showFlag "ad" ad
             , _showFlag "cd" cd
+            , _showFlag "aa" aa
             ]
 
 ----------------------------------------------------------------
@@ -290,6 +299,37 @@ instance Show EdnsControls where
 
 ----------------------------------------------------------------
 
+data CodeControls = CodeControls
+    { ccOpcode :: Maybe OPCODE
+    }
+    deriving (Eq)
+
+instance Sem.Semigroup CodeControls where
+    (CodeControls op1) <> (CodeControls op2) =
+        CodeControls (op1 <|> op2)
+
+instance Monoid CodeControls where
+    mempty = CodeControls Nothing
+#if !(MIN_VERSION_base(4,11,0))
+    -- this is redundant starting with base-4.11 / GHC 8.4
+    -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
+    mappend = (Sem.<>)
+#endif
+
+instance Show CodeControls where
+    show (CodeControls op) =
+        _showOpts
+            [ _show "edns.version" op
+            ]
+      where
+        _show :: Show a => String -> Maybe a -> String
+        _show nm w = maybe _skipDefault (\s -> nm ++ ":" ++ show s) w
+
+opCode :: OPCODE -> QueryControls
+opCode op = mempty{qctlCode = mempty{ccOpcode = Just op}}
+
+----------------------------------------------------------------
+
 -- | Boolean flag operations. These form a 'Monoid'.  When combined via
 -- `mappend`, as with function composition, the left-most value has
 -- the last say.
@@ -370,16 +410,26 @@ modifyQuery
     -- ^ Flag and EDNS overrides
     -> DNSMessage
     -> DNSMessage
-modifyQuery ctls query = queryControls (\mf eh -> query{flags = mf (flags query), ednsHeader = eh}) ctls
+modifyQuery ctls query =
+    queryControls
+        ( \mf eh op ->
+            query
+                { flags = mf (flags query)
+                , ednsHeader = eh
+                , opcode = op
+                }
+        )
+        ctls
 
 queryControls
-    :: ((DNSFlags -> DNSFlags) -> EDNSheader -> a)
+    :: ((DNSFlags -> DNSFlags) -> EDNSheader -> OPCODE -> a)
     -> QueryControls
     -> a
-queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls)
+queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls) (queryOpcode opctls)
   where
-    hctls = qctlHeader ctls
+    hctls = qctlFlag ctls
     ehctls = qctlEdns ctls
+    opctls = qctlCode ctls
 
     -- \| Apply the given 'FlagOp' to a default boolean value to produce the final
     -- setting.
@@ -416,10 +466,15 @@ queryControls h ctls = h (queryDNSFlags hctls) (queryEdns ehctls)
     -- resolvers based on the resulting configuration, with the exception of
     -- 'DNS.Do53.lookupRawCtl' which takes an additional
     -- 'QueryControls' argument to augment the default overrides.
-    queryDNSFlags :: HeaderControls -> DNSFlags -> DNSFlags
-    queryDNSFlags (HeaderControls rd ad cd) d =
+    queryDNSFlags :: FlagControls -> DNSFlags -> DNSFlags
+    queryDNSFlags (FlagControls rd ad cd aa) d =
         d
             { recDesired = applyFlag rd $ recDesired d
             , authenData = applyFlag ad $ authenData d
             , chkDisable = applyFlag cd $ chkDisable d
+            , authAnswer = applyFlag aa $ authAnswer d
             }
+
+    queryOpcode :: CodeControls -> OPCODE
+    queryOpcode (CodeControls (Just op)) = op
+    queryOpcode _ = OP_STD
