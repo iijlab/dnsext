@@ -8,6 +8,7 @@ import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM
 import qualified Control.Exception as E
 import Control.Monad
+import Data.IP
 import GHC.Event
 import Network.Run.TCP.Timeout
 import Network.Socket
@@ -70,9 +71,14 @@ authServer ctlref wakeup s = loop
             Left _e -> return ()
             Right query -> case opcode query of
                 OP_NOTIFY -> do
-                    -- fixme: access control
-                    replyNotice s sa query
-                    wakeup
+                    Control{..} <- readIORef ctlref
+                    case fromSockAddr sa of
+                        Nothing -> replyRefused s sa query
+                        Just (ip, _)
+                            | ip `elem` ctlAllowNotifyAddrs -> do
+                                replyNotice s sa query
+                                wakeup
+                            | otherwise -> replyRefused s sa query
                 OP_STD -> do
                     ctl <- readIORef ctlref
                     replyQuery (ctlDB ctl) s sa query
