@@ -28,9 +28,9 @@ defaultConfig =
         , cnf_udp_port             = 53
         }
 
-defaultZone :: Zone
-defaultZone =
-    Zone
+defaultZoneConf :: ZoneConf
+defaultZoneConf =
+    ZoneConf
         { cnf_zone                 = "example.org"
         , cnf_source               = "example.zone"
         , cnf_dnssec               = False
@@ -42,13 +42,13 @@ defaultZone =
         , cnf_allow_transfer_addrs = []
         }
 
-makeConfig :: Config -> [Conf] -> IO (Config, [Zone])
+makeConfig :: Config -> [Conf] -> IO (Config, [ZoneConf])
 makeConfig def conf0 = do
     cnf_tcp_addrs <- get "tcp-addrs"            cnf_tcp_addrs
     cnf_tcp_port  <- get "tcp-port"             cnf_tcp_port
     cnf_udp_addrs <- get "udp-addrs"            cnf_udp_addrs
     cnf_udp_port  <- get "udp-port"             cnf_udp_port
-    zonelist      <- mapM (makeZone defaultZone) zones
+    zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
     (conf, zones) = splitConfig conf0
@@ -59,8 +59,8 @@ makeConfig def conf0 = do
                 ioError e'
         either left pure et
 
-makeZone :: Zone -> [Conf] -> IO Zone
-makeZone def conf = do
+makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
+makeZoneConf def conf = do
     cnf_zone                 <- get "zone"                 cnf_zone
     cnf_source               <- get "source"               cnf_source
     cnf_dnssec               <- get "dnssec"               cnf_dnssec
@@ -70,7 +70,7 @@ makeZone def conf = do
     cnf_allow_notify_addrs   <- get "allow-notify-addrs"   cnf_allow_notify_addrs
     cnf_allow_transfer       <- get "allow-transfer"       cnf_allow_transfer
     cnf_allow_transfer_addrs <- get "allow-transfer-addrs" cnf_allow_transfer_addrs
-    pure Zone{..}
+    pure ZoneConf{..}
   where
     get k func = do
         et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
@@ -81,7 +81,7 @@ makeZone def conf = do
 
 {- FOURMOLU_ENABLE -}
 
-loadConfig :: FilePath -> IO (Config, [Zone])
+loadConfig :: FilePath -> IO (Config, [ZoneConf])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
 
 splitConfig :: [Conf] -> ([Conf], [[Conf]])

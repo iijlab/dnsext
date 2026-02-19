@@ -43,8 +43,8 @@ loadSource zone serial source = case source of
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs
 
-newControl :: Zone -> IO (IORef Control)
-newControl Zone{..} = do
+newControl :: ZoneConf -> IO (IORef Control)
+newControl ZoneConf{..} = do
     mdb <- loadSource zone 0 source
     let (db, ready) = case mdb of
             Nothing -> (emptyDB, False)

@@ -25,7 +25,7 @@ data Control = Control
     , ctlAllowTransfer6 :: IPRTable IPv6 Bool
     }
 
-data Zone = Zone
+data ZoneConf = ZoneConf
     { cnf_zone :: String
     , cnf_source :: String
     , cnf_dnssec :: Bool
