@@ -34,14 +34,14 @@ import Types
 main :: IO ()
 main = do
     [conffile] <- getArgs
-    cnf@Config{..} <- loadConfig conffile
-    ctlref <- newControl cnf
+    (Config{..}, zonelist) <- loadConfig conffile
+    ctlref <- newControl $ head zonelist
     _ <- forkIO $ do
         threadDelay 1000000
         notifyWithControl ctlref
     (wakeup, wait) <- initSync
     void $ installHandler sigHUP (Catch wakeup) Nothing
-    _ <- forkIO $ syncZone cnf ctlref wait
+    _ <- forkIO $ syncZone ctlref wait
     let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
     ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
     ss <- mapM serverSocket ais
@@ -105,8 +105,8 @@ replyRefused s sa query = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
-syncZone :: Config -> IORef Control -> (Int -> IO ()) -> IO ()
-syncZone cnf ctlref wait = loop
+syncZone :: IORef Control -> (Int -> IO ()) -> IO ()
+syncZone ctlref wait = loop
   where
     loop = do
         Control{..} <- readIORef ctlref
@@ -116,7 +116,7 @@ syncZone cnf ctlref wait = loop
                 | otherwise = fromIntegral $ soa_refresh $ dbSOA ctlDB
         wait tm
         -- reading zone source
-        updateControl cnf ctlref
+        updateControl ctlref
         -- notify
         notifyWithControl ctlref
         loop

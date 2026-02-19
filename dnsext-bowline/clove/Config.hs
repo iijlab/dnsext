@@ -9,26 +9,28 @@ import DNS.Config
 import Network.Socket (PortNumber)
 import System.IO.Error (ioeGetErrorString, ioeSetErrorString, tryIOError)
 
+import Types
+
 {- FOURMOLU_DISABLE -}
 data Config = Config
-    { cnf_zone                 :: String
-    , cnf_source               :: String
-    , cnf_dnssec               :: Bool
-    , cnf_notify               :: Bool
-    , cnf_notify_addrs         :: [String]
-    , cnf_allow_notify         :: Bool
-    , cnf_allow_notify_addrs   :: [String]
-    , cnf_allow_transfer       :: Bool
-    , cnf_allow_transfer_addrs :: [String]
-    , cnf_tcp_addrs            :: [String]
-    , cnf_tcp_port             :: PortNumber
-    , cnf_udp_addrs            :: [String]
-    , cnf_udp_port             :: PortNumber
+    { cnf_tcp_addrs :: [String]
+    , cnf_tcp_port  :: PortNumber
+    , cnf_udp_addrs :: [String]
+    , cnf_udp_port  :: PortNumber
     }
 
 defaultConfig :: Config
 defaultConfig =
     Config
+        { cnf_tcp_addrs            = []
+        , cnf_tcp_port             = 53
+        , cnf_udp_addrs            = []
+        , cnf_udp_port             = 53
+        }
+
+defaultZone :: Zone
+defaultZone =
+    Zone
         { cnf_zone                 = "example.org"
         , cnf_source               = "example.zone"
         , cnf_dnssec               = False
@@ -38,14 +40,27 @@ defaultConfig =
         , cnf_allow_notify_addrs   = []
         , cnf_allow_transfer       = False
         , cnf_allow_transfer_addrs = []
-        , cnf_tcp_addrs            = []
-        , cnf_tcp_port             = 53
-        , cnf_udp_addrs            = []
-        , cnf_udp_port             = 53
         }
 
-makeConfig :: Config -> [Conf] -> IO Config
-makeConfig def conf = do
+makeConfig :: Config -> [Conf] -> IO (Config, [Zone])
+makeConfig def conf0 = do
+    cnf_tcp_addrs <- get "tcp-addrs"            cnf_tcp_addrs
+    cnf_tcp_port  <- get "tcp-port"             cnf_tcp_port
+    cnf_udp_addrs <- get "udp-addrs"            cnf_udp_addrs
+    cnf_udp_port  <- get "udp-port"             cnf_udp_port
+    zonelist      <- mapM (makeZone defaultZone) zones
+    pure (Config{..}, zonelist)
+  where
+    (conf, zones) = splitConfig conf0
+    get k func = do
+        et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
+        let left e = do
+                let e' = ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
+                ioError e'
+        either left pure et
+
+makeZone :: Zone -> [Conf] -> IO Zone
+makeZone def conf = do
     cnf_zone                 <- get "zone"                 cnf_zone
     cnf_source               <- get "source"               cnf_source
     cnf_dnssec               <- get "dnssec"               cnf_dnssec
@@ -55,11 +70,7 @@ makeConfig def conf = do
     cnf_allow_notify_addrs   <- get "allow-notify-addrs"   cnf_allow_notify_addrs
     cnf_allow_transfer       <- get "allow-transfer"       cnf_allow_transfer
     cnf_allow_transfer_addrs <- get "allow-transfer-addrs" cnf_allow_transfer_addrs
-    cnf_tcp_addrs            <- get "tcp-addrs"            cnf_tcp_addrs
-    cnf_tcp_port             <- get "tcp-port"             cnf_tcp_port
-    cnf_udp_addrs            <- get "udp-addrs"            cnf_udp_addrs
-    cnf_udp_port             <- get "udp-port"             cnf_udp_port
-    pure Config{..}
+    pure Zone{..}
   where
     get k func = do
         et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
@@ -67,7 +78,19 @@ makeConfig def conf = do
                 let e' = ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
                 ioError e'
         either left pure et
+
 {- FOURMOLU_ENABLE -}
 
-loadConfig :: FilePath -> IO Config
+loadConfig :: FilePath -> IO (Config, [Zone])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
+
+splitConfig :: [Conf] -> ([Conf], [[Conf]])
+splitConfig xs0 = (gs, zss)
+  where
+    p (k, _) = k == "zone"
+    (gs, os) = break p xs0
+    zss = loop os
+    loop [] = []
+    loop (x : xs) =
+        let (zs', xs') = break p xs
+         in (x : zs') : loop xs'

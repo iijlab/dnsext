@@ -14,7 +14,6 @@ import DNS.Auth.DB
 import DNS.Types
 
 import qualified Axfr
-import Config
 import Types
 
 readIP :: [String] -> [IP]
@@ -44,8 +43,8 @@ loadSource zone serial source = case source of
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs
 
-newControl :: Config -> IO (IORef Control)
-newControl Config{..} = do
+newControl :: Zone -> IO (IORef Control)
+newControl Zone{..} = do
     mdb <- loadSource zone 0 source
     let (db, ready) = case mdb of
             Nothing -> (emptyDB, False)
@@ -64,22 +63,22 @@ newControl Config{..} = do
             , ctlAllowNotifyAddrs = allow_notify_addrs
             , ctlAllowTransfer4 = t4
             , ctlAllowTransfer6 = t6
+            , ctlZone = zone
+            , ctlSource = source
             }
   where
     zone = fromRepresentation cnf_zone
     source = readSource cnf_source
 
-updateControl :: Config -> IORef Control -> IO ()
-updateControl Config{..} ctlref = do
+updateControl :: IORef Control -> IO ()
+updateControl ctlref = do
     Control{..} <- readIORef ctlref
     let serial = soa_serial $ dbSOA ctlDB
-    mdb <- loadSource zone serial source
+    mdb <- loadSource ctlZone serial ctlSource
     case mdb of
         Nothing -> return ()
         Just db -> atomicModifyIORef' ctlref $ modify db
   where
-    zone = fromRepresentation cnf_zone
-    source = readSource cnf_source
     modify db ctl = (ctl', ())
       where
         ctl' =
