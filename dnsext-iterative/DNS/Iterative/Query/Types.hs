@@ -40,7 +40,7 @@ queryParamIN :: Domain -> TYPE -> QueryControls -> QueryParam
 queryParamIN dom typ = queryParam (Question dom typ IN)
 
 queryControls' :: (DNSFlags -> EDNSheader -> a) -> QueryControls -> a
-queryControls' h = queryControls (\mf eh -> h (mf defaultQueryDNSFlags) eh)
+queryControls' h = queryControls (\mf eh _ -> h (mf defaultQueryDNSFlags) eh)
 
 ----------
 
