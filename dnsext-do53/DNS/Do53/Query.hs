@@ -15,6 +15,7 @@ module DNS.Do53.Query (
     ednsSetVersion,
     ednsSetUdpSize,
     ednsSetOptions,
+    opCode,
     queryControls,
     modifyQuery,
     encodeQuery,
@@ -323,6 +324,9 @@ instance Show CodeControls where
       where
         _show :: Show a => String -> Maybe a -> String
         _show nm w = maybe _skipDefault (\s -> nm ++ ":" ++ show s) w
+
+opCode :: OPCODE -> QueryControls
+opCode op = mempty{qctlCode = mempty{ccOpcode = Just op}}
 
 ----------------------------------------------------------------
 

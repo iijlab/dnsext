@@ -45,6 +45,8 @@ module DNS.Do53.Internal (
     modifyQuery,
     queryControls,
     CodeControls (..),
+    opCode,
+    aaFlag,
 
     -- * Generating identifier
     singleGenId,
