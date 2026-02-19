@@ -17,6 +17,7 @@ data Control = Control
     , ctlReady :: Bool
     , ctlShouldRefresh :: Bool
     , ctlNotifyAddrs :: [IP]
+    , ctlAllowNotifyAddrs :: [IP]
     , ctlAllowTransfer4 :: IPRTable IPv4 Bool
     , ctlAllowTransfer6 :: IPRTable IPv6 Bool
     }

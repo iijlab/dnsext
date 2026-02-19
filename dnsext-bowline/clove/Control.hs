@@ -54,12 +54,14 @@ newControl Config{..} = do
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
         notify_addrs = readIP cnf_notify_addrs
+        allow_notify_addrs = readIP cnf_allow_notify_addrs
     newIORef $
         Control
             { ctlDB = db
             , ctlReady = ready
             , ctlShouldRefresh = shouldReload source
             , ctlNotifyAddrs = notify_addrs
+            , ctlAllowNotifyAddrs = allow_notify_addrs
             , ctlAllowTransfer4 = t4
             , ctlAllowTransfer6 = t6
             }

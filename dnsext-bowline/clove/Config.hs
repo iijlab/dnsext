@@ -16,6 +16,8 @@ data Config = Config
     , cnf_dnssec               :: Bool
     , cnf_notify               :: Bool
     , cnf_notify_addrs         :: [String]
+    , cnf_allow_notify         :: Bool
+    , cnf_allow_notify_addrs   :: [String]
     , cnf_allow_transfer       :: Bool
     , cnf_allow_transfer_addrs :: [String]
     , cnf_tcp_addrs            :: [String]
@@ -32,11 +34,13 @@ defaultConfig =
         , cnf_dnssec               = False
         , cnf_notify               = False
         , cnf_notify_addrs         = []
+        , cnf_allow_notify         = False
+        , cnf_allow_notify_addrs   = []
         , cnf_allow_transfer       = False
         , cnf_allow_transfer_addrs = []
-        , cnf_tcp_addrs            = ["127.0.0.1", "::1"]
+        , cnf_tcp_addrs            = []
         , cnf_tcp_port             = 53
-        , cnf_udp_addrs            = ["127.0.0.1", "::1"]
+        , cnf_udp_addrs            = []
         , cnf_udp_port             = 53
         }
 
@@ -47,6 +51,8 @@ makeConfig def conf = do
     cnf_dnssec               <- get "dnssec"               cnf_dnssec
     cnf_notify               <- get "notify"               cnf_notify
     cnf_notify_addrs         <- get "notify-addrs"         cnf_notify_addrs
+    cnf_allow_notify         <- get "allow-notify"         cnf_allow_notify
+    cnf_allow_notify_addrs   <- get "allow-notify-addrs"   cnf_allow_notify_addrs
     cnf_allow_transfer       <- get "allow-transfer"       cnf_allow_transfer
     cnf_allow_transfer_addrs <- get "allow-transfer-addrs" cnf_allow_transfer_addrs
     cnf_tcp_addrs            <- get "tcp-addrs"            cnf_tcp_addrs
