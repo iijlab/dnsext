@@ -8,7 +8,7 @@ module Axfr (
 import Data.IORef
 import Data.IP
 import qualified Data.IP.RouteTable as T
-import Data.List
+import Data.List as List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
@@ -25,29 +25,37 @@ import Types
 ----------------------------------------------------------------
 
 server
-    :: IORef Zone
+    :: ZoneAlist
     -> Socket
     -> IO ()
-server zoneref sock = do
+server zoneAlist sock = do
     sa <- getPeerName sock
-    zone <- readIORef zoneref
-    let t4 = zoneAllowTransfer4 zone
-        t6 = zoneAllowTransfer6 zone
-    let ok = case fromSockAddr sa of
-            Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
-            Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
-            _ -> False
     equery <- decode <$> recvVC (32 * 1024) (recvTCP sock)
     case equery of
         Left _ -> return ()
-        Right query
-            | ok -> do
-                let db = zoneDB zone
-                let reply = makeReply db query
-                sendVC (sendTCP sock) $ encode reply
-            | otherwise -> do
-                let reply = (fromQuery query){rcode = Refused}
-                sendVC (sendTCP sock) $ encode reply
+        Right query -> do
+            let dom = qname $ question query
+            case List.lookup dom zoneAlist of -- exact match
+                Nothing -> replyRefused query
+                Just zoneref -> do
+                    zone <- readIORef zoneref
+                    if accessControl zone sa
+                        then do
+                            let db = zoneDB zone
+                            let reply = makeReply db query
+                            sendVC (sendTCP sock) $ encode reply
+                        else replyRefused query
+  where
+    replyRefused query = sendVC (sendTCP sock) $ encode reply
+      where
+        reply = (fromQuery query){rcode = Refused}
+    accessControl zone sa = case fromSockAddr sa of
+        Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
+        Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
+        _ -> False
+      where
+        t4 = zoneAllowTransfer4 zone
+        t6 = zoneAllowTransfer6 zone
 
 makeReply :: DB -> DNSMessage -> DNSMessage
 makeReply db query

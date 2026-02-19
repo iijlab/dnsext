@@ -5,11 +5,8 @@ module Main where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (concurrently_)
-import Control.Concurrent.STM
-import qualified Control.Exception as E
 import Control.Monad
 import Data.IP
-import GHC.Event
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -33,36 +30,43 @@ import Zone
 
 main :: IO ()
 main = do
+    -- Initialization
     [conffile] <- getArgs
     (Config{..}, zonelist) <- loadConfig conffile
-    zoneref <- newZone $ head zonelist
+    zones <- newZones zonelist
+    zoneAlist <- toZoneAlist zones
+    -- Notify
+    let (_, zonerefs) = unzip zoneAlist
     _ <- forkIO $ do
         threadDelay 1000000
-        notifyWithZone zoneref
-    (wakeup, wait) <- initSync
-    void $ installHandler sigHUP (Catch wakeup) Nothing
-    _ <- forkIO $ syncZone zoneref wait
-    let as = map (axfrServer zoneref (show cnf_tcp_port)) cnf_tcp_addrs
-    ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
-    ss <- mapM serverSocket ais
-    let cs = map (authServer zoneref wakeup) ss
+        mapM_ notifyWithZone zonerefs
+    -- Zone updators
+    let wakeupAll = sequence_ $ map zoneWakeUp zones
+    void $ installHandler sigHUP (Catch wakeupAll) Nothing
+    mapM_ (void . forkIO . syncZone) zonerefs
+    -- AXFR servers: TCP
+    let as = map (axfrServer zoneAlist (show cnf_tcp_port)) cnf_tcp_addrs
+    -- Authoritative servers: UDP
+    ss <- mapM (serverSocket cnf_udp_port) cnf_udp_addrs
+    let cs = map (authServer zoneAlist) ss
+    -- Run servers
     foldr1 concurrently_ $ as ++ cs
 
 ----------------------------------------------------------------
 
 axfrServer
-    :: IORef Zone
+    :: ZoneAlist
     -> ServiceName
     -> HostName
     -> IO ()
-axfrServer zoneref port addr =
+axfrServer zoneAlist port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> Axfr.server zoneref s
+        \_ _ s -> Axfr.server zoneAlist s
 
 ----------------------------------------------------------------
 
-authServer :: IORef Zone -> IO () -> Socket -> IO ()
-authServer zoneref wakeup s = loop
+authServer :: ZoneAlist -> Socket -> IO ()
+authServer zoneAlist s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
@@ -70,21 +74,29 @@ authServer zoneref wakeup s = loop
             -- fixme: which RFC?
             Left _e -> return ()
             Right query -> case opcode query of
-                OP_NOTIFY -> do
-                    Zone{..} <- readIORef zoneref
-                    case fromSockAddr sa of
-                        Nothing -> replyRefused s sa query
-                        Just (ip, _)
-                            | ip `elem` zoneAllowNotifyAddrs -> do
-                                replyNotice s sa query
-                                wakeup
-                            | otherwise -> replyRefused s sa query
+                OP_NOTIFY -> handleNotify sa query
                 OP_STD -> do
-                    zone <- readIORef zoneref
-                    replyQuery (zoneDB zone) s sa query
-                _ -> do
-                    replyRefused s sa query
+                    let dom = qname $ question query
+                    case findZoneAlist dom zoneAlist of -- isSubDomainOf
+                        Nothing -> replyRefused s sa query
+                        Just (_, zoneref) -> do
+                            zone <- readIORef zoneref
+                            replyQuery (zoneDB zone) s sa query
+                _ -> replyRefused s sa query
         loop
+    handleNotify sa query = case lookup dom zoneAlist of -- exact match
+        Nothing -> replyRefused s sa query
+        Just zoneref -> do
+            Zone{..} <- readIORef zoneref
+            case fromSockAddr sa of
+                Nothing -> replyRefused s sa query
+                Just (ip, _)
+                    | ip `elem` zoneAllowNotifyAddrs -> do
+                        replyNotice s sa query
+                        zoneWakeUp
+                    | otherwise -> replyRefused s sa query
+      where
+        dom = qname $ question query
 
 replyNotice :: Socket -> SockAddr -> DNSMessage -> IO ()
 replyNotice s sa query = void $ NSB.sendTo s bs sa
@@ -105,8 +117,8 @@ replyRefused s sa query = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
-syncZone :: IORef Zone -> (Int -> IO ()) -> IO ()
-syncZone zoneref wait = loop
+syncZone :: IORef Zone -> IO ()
+syncZone zoneref = loop
   where
     loop = do
         Zone{..} <- readIORef zoneref
@@ -114,7 +126,7 @@ syncZone zoneref wait = loop
                 | not zoneShouldRefresh = 0
                 | not zoneReady = 10 -- retry
                 | otherwise = fromIntegral $ soa_refresh $ dbSOA zoneDB
-        wait tm
+        zoneWait tm
         -- reading zone source
         updateZone zoneref
         -- notify
@@ -125,23 +137,3 @@ notifyWithZone :: IORef Zone -> IO ()
 notifyWithZone zoneref = do
     Zone{..} <- readIORef zoneref
     mapM_ (notify $ dbZone zoneDB) $ zoneNotifyAddrs
-
-----------------------------------------------------------------
-
-initSync :: IO (IO (), Int -> IO ())
-initSync = do
-    var <- newTVarIO False
-    tmgr <- getSystemTimerManager
-    return (wakeup var, wait var tmgr)
-  where
-    wakeup var = atomically $ writeTVar var True
-    wait var tmgr tout
-        | tout == 0 = waitBody var
-        | otherwise = E.bracket register cancel $ \_ -> waitBody var
-      where
-        register = registerTimeout tmgr (tout * 1000000) $ wakeup var
-        cancel = unregisterTimeout tmgr
-    waitBody var = atomically $ do
-        v <- readTVar var
-        check v
-        writeTVar var False

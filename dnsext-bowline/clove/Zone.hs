@@ -3,10 +3,14 @@
 
 module Zone where
 
+import Control.Concurrent.STM
+import qualified Control.Exception as E
 import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
+import Data.List
 import Data.Maybe
+import GHC.Event
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -15,6 +19,8 @@ import DNS.Types
 
 import qualified Axfr
 import Types
+
+----------------------------------------------------------------
 
 readIP :: [String] -> [IP]
 readIP ss = mapMaybe readMaybe ss
@@ -34,6 +40,8 @@ readSource s
     | Just a4 <- readMaybe s = FromUpstream4 a4
     | otherwise = FromFile s
 
+----------------------------------------------------------------
+
 loadSource :: Domain -> Serial -> Source -> IO (Maybe DB)
 loadSource zone serial source = case source of
     FromUpstream4 ip4 -> toDB <$> Axfr.client serial (IPv4 ip4) zone
@@ -43,7 +51,24 @@ loadSource zone serial source = case source of
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs
 
-newZone :: ZoneConf -> IO (IORef Zone)
+----------------------------------------------------------------
+
+findZoneAlist :: Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
+findZoneAlist dom alist = find (\(k, _) -> dom `isSubDomainOf` k) alist
+
+toZoneAlist :: [Zone] -> IO ZoneAlist
+toZoneAlist zones = do
+    refs <- mapM newIORef zones
+    return $ zip names refs
+  where
+    names = map zoneName zones
+
+newZones :: [ZoneConf] -> IO [Zone]
+newZones zcs = mapM newZone zcs
+
+----------------------------------------------------------------
+
+newZone :: ZoneConf -> IO Zone
 newZone ZoneConf{..} = do
     mdb <- loadSource zone 0 source
     let (db, ready) = case mdb of
@@ -54,7 +79,8 @@ newZone ZoneConf{..} = do
         t6 = fromList $ map (,True) a6
         notify_addrs = readIP cnf_notify_addrs
         allow_notify_addrs = readIP cnf_allow_notify_addrs
-    newIORef $
+    (wakeup, wait) <- initSync
+    return $
         Zone
             { zoneDB = db
             , zoneReady = ready
@@ -65,10 +91,18 @@ newZone ZoneConf{..} = do
             , zoneAllowTransfer6 = t6
             , zoneName = zone
             , zoneSource = source
+            , zoneWakeUp = wakeup
+            , zoneWait = wait
             }
   where
     zone = fromRepresentation cnf_zone
     source = readSource cnf_source
+
+shouldReload :: Source -> Bool
+shouldReload (FromFile _) = False
+shouldReload _ = True
+
+----------------------------------------------------------------
 
 updateZone :: IORef Zone -> IO ()
 updateZone zoneref = do
@@ -87,6 +121,22 @@ updateZone zoneref = do
                 , zoneDB = db
                 }
 
-shouldReload :: Source -> Bool
-shouldReload (FromFile _) = False
-shouldReload _ = True
+----------------------------------------------------------------
+
+initSync :: IO (WakeUp, Wait)
+initSync = do
+    var <- newTVarIO False
+    tmgr <- getSystemTimerManager
+    return (wakeup var, wait var tmgr)
+  where
+    wakeup var = atomically $ writeTVar var True
+    wait var tmgr tout
+        | tout == 0 = waitBody var
+        | otherwise = E.bracket register cancel $ \_ -> waitBody var
+      where
+        register = registerTimeout tmgr (tout * 1000000) $ wakeup var
+        cancel = unregisterTimeout tmgr
+    waitBody var = atomically $ do
+        v <- readTVar var
+        check v
+        writeTVar var False

@@ -4,6 +4,9 @@ import qualified Control.Exception as E
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
 
+serverSocket :: PortNumber -> HostName -> IO Socket
+serverSocket pn addr = serverResolve pn addr >>= openSock
+
 serverResolve :: PortNumber -> HostName -> IO AddrInfo
 serverResolve pn addr = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just port)
   where
@@ -14,8 +17,8 @@ serverResolve pn addr = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just p
             , addrSocketType = Datagram
             }
 
-serverSocket :: AddrInfo -> IO Socket
-serverSocket ai = E.bracketOnError (openSocket ai) close $ \s -> do
+openSock :: AddrInfo -> IO Socket
+openSock ai = E.bracketOnError (openSocket ai) close $ \s -> do
     setSocketOption s ReuseAddr 1
     bind s $ addrAddress ai
     return s
