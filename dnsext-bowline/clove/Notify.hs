@@ -36,6 +36,6 @@ notify dom ip = do
             , renvConcurrent = True -- should set True if multiple RIs are provided
             , renvResolveInfos = ris
             }
-    -- fixme: AA flags
     q = Question dom SOA IN
+    -- RFC 5936: DNS Zone Transfer Protocol (AXFR)
     qctl = rdFlag FlagClear <> doFlag FlagClear <> aaFlag FlagSet <> opCode OP_NOTIFY
