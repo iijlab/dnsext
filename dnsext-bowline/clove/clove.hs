@@ -3,7 +3,7 @@
 
 module Main where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.STM
 import qualified Control.Exception as E
@@ -35,7 +35,9 @@ main = do
     [conffile] <- getArgs
     cnf@Config{..} <- loadConfig conffile
     ctlref <- newControl cnf
-    notifyWithControl ctlref
+    _ <- forkIO $ do
+        threadDelay 1000000
+        notifyWithControl ctlref
     (wakeup, wait) <- initSync
     void $ installHandler sigHUP (Catch wakeup) Nothing
     _ <- forkIO $ syncZone cnf ctlref wait
