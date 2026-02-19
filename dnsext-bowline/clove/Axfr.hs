@@ -25,14 +25,14 @@ import Types
 ----------------------------------------------------------------
 
 server
-    :: IORef Control
+    :: IORef Zone
     -> Socket
     -> IO ()
-server ctlref sock = do
+server zoneref sock = do
     sa <- getPeerName sock
-    ctl <- readIORef ctlref
-    let t4 = ctlAllowTransfer4 ctl
-        t6 = ctlAllowTransfer6 ctl
+    zone <- readIORef zoneref
+    let t4 = zoneAllowTransfer4 zone
+        t6 = zoneAllowTransfer6 zone
     let ok = case fromSockAddr sa of
             Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
             Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
@@ -42,7 +42,7 @@ server ctlref sock = do
         Left _ -> return ()
         Right query
             | ok -> do
-                let db = ctlDB ctl
+                let db = zoneDB zone
                 let reply = makeReply db query
                 sendVC (sendTCP sock) $ encode reply
             | otherwise -> do

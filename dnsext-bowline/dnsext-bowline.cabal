@@ -150,10 +150,10 @@ executable clove
     hs-source-dirs:   clove
     other-modules:    Axfr
                       Config
-                      Control
                       Net
                       Notify
                       Types
+                      Zone
 
     default-language: Haskell2010
     ghc-options:      -Wall -threaded

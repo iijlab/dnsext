@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 
-module Control where
+module Zone where
 
 import Data.IORef
 import Data.IP
@@ -43,8 +43,8 @@ loadSource zone serial source = case source of
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs
 
-newControl :: ZoneConf -> IO (IORef Control)
-newControl ZoneConf{..} = do
+newZone :: ZoneConf -> IO (IORef Zone)
+newZone ZoneConf{..} = do
     mdb <- loadSource zone 0 source
     let (db, ready) = case mdb of
             Nothing -> (emptyDB, False)
@@ -55,36 +55,36 @@ newControl ZoneConf{..} = do
         notify_addrs = readIP cnf_notify_addrs
         allow_notify_addrs = readIP cnf_allow_notify_addrs
     newIORef $
-        Control
-            { ctlDB = db
-            , ctlReady = ready
-            , ctlShouldRefresh = shouldReload source
-            , ctlNotifyAddrs = notify_addrs
-            , ctlAllowNotifyAddrs = allow_notify_addrs
-            , ctlAllowTransfer4 = t4
-            , ctlAllowTransfer6 = t6
-            , ctlZone = zone
-            , ctlSource = source
+        Zone
+            { zoneDB = db
+            , zoneReady = ready
+            , zoneShouldRefresh = shouldReload source
+            , zoneNotifyAddrs = notify_addrs
+            , zoneAllowNotifyAddrs = allow_notify_addrs
+            , zoneAllowTransfer4 = t4
+            , zoneAllowTransfer6 = t6
+            , zoneName = zone
+            , zoneSource = source
             }
   where
     zone = fromRepresentation cnf_zone
     source = readSource cnf_source
 
-updateControl :: IORef Control -> IO ()
-updateControl ctlref = do
-    Control{..} <- readIORef ctlref
-    let serial = soa_serial $ dbSOA ctlDB
-    mdb <- loadSource ctlZone serial ctlSource
+updateZone :: IORef Zone -> IO ()
+updateZone zoneref = do
+    Zone{..} <- readIORef zoneref
+    let serial = soa_serial $ dbSOA zoneDB
+    mdb <- loadSource zoneName serial zoneSource
     case mdb of
         Nothing -> return ()
-        Just db -> atomicModifyIORef' ctlref $ modify db
+        Just db -> atomicModifyIORef' zoneref $ modify db
   where
-    modify db ctl = (ctl', ())
+    modify db zone = (zone', ())
       where
-        ctl' =
-            ctl
-                { ctlReady = True
-                , ctlDB = db
+        zone' =
+            zone
+                { zoneReady = True
+                , zoneDB = db
                 }
 
 shouldReload :: Source -> Bool

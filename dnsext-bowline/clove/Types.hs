@@ -13,16 +13,16 @@ data Source
     | FromUpstream6 IPv6
     deriving (Eq, Show)
 
-data Control = Control
-    { ctlZone :: Domain
-    , ctlSource :: Source
-    , ctlDB :: DB
-    , ctlReady :: Bool
-    , ctlShouldRefresh :: Bool
-    , ctlNotifyAddrs :: [IP]
-    , ctlAllowNotifyAddrs :: [IP]
-    , ctlAllowTransfer4 :: IPRTable IPv4 Bool
-    , ctlAllowTransfer6 :: IPRTable IPv6 Bool
+data Zone = Zone
+    { zoneName :: Domain
+    , zoneSource :: Source
+    , zoneDB :: DB
+    , zoneReady :: Bool
+    , zoneShouldRefresh :: Bool
+    , zoneNotifyAddrs :: [IP]
+    , zoneAllowNotifyAddrs :: [IP]
+    , zoneAllowTransfer4 :: IPRTable IPv4 Bool
+    , zoneAllowTransfer6 :: IPRTable IPv6 Bool
     }
 
 data ZoneConf = ZoneConf

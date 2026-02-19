@@ -24,10 +24,10 @@ import Data.IORef
 
 import qualified Axfr
 import Config
-import Control
 import Net
 import Notify
 import Types
+import Zone
 
 ----------------------------------------------------------------
 
@@ -35,34 +35,34 @@ main :: IO ()
 main = do
     [conffile] <- getArgs
     (Config{..}, zonelist) <- loadConfig conffile
-    ctlref <- newControl $ head zonelist
+    zoneref <- newZone $ head zonelist
     _ <- forkIO $ do
         threadDelay 1000000
-        notifyWithControl ctlref
+        notifyWithZone zoneref
     (wakeup, wait) <- initSync
     void $ installHandler sigHUP (Catch wakeup) Nothing
-    _ <- forkIO $ syncZone ctlref wait
-    let as = map (axfrServer ctlref (show cnf_tcp_port)) cnf_tcp_addrs
+    _ <- forkIO $ syncZone zoneref wait
+    let as = map (axfrServer zoneref (show cnf_tcp_port)) cnf_tcp_addrs
     ais <- mapM (serverResolve cnf_udp_port) cnf_udp_addrs
     ss <- mapM serverSocket ais
-    let cs = map (authServer ctlref wakeup) ss
+    let cs = map (authServer zoneref wakeup) ss
     foldr1 concurrently_ $ as ++ cs
 
 ----------------------------------------------------------------
 
 axfrServer
-    :: IORef Control
+    :: IORef Zone
     -> ServiceName
     -> HostName
     -> IO ()
-axfrServer ctlref port addr =
+axfrServer zoneref port addr =
     runTCPServer 10 (Just addr) port $
-        \_ _ s -> Axfr.server ctlref s
+        \_ _ s -> Axfr.server zoneref s
 
 ----------------------------------------------------------------
 
-authServer :: IORef Control -> IO () -> Socket -> IO ()
-authServer ctlref wakeup s = loop
+authServer :: IORef Zone -> IO () -> Socket -> IO ()
+authServer zoneref wakeup s = loop
   where
     loop = do
         (bs, sa) <- NSB.recvFrom s 2048
@@ -71,17 +71,17 @@ authServer ctlref wakeup s = loop
             Left _e -> return ()
             Right query -> case opcode query of
                 OP_NOTIFY -> do
-                    Control{..} <- readIORef ctlref
+                    Zone{..} <- readIORef zoneref
                     case fromSockAddr sa of
                         Nothing -> replyRefused s sa query
                         Just (ip, _)
-                            | ip `elem` ctlAllowNotifyAddrs -> do
+                            | ip `elem` zoneAllowNotifyAddrs -> do
                                 replyNotice s sa query
                                 wakeup
                             | otherwise -> replyRefused s sa query
                 OP_STD -> do
-                    ctl <- readIORef ctlref
-                    replyQuery (ctlDB ctl) s sa query
+                    zone <- readIORef zoneref
+                    replyQuery (zoneDB zone) s sa query
                 _ -> do
                     replyRefused s sa query
         loop
@@ -105,26 +105,26 @@ replyRefused s sa query = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
-syncZone :: IORef Control -> (Int -> IO ()) -> IO ()
-syncZone ctlref wait = loop
+syncZone :: IORef Zone -> (Int -> IO ()) -> IO ()
+syncZone zoneref wait = loop
   where
     loop = do
-        Control{..} <- readIORef ctlref
+        Zone{..} <- readIORef zoneref
         let tm
-                | not ctlShouldRefresh = 0
-                | not ctlReady = 10 -- retry
-                | otherwise = fromIntegral $ soa_refresh $ dbSOA ctlDB
+                | not zoneShouldRefresh = 0
+                | not zoneReady = 10 -- retry
+                | otherwise = fromIntegral $ soa_refresh $ dbSOA zoneDB
         wait tm
         -- reading zone source
-        updateControl ctlref
+        updateZone zoneref
         -- notify
-        notifyWithControl ctlref
+        notifyWithZone zoneref
         loop
 
-notifyWithControl :: IORef Control -> IO ()
-notifyWithControl ctlref = do
-    Control{..} <- readIORef ctlref
-    mapM_ (notify $ dbZone ctlDB) $ ctlNotifyAddrs
+notifyWithZone :: IORef Zone -> IO ()
+notifyWithZone zoneref = do
+    Zone{..} <- readIORef zoneref
+    mapM_ (notify $ dbZone zoneDB) $ zoneNotifyAddrs
 
 ----------------------------------------------------------------
 
