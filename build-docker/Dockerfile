@@ -85,6 +85,7 @@ git clone ${CLONE_URL}
     dnsext-do53      \
     dnsext-iterative \
     dnsext-dox       \
+    dnsext-auth      \
     dnsext-bowline   \
   ; do
       touch ${dir}/CHANGELOG.md

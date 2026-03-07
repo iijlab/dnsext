@@ -6,4 +6,5 @@ packages:
   dnsext-do53
   dnsext-dox
   dnsext-iterative
+  dnsext-auth
   dnsext-bowline
