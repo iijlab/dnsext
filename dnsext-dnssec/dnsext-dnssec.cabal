@@ -37,8 +37,10 @@ library
         DNS.SEC.Verify.NSEC
         DNS.SEC.Verify.NSEC3
         DNS.SEC.Verify.NSECxRange
+        DNS.SEC.Verify.RRset
         DNS.SEC.Verify.RSA
         DNS.SEC.Verify.SHA
+        DNS.SEC.Verify.Supported
         DNS.SEC.Verify.Verify
 
     default-language: Haskell2010
