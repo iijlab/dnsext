@@ -33,8 +33,8 @@ ecdsaP384SHA = ecdsaHelper ECC.SEC_p384r1 SHA384 48
 ecdsaHelper :: HashAlgorithm hash => CurveName -> hash -> Int -> RRSIGImpl
 ecdsaHelper cn hash len =
     RRSIGImpl
-        { rrsigIGetKey = ecdsaDecodePubKey len cn curve
-        , rrsigIGetSig = ecdsaDecodeSignature curve
+        { rrsigIDecodePubKey = ecdsaDecodePubKey len cn curve
+        , rrsigIDecodeSignature = ecdsaDecodeSignature curve
         , rrsigIVerify = ecdsaVerify hash
         }
   where

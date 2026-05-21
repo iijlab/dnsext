@@ -183,8 +183,8 @@ verifyRRSIGwith RRSIGImpl{..} now RD_DNSKEY{..} rrsig@RD_RRSIG{..} rrset_name rr
          ++ " =/= "
          ++ show rrsig_type
 
-    pubkey <- rrsigIGetKey dnskey_public_key
-    sig <- rrsigIGetSig rrsig_signature
+    pubkey <- rrsigIDecodePubKey dnskey_public_key
+    sig <- rrsigIDecodeSignature rrsig_signature
     let str = encodeRRset rrsig rrset_name rrset_type rrset_class sortedRDatas'
     {- `Data.List.sort` is linear for sorted case -}
     good <- rrsigIVerify pubkey sig str
