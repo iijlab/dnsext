@@ -13,8 +13,8 @@ import DNS.Types
 data RRSIGImpl
     = forall pubkey sig.
       RRSIGImpl
-    { rrsigIGetKey :: PubKey -> Either String pubkey
-    , rrsigIGetSig :: Opaque -> Either String sig
+    { rrsigIDecodePubKey :: PubKey -> Either String pubkey
+    , rrsigIDecodeSignature :: Opaque -> Either String sig
     , rrsigIVerify :: pubkey -> sig -> ByteString -> Either String Bool
     }
 

@@ -40,8 +40,8 @@ rsaSHA512 = rsaSHAHelper SHA512
 rsaSHAHelper :: (HashAlgorithm hash, HashAlgorithmASN1 hash) => hash -> RRSIGImpl
 rsaSHAHelper alg =
     RRSIGImpl
-        { rrsigIGetKey = rsaDecodePubKey
-        , rrsigIGetSig = rsaDecodeSignature
+        { rrsigIDecodePubKey = rsaDecodePubKey
+        , rrsigIDecodeSignature = rsaDecodeSignature
         , rrsigIVerify = rsaVerify alg
         }
 

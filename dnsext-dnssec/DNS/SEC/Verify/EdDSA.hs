@@ -31,8 +31,8 @@ eddsaHelper
     -> RRSIGImpl
 eddsaHelper algName consPublicKey consSignature verifyImpl =
     RRSIGImpl
-        { rrsigIGetKey = eddsaDecodePubKey algName consPublicKey
-        , rrsigIGetSig = eddsaDecodeSignature algName consSignature
+        { rrsigIDecodePubKey = eddsaDecodePubKey algName consPublicKey
+        , rrsigIDecodeSignature = eddsaDecodeSignature algName consSignature
         , rrsigIVerify = eddsaVerify verifyImpl
         }
 
