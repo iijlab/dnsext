@@ -1,10 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module DNS.SEC.Verify.RSA (
     rsaSHA1,
     rsaSHA256,
     rsaSHA512,
+    rsaEncodePriKey,
+    rsaDecodePriKey,
     rsaDecodePubKey,
     rsaEncodePubKey,
 )
@@ -18,14 +21,22 @@ import Crypto.Hash (HashAlgorithm)
 import Crypto.Hash.Algorithms (SHA1 (..), SHA256 (..), SHA512 (..))
 import Crypto.Number.Serialize (i2osp, os2ip)
 import Crypto.PubKey.RSA (PrivateKey (..), PublicKey (..))
+import qualified Crypto.PubKey.RSA as RSA
 import Crypto.PubKey.RSA.PKCS15 (HashAlgorithmASN1, signSafer, verify)
 import Crypto.Random.Types (MonadRandom)
+
 import DNS.SEC.Types (PubKey (..))
 import DNS.SEC.Verify.Types
 import DNS.Types
 import qualified DNS.Types.Opaque as Opaque
+
+import Codec.Serialise
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as BL
 import Data.Maybe (fromJust)
+
+instance Serialise RSA.PublicKey
+instance Serialise RSA.PrivateKey
 
 {- Verify RRSIG with DNSKEY using RSA/SHA-x
 -- RSA/SHA-1 https://datatracker.ietf.org/doc/html/rfc3110
@@ -37,13 +48,28 @@ rsaSHA1 = rsaSHAHelper SHA1
 rsaSHA256 = rsaSHAHelper SHA256
 rsaSHA512 = rsaSHAHelper SHA512
 
+sizeInBits :: Int
+sizeInBits = 512 `div` 8 -- fixme: hard coding
+
 rsaSHAHelper :: (HashAlgorithm hash, HashAlgorithmASN1 hash) => hash -> RRSIGImpl
 rsaSHAHelper alg =
     RRSIGImpl
-        { rrsigIDecodePubKey = rsaDecodePubKey
+        { rrsigIGenKeyPair = RSA.generate (sizeInBits `div` 8) 65537
+        , rrsigIEncodePriKey = rsaEncodePriKey
+        , rrsigIDecodePriKey = rsaDecodePriKey
+        , rrsigIEncodePubKey = rsaEncodePubKey
+        , rrsigIDecodePubKey = rsaDecodePubKey
+        , rrsigIEncodeSignature = rsaEncodeSignature
         , rrsigIDecodeSignature = rsaDecodeSignature
+        , rrsigISign = unsafeRsaSign alg
         , rrsigIVerify = rsaVerify alg
         }
+
+rsaEncodePriKey :: PrivateKey -> ByteString
+rsaEncodePriKey = BL.toStrict . serialise
+
+rsaDecodePriKey :: ByteString -> Either String PrivateKey
+rsaDecodePriKey = Right . deserialise . BL.fromStrict
 
 rsaDecodePubKey :: PubKey -> Either String PublicKey
 rsaDecodePubKey (PubKey o)
@@ -102,10 +128,13 @@ rsaEncodePubKey PublicKey{..}
     n = Opaque.fromByteString $ i2osp public_n
     elen = Opaque.length e
 
-type Signature = Opaque
+type Signature = ByteString
+
+rsaEncodeSignature :: Signature -> Opaque
+rsaEncodeSignature = Opaque.fromByteString
 
 rsaDecodeSignature :: Opaque -> Either String Signature
-rsaDecodeSignature = Right
+rsaDecodeSignature = Right . Opaque.toByteString
 
 rsaVerify
     :: (HashAlgorithm hash, HashAlgorithmASN1 hash)
@@ -115,7 +144,7 @@ rsaVerify
     -> ByteString
     -> Either String Bool
 rsaVerify alg pubkey sig msg =
-    Right $ verify (Just alg) pubkey msg $ Opaque.toByteString sig
+    Right $ verify (Just alg) pubkey msg sig
 
 unsafeRsaSign
     :: (HashAlgorithm hash, HashAlgorithmASN1 hash, MonadRandom m)
@@ -126,5 +155,5 @@ unsafeRsaSign
 unsafeRsaSign alg prikey msg = do
     ex <- signSafer (Just alg) prikey msg
     case ex of
-        Left _ -> return $ Opaque.fromByteString ""
-        Right s -> return $ Opaque.fromByteString s
+        Left e -> error $ show e
+        Right s -> return s

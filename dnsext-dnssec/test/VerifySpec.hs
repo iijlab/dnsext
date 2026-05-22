@@ -4,15 +4,21 @@
 module VerifySpec (spec) where
 
 import Control.Monad (unless)
-import DNS.SEC
-import DNS.SEC.Verify
-import DNS.Types
-import qualified DNS.Types.Opaque as Opaque
+import Crypto.Number.Serialize
+import qualified Crypto.PubKey.RSA as RSA
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Base64 as B64
+import Data.Either (fromRight)
 import Data.List (sortOn)
 import Data.String (fromString)
 import Data.Word
 import Test.Hspec
+
+import DNS.SEC
+import DNS.SEC.Internal
+import DNS.SEC.Verify
+import DNS.Types
+import qualified DNS.Types.Opaque as Opaque
 
 spec :: Spec
 spec = do
@@ -225,16 +231,13 @@ data RRSIG_CASE = RRSIG_CASE
     { rrsig_dnskey :: ResourceRecord
     , rrsig_targets :: [ResourceRecord]
     , rrsig_rrsig :: ResourceRecord
+    , rrsig_pubkey :: Maybe PubKey
+    , rrsig_prikey :: Maybe PriKey
     }
 
 caseRRSIG :: RRSIG_CASE -> Expectation
-caseRRSIG RRSIG_CASE{..} = either expectationFailure (const $ pure ()) $ do
-    dnskey <- takeRData "DNSKEY" rrsig_dnskey
-    rrsig <- takeRData "RRSIG" rrsig_rrsig
-    let ts =
-            (fromDNSTime (rrsig_inception rrsig) + fromDNSTime (rrsig_expiration rrsig))
-                `div` 2
-    checkKeyTag dnskey (rrsig_key_tag rrsig)
+caseRRSIG RRSIG_CASE{..} = do
+    checkKeyTag dnskey (rrsig_key_tag rrsig) `shouldBe` Right ()
     verifyRRSIG
         (toDNSTime ts)
         (rrname rrsig_dnskey)
@@ -242,10 +245,31 @@ caseRRSIG RRSIG_CASE{..} = either expectationFailure (const $ pure ()) $ do
         (rrname rrsig_rrsig)
         rrsig
         rrsig_targets
+        `shouldBe` Right ()
+    case rrsig_pubkey of
+        Nothing -> return ()
+        Just pubkey -> pubkey `shouldBe` dnskey_public_key dnskey
+    case rrsig_prikey of
+        Nothing -> return ()
+        Just prikey -> do
+            Right newrrsig <- sign prikey rrsig_targets rrsig
+            verifyRRSIG
+                (toDNSTime ts)
+                (rrname rrsig_dnskey)
+                dnskey
+                (rrname rrsig_rrsig)
+                newrrsig
+                rrsig_targets
+                `shouldBe` Right ()
   where
+    rrsig = fromRight (error "caseRRSIG RRSIG") $ takeRData "RRSIG" rrsig_rrsig
+    dnskey = fromRight (error "caseRRSIG DNSKEY") $ takeRData "DNSKEY" rrsig_dnskey
     takeRData name rr = maybe (Left $ "not " ++ name ++ ": " ++ show rd) Right $ fromRData rd
       where
         rd = rdata rr
+    ts =
+        (fromDNSTime (rrsig_inception rrsig) + fromDNSTime (rrsig_expiration rrsig))
+            `div` 2
 
 {- FOURMOLU_DISABLE -}
 rsaSHA1NSEC3SHA1 :: RRSIG_CASE
@@ -276,6 +300,8 @@ rsaSHA1NSEC3SHA1 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Nothing
+        , rrsig_pubkey = Nothing
         }
   where
     key_rd =
@@ -331,6 +357,8 @@ rsaSHA256 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_pubkey = Just $ rsaEncodePubKey pub
+        , rrsig_prikey = Just $ rsaEncodePriKey pri
         }
   where
     key_rd =
@@ -354,6 +382,30 @@ rsaSHA256 =
             " kRCOH6u7l0QGy9qpC9 \
             \ l1sLncJcOKFLJ7GhiUOibu4teYp5VE9RncriShZNz85mwlMgNEa \
             \ cFYK/lPtPiVYP4bwg== "
+    pub =
+        RSA.PublicKey
+            { RSA.public_size = 64 -- bytes, 512 bits
+            , RSA.public_n =
+                toI
+                    "wVwaxrHF2CK64aYKRUibLiH30KpPuPBjel7E8ZydQW1HYWHfoGmidzC2RnhwCC293hCzw+TFR2nqn8OVSY5t2Q=="
+            , RSA.public_e = toI "AQAB"
+            }
+    pri =
+        RSA.PrivateKey
+            { RSA.private_pub = pub
+            , RSA.private_d =
+                toI
+                    "UR44xX6zB3eaeyvTRzmskHADrPCmPWnr8dxsNwiDGHzrMKLN+i/HAam+97HxIKVWNDH2ba9Mf1SA8xu9dcHZAQ=="
+            , RSA.private_p = toI "4c8IvFu1AVXGWeFLLFh5vs7fbdzdC6U82fduE6KkSWk="
+            , RSA.private_q = toI "2zZpBE8ZXVnL74QjG4zINlDfH+EOEtjJJ3RtaYDugvE="
+            , RSA.private_dP = toI "G2xAPFfK0KGxGANDVNxd1K1c9wOmmJ51mGbzKFFNMFk="
+            , RSA.private_dQ = toI "GYxP1Pa7CAwtHm8SAGX594qZVofOMhgd6YFCNyeVpKE="
+            , RSA.private_qinv = toI "icQdNRjlZGPmuJm2TIadubcO8X7V4y07aVhX464tx8Q="
+            }
+
+toI :: ByteString -> Integer
+toI = os2ip . B64.decodeLenient
+
 
 {- "Reconstructing the Signed Data"
    https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.2
@@ -387,6 +439,8 @@ rsaSHA256_RECONS =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_pubkey = Just $ rsaEncodePubKey pub
+        , rrsig_prikey = Just $ rsaEncodePriKey pri
         }
   where
     key_rd =
@@ -410,6 +464,26 @@ rsaSHA256_RECONS =
             " kRCOH6u7l0QGy9qpC9 \
             \ l1sLncJcOKFLJ7GhiUOibu4teYp5VE9RncriShZNz85mwlMgNEa \
             \ cFYK/lPtPiVYP4bwg== "
+    pub =
+        RSA.PublicKey
+            { RSA.public_size = 64 -- bytes, 512 bits
+            , RSA.public_n =
+                toI
+                    "wVwaxrHF2CK64aYKRUibLiH30KpPuPBjel7E8ZydQW1HYWHfoGmidzC2RnhwCC293hCzw+TFR2nqn8OVSY5t2Q=="
+            , RSA.public_e = toI "AQAB"
+            }
+    pri =
+        RSA.PrivateKey
+            { RSA.private_pub = pub
+            , RSA.private_d =
+                toI
+                    "UR44xX6zB3eaeyvTRzmskHADrPCmPWnr8dxsNwiDGHzrMKLN+i/HAam+97HxIKVWNDH2ba9Mf1SA8xu9dcHZAQ=="
+            , RSA.private_p = toI "4c8IvFu1AVXGWeFLLFh5vs7fbdzdC6U82fduE6KkSWk="
+            , RSA.private_q = toI "2zZpBE8ZXVnL74QjG4zINlDfH+EOEtjJJ3RtaYDugvE="
+            , RSA.private_dP = toI "G2xAPFfK0KGxGANDVNxd1K1c9wOmmJ51mGbzKFFNMFk="
+            , RSA.private_dQ = toI "GYxP1Pa7CAwtHm8SAGX594qZVofOMhgd6YFCNyeVpKE="
+            , RSA.private_qinv = toI "icQdNRjlZGPmuJm2TIadubcO8X7V4y07aVhX464tx8Q="
+            }
 
 rsaSHA256_RRset :: RRSIG_CASE
 rsaSHA256_RRset =
@@ -446,6 +520,8 @@ rsaSHA256_RRset =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Nothing
+        , rrsig_pubkey = Nothing
         }
   where
     key_rd =
@@ -501,6 +577,8 @@ rsaSHA512 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_pubkey = Just $ rsaEncodePubKey pub
+        , rrsig_prikey = Just $ rsaEncodePriKey pri
         }
   where
     key_rd =
@@ -527,6 +605,26 @@ rsaSHA512 =
             \ eUw1ep94PzEWzr0iGYgZBWm/zpq+9fOuagYJRfDqfReKBzMweOL \
             \ DiNa8iP5g9vMhpuv6OPlvpXwm9Sa9ZXIbNl1MBGk0fthPgxdDLw \
             \ = "
+    pub =
+        RSA.PublicKey
+            { RSA.public_size = 128 -- bytes, 1024 bits
+            , RSA.public_n =
+                toI
+                    "0eg1M5b563zoq4k5ZEOnWmd2/BvpjzedJVdfIsDcMuuhE5SQ3pfQ7qmdaeMlC6Nf8DKGoUPGPXe06cP27/WRODtxXquSUytkO0kJDk8KX8PtA0+yBWwy7UnZDyCkynO00Uuk8HPVtZeMO1pHtlAGVnc8VjXZlNKdyit99waaE4s="
+            , RSA.public_e = toI "AQAB"
+            }
+    pri =
+        RSA.PrivateKey
+            { RSA.private_pub = pub
+            , RSA.private_d =
+                toI
+                    "rFS1IPbJllFFgFc33B5DDlC1egO8e81P4fFadODbp56V7sphKa6AZQCx8NYAew6VXFFPAKTw41QdHnK5kIYOwxvfFDjDcUGza88qbjyrDPSJenkeZbISMUSSqy7AMFzEolkk6WSn6k3thUVRgSlqDoOV3SEIAsrB043XzGrKIVE="
+            , RSA.private_p = toI "8mbtsu9Tl9v7tKSHdCIeprLIQXQLzxlSZun5T1n/OjvXSUtvD7xnZJ+LHqaBj1dIgMbCq2U8O04QVcK3TS9GiQ=="
+            , RSA.private_q = toI "3a6gkfs74d0Jb7yL4j4adAif4fcp7ZrGt7G5NRVDDY/Mv4TERAKMa0TKN3okKE0A7X+Rv2K84mhT4QLDlllEcw=="
+            , RSA.private_dP = toI "v3D5A9uuCn5rgVR7wgV8ba0/KSpsdSiLgsoA42GxiB1gvvs7gJMMmVTDu/ZG1p1ZnpLbhh/S/Qd/MSwyNlxC+Q=="
+            , RSA.private_dQ = toI "m+ezf9dsDvYQK+gzjOLWYeKq5xWYBEYFGa3BLocMiF4oxkzOZ3JPZSWU/h1Fjp5RV7aPP0Vmx+hNjYMPIQ8Y5w=="
+            , RSA.private_qinv = toI "Je5YhYpUron/WdOXjxNAxDubAp3i5X7UOUfhJcyIggqwY86IE0Q/Bk0Dw4SC9zxnsimmdBXW2Izd8Lwuk8FQcQ=="
+            }
 
 -- example from https://datatracker.ietf.org/doc/html/rfc6605#section-6.1
 ecdsaP256 :: RRSIG_CASE
@@ -557,6 +655,8 @@ ecdsaP256 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Just pri
+        , rrsig_pubkey = Just pub
         }
   where
     key_rd =
@@ -578,6 +678,8 @@ ecdsaP256 =
             "example.net."
             " qx6wLYqmh+l9oCKTN6qIc+bw6ya+KJ8oMz0YP107epXA \
             \ yGmt+3SNruPFKG7tZoLBLlUzGGus7ZwmwWep666VCw== "
+    pri = B64.decodeLenient "GU6SnQ/Ou+xC5RumuIUIuJZteXT2z0O/ok1s38Et6mQ="
+    pub = fromRight (error "P256 pubkey") $ p256toPubKey pri
 
 -- example from https://datatracker.ietf.org/doc/html/rfc6605#section-6.2
 ecdsaP384 :: RRSIG_CASE
@@ -608,6 +710,8 @@ ecdsaP384 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Just pri
+        , rrsig_pubkey = Just pub
         }
   where
     key_rd =
@@ -631,6 +735,8 @@ ecdsaP384 =
             " /L5hDKIvGDyI1fcARX3z65qrmPsVz73QD1Mr5CEqOiLP \
             \ 95hxQouuroGCeZOvzFaxsT8Glr74hbavRKayJNuydCuz \
             \ WTSSPdz7wnqXL5bdcJzusdnI0RSMROxxwGipWcJm "
+    pri = B64.decodeLenient "WURgWHCcYIYUPWgeLmiPY2DJJk02vgrmTfitxgqcL4vwW7BOrbawVmVe0d9V94SR"
+    pub = fromRight (error "P384 pubkey") $ p384toPubKey pri
 
 -- example from https://datatracker.ietf.org/doc/html/rfc8080#section-6.1
 ed25519 :: RRSIG_CASE
@@ -661,6 +767,8 @@ ed25519 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Just pri
+        , rrsig_pubkey = Just pub
         }
   where
     key_rd =
@@ -682,6 +790,8 @@ ed25519 =
             "example.com."
             " oL9krJun7xfBOIWcGHi7mag5/hdZrKWw15jPGrHpjQeRAvTdszaPD+QLs3f \
             \ x8A4M3e23mRZ9VrbpMngwcrqNAg== "
+    pri = B64.decodeLenient "ODIyNjAzODQ2MjgwODAxMjI2NDUxOTAyMDQxNDIyNjI="
+    pub = fromRight (error "ed448toPubKey") $ ed25519toPubKey pri
 
 -- example from https://datatracker.ietf.org/doc/html/rfc8080#section-6.2
 ed448 :: RRSIG_CASE
@@ -712,6 +822,8 @@ ed448 =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Just pri
+        , rrsig_pubkey = Just pub
         }
   where
     key_rd =
@@ -735,6 +847,8 @@ ed448 =
             " 3cPAHkmlnxcDHMyg7vFC34l0blBhuG1qpwLmjInI8w1CMB29FkEAIJUA0am \
             \ xWndkmnBZ6SKiwZSAxGILn/NBtOXft0+Gj7FSvOKxE/07+4RQvE581N3Aj/ \
             \ JtIyaiYVdnYtyMWbSNyGEY2213WKsJlwEA "
+    pri = B64.decodeLenient "xZ+5Cgm463xugtkY5B0Jx6erFTXp13rYegst0qRtNsOYnaVpMx0Z/c5EiA9x8wWbDDct/U3FhYWA"
+    pub = fromRight (error "ed448toPubKey") $ ed448toPubKey pri
 
 someRDataLength :: RRSIG_CASE
 someRDataLength =
@@ -792,6 +906,8 @@ someRDataLength =
                 , rrtype = RRSIG
                 , rdata = sig_rd
                 }
+        , rrsig_prikey = Nothing
+        , rrsig_pubkey = Nothing
         }
   where
     key_rd =
@@ -1257,21 +1373,21 @@ rd_nsec3' alg fs i salt next =
 
 opaqueFromB16Hex :: String -> Opaque
 opaqueFromB16Hex =
-    either (error "opaqueFromB16Hex: fail to decode hex") id
+    fromRight (error "opaqueFromB16Hex: fail to decode hex")
         . Opaque.fromBase16
         . (fromString :: String -> ByteString)
         . filter (/= ' ')
 
 opaqueFromB32Hex :: String -> Opaque
 opaqueFromB32Hex =
-    either (error "opaqueFromB32Hex: fail to decode base32hex") id
+    fromRight (error "opaqueFromB32Hex: fail to decode base32hex")
         . Opaque.fromBase32Hex
         . (fromString :: String -> ByteString)
         . filter (/= ' ')
 
 opaqueFromB64 :: String -> Opaque
 opaqueFromB64 =
-    either (error "opaqueFromB64: fail to decode base64") id
+    fromRight (error "opaqueFromB64: fail to decode base64")
         . Opaque.fromBase64
         . (fromString :: String -> ByteString)
         . filter (/= ' ')
