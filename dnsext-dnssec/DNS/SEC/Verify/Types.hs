@@ -5,17 +5,26 @@ module DNS.SEC.Verify.Types where
 -- dnsext-types
 
 -- this package
+
 import DNS.SEC.Imports
 import DNS.SEC.Types (PubKey, RD_NSEC, RD_NSEC3)
 import DNS.Types
 
+type PriKey = ByteString
+
 {- FOURMOLU_DISABLE -}
 data RRSIGImpl
-    = forall pubkey sig.
-      RRSIGImpl
-    { rrsigIDecodePubKey :: PubKey -> Either String pubkey
+    = forall prikey pubkey sig.
+    RRSIGImpl
+    { rrsigIGenKeyPair      :: IO (pubkey, prikey)
+    , rrsigIEncodePriKey    :: prikey -> PriKey
+    , rrsigIDecodePriKey    :: PriKey -> Either String prikey
+    , rrsigIEncodePubKey    :: pubkey -> PubKey
+    , rrsigIDecodePubKey    :: PubKey -> Either String pubkey
+    , rrsigIEncodeSignature :: sig -> Opaque
     , rrsigIDecodeSignature :: Opaque -> Either String sig
-    , rrsigIVerify :: pubkey -> sig -> ByteString -> Either String Bool
+    , rrsigISign            :: prikey -> ByteString -> IO sig
+    , rrsigIVerify          :: pubkey -> sig -> ByteString -> Either String Bool
     }
 
 data DSImpl

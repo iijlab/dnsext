@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module DNS.SEC.Verify.RRset (
+    -- * RRset
     encodeRRset,
     sortRDataCanonical,
     canonicalRRset,

@@ -4,22 +4,13 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 module DNS.SEC.Verify.Verify (
-    -- * Supported algorithms
-    supportedDNSKEY,
-    supportedRRSIG,
-    supportedDS,
+    -- * Verify
+    verifyRRSIG,
+    verifyRRSIGsorted,
 
     -- * Key Tag
     keyTag,
     checkKeyTag,
-
-    -- * RRSIG and canonicalization
-    verifyRRSIG,
-    verifyRRSIGsorted,
-    sortRDataCanonical,
-    canonicalRRset,
-    canonicalRRsetSorted,
-    canonicalRRsetSortedEither,
 
     -- * DS
     verifyDS,

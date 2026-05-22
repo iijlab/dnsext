@@ -1,12 +1,15 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module DNS.SEC.Verify.Supported (
-    getRRSIGImpl,
-    getDSImpl,
-    getNSEC3Impl,
+    -- * Supported
     supportedDNSKEY,
     supportedRRSIG,
     supportedDS,
+
+    -- * Internal
+    getRRSIGImpl,
+    getDSImpl,
+    getNSEC3Impl,
 ) where
 
 -- GHC packages
