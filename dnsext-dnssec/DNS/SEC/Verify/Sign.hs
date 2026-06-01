@@ -3,6 +3,7 @@
 module DNS.SEC.Verify.Sign (
     -- * Sign
     sign,
+    genKeyPair,
 )
 where
 
@@ -39,3 +40,12 @@ doSign RRSIGImpl{..} pri rrs rrsig = do
                 \rrset_dom typ cls _ttl _rds -> do
                     let str = encodeRRset rrsig rrset_dom typ cls sortedRDatas
                     Right . rrsigIEncodeSignature <$> rrsigISign priK str
+
+genKeyPair :: PubAlg -> IO (Maybe (PubKey, PriKey))
+genKeyPair alg = case getRRSIGImpl alg of
+    Nothing -> return Nothing
+    Just RRSIGImpl{..} -> do
+        (pub, pri) <- rrsigIGenKeyPair
+        let pubkey = rrsigIEncodePubKey pub
+            prikey = rrsigIEncodePriKey pri
+        return $ Just (pubkey, prikey)
