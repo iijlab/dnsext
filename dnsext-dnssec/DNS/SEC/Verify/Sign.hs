@@ -5,14 +5,19 @@ module DNS.SEC.Verify.Sign (
     sign,
     genKeyPair,
     makeDNSKEY,
+    makeDS,
 )
 where
 
 import DNS.SEC
 import DNS.SEC.Verify.RRset
-import DNS.SEC.Verify.Supported (getRRSIGImpl)
+import DNS.SEC.Verify.Supported (getDSImpl, getRRSIGImpl)
 import DNS.SEC.Verify.Types
+import DNS.SEC.Verify.Verify
 import DNS.Types
+import qualified DNS.Types.Opaque as Opaque
+
+import Data.Maybe
 
 sign
     :: PriKey -> [ResourceRecord] -> RD_RRSIG -> IO (Either String RD_RRSIG)
@@ -59,3 +64,15 @@ makeDNSKEY alg pub ksk =
         , dnskey_pubalg = alg
         , dnskey_public_key = pub
         }
+
+makeDS :: Domain -> DigestAlg -> RD_DNSKEY -> RD_DS
+makeDS owner digestalg dnskey =
+    RD_DS
+        { ds_key_tag = tag
+        , ds_pubalg = dnskey_pubalg dnskey
+        , ds_digestalg = digestalg
+        , ds_digest = Opaque.fromByteString $ calcDigest dsimpl dnskey owner
+        }
+  where
+    tag = keyTag dnskey
+    dsimpl = fromJust $ getDSImpl digestalg
