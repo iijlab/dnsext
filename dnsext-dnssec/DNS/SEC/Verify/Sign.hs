@@ -4,6 +4,7 @@ module DNS.SEC.Verify.Sign (
     -- * Sign
     sign,
     genKeyPair,
+    makeDNSKEY,
 )
 where
 
@@ -49,3 +50,12 @@ genKeyPair alg = case getRRSIGImpl alg of
         let pubkey = rrsigIEncodePubKey pub
             prikey = rrsigIEncodePriKey pri
         return $ Just (pubkey, prikey)
+
+makeDNSKEY :: PubAlg -> PubKey -> Bool -> RD_DNSKEY
+makeDNSKEY alg pub ksk =
+    RD_DNSKEY
+        { dnskey_flags = [ZONE] ++ if ksk then [SecureEntryPoint] else []
+        , dnskey_protocol = 3
+        , dnskey_pubalg = alg
+        , dnskey_public_key = pub
+        }
