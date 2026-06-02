@@ -14,6 +14,7 @@ module DNS.SEC.Verify.Verify (
 
     -- * DS
     verifyDS,
+    calcDigest,
 
     -- * NSEC3
     zipSigsNSEC3,
@@ -239,7 +240,7 @@ verifyRRSIG now zone dnskey owner rrsig@RD_RRSIG{..} rrs = do
 
 {- FOURMOLU_DISABLE -}
 verifyDSwith :: DSImpl -> Domain -> RD_DNSKEY -> RD_DS -> Either String ()
-verifyDSwith DSImpl{..} owner dnskey@RD_DNSKEY{..} RD_DS{..} = do
+verifyDSwith dsimpl@DSImpl{..} owner dnskey@RD_DNSKEY{..} RD_DS{..} = do
     unless (ZONE `elem` dnskey_flags) $
         {- https://datatracker.ietf.org/doc/html/rfc4034#section-5.2
            "The DNSKEY RR referred  to in the DS RR MUST be a DNSSEC zone key." -}
@@ -250,12 +251,17 @@ verifyDSwith DSImpl{..} owner dnskey@RD_DNSKEY{..} RD_DS{..} = do
          ++ show dnskey_pubalg
          ++ " =/= "
          ++ show ds_pubalg
-    let dnskeyBS = runBuilder (resourceDataSize dnskey) $ putResourceData Canonical dnskey
-        digest = dsIGetDigest (runBuilder (domainSize owner) (putDomain Canonical owner) <> dnskeyBS)
+    let digest = calcDigest dsimpl dnskey owner
         ds_digest' = Opaque.toByteString ds_digest
     unless (dsIVerify digest ds_digest') $
         Left "verifyDSwith: rejected on verification"
 {- FOURMOLU_ENABLE -}
+
+calcDigest :: DSImpl -> RD_DNSKEY -> Domain -> ByteString
+calcDigest DSImpl{..} dnskey owner = digest
+  where
+    dnskeyBS = runBuilder (resourceDataSize dnskey) $ putResourceData Canonical dnskey
+    digest = dsIGetDigest (runBuilder (domainSize owner) (putDomain Canonical owner) <> dnskeyBS)
 
 verifyDS :: Domain -> RD_DNSKEY -> RD_DS -> Either String ()
 verifyDS owner dnskey ds =
