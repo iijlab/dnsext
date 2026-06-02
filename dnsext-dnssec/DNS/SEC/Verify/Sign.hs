@@ -1,11 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module DNS.SEC.Verify.Sign (
     -- * Sign
     sign,
+    sign', -- for testing
     genKeyPair,
     makeDNSKEY,
     makeDS,
+    signZone,
 )
 where
 
@@ -16,18 +19,30 @@ import DNS.SEC.Verify.Types
 import DNS.SEC.Verify.Verify
 import DNS.Types
 import qualified DNS.Types.Opaque as Opaque
+import DNS.Types.Time
 
+import Control.Exception as E
+import Data.ByteString ()
+import Data.List
 import Data.Maybe
 
-sign
-    :: PriKey -> [ResourceRecord] -> RD_RRSIG -> IO (Either String RD_RRSIG)
-sign pri rrs rrsig = case getRRSIGImpl alg of
-    Nothing -> return $ Left $ show alg
+data SignFailure = SignFailure deriving (Show)
+
+instance Exception SignFailure
+
+sign :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO ResourceRecord
+sign _ _ [] = E.throwIO SignFailure
+sign pri rrsig rrs@(rr : _) = do
+    rrsig' <- sign' pri rrsig rrs
+    let rd = toRData rrsig'
+    return $ rr{rrtype = RRSIG, rdata = rd}
+
+sign' :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO RD_RRSIG
+sign' pri rrsig rrs = case getRRSIGImpl alg of
+    Nothing -> E.throwIO SignFailure
     Just impl -> do
-        esig <- doSign impl pri rrs rrsig
-        case esig of
-            Left s -> return $ Left s
-            Right sig -> return $ Right $ rrsig{rrsig_signature = sig}
+        sig <- doSign impl pri rrs rrsig
+        return rrsig{rrsig_signature = sig}
   where
     alg = rrsig_pubalg rrsig
 
@@ -36,16 +51,16 @@ doSign
     -> PriKey
     -> [ResourceRecord]
     -> RD_RRSIG
-    -> IO (Either String Opaque)
+    -> IO Opaque
 doSign RRSIGImpl{..} pri rrs rrsig = do
     case rrsigIDecodePriKey pri of
-        Left e -> return $ Left $ show e
+        Left _ -> E.throwIO SignFailure
         Right priK -> do
             let (sortedRDatas, sortedRRs) = unzip $ sortRDataCanonical rrs
-            canonicalRRsetSorted sortedRRs (return . Left) $
+            canonicalRRsetSorted sortedRRs (\_ -> E.throwIO SignFailure) $
                 \rrset_dom typ cls _ttl _rds -> do
                     let str = encodeRRset rrsig rrset_dom typ cls sortedRDatas
-                    Right . rrsigIEncodeSignature <$> rrsigISign priK str
+                    rrsigIEncodeSignature <$> rrsigISign priK str
 
 genKeyPair :: PubAlg -> IO (Maybe (PubKey, PriKey))
 genKeyPair alg = case getRRSIGImpl alg of
@@ -76,3 +91,47 @@ makeDS owner digestalg dnskey =
   where
     tag = keyTag dnskey
     dsimpl = fromJust $ getDSImpl digestalg
+
+signZone :: Domain -> PubAlg -> [ResourceRecord] -> IO [ResourceRecord]
+signZone zone alg rrs0 = E.handle handler $ do
+    mp <- genKeyPair alg
+    case mp of
+        Nothing -> E.throwIO SignFailure
+        Just (pubkey, prikey) -> do
+            let dnskey = makeDNSKEY alg pubkey False
+                tag = keyTag dnskey
+                rrdnskey =
+                    ResourceRecord
+                        { rrname = zone
+                        , rrtype = DNSKEY
+                        , rrclass = IN
+                        , rrttl = 3600 -- fixme
+                        , rdata = toRData dnskey
+                        }
+            inception <- toDNSTime <$> getCurrentTime
+            let expiration = inception + 86400 -- fixme
+            mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
+  where
+    handler SignFailure = return []
+    sortedRRs = sort rrs0
+    rreq r0 r1 =
+        rrname r0 == rrname r1
+            && rrtype r0 == rrtype r1
+            && rrclass r0 == rrclass r1
+            && rrttl r0 == rrttl r1
+    rrss = groupBy rreq sortedRRs
+    f _ _ _ _ [] = E.throwIO SignFailure
+    f prikey tag inception expiration rrs@(ResourceRecord{..} : _) = sign prikey rrsig rrs
+      where
+        rrsig =
+            RD_RRSIG
+                { rrsig_type = rrtype
+                , rrsig_pubalg = alg
+                , rrsig_num_labels = fromIntegral $ labelsCount rrname
+                , rrsig_ttl = rrttl
+                , rrsig_expiration = expiration
+                , rrsig_inception = inception
+                , rrsig_key_tag = tag
+                , rrsig_zone = zone
+                , rrsig_signature = Opaque.fromByteString ""
+                }

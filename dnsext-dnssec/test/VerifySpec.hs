@@ -252,7 +252,7 @@ caseRRSIG RRSIG_CASE{..} = do
     case rrsig_prikey of
         Nothing -> return ()
         Just prikey -> do
-            Right newrrsig <- sign prikey rrsig_targets rrsig
+            newrrsig <- sign' prikey rrsig rrsig_targets
             verifyRRSIG
                 (toDNSTime ts)
                 (rrname rrsig_dnskey)
