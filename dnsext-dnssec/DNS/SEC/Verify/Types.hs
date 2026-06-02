@@ -28,10 +28,9 @@ data RRSIGImpl
     }
 
 data DSImpl
-    = forall digest.
-      DSImpl
-    { dsIGetDigest :: ByteString -> digest
-    , dsIVerify    :: digest -> ByteString -> Bool
+    = DSImpl
+    { dsIGetDigest :: ByteString -> ByteString
+    , dsIVerify    :: ByteString -> ByteString -> Bool
     }
 
 data NSEC3Impl

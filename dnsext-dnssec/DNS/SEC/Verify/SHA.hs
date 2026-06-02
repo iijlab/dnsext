@@ -21,8 +21,8 @@ sha384 = shaHelper SHA384
 shaHelper :: HashAlgorithm hash => hash -> DSImpl
 shaHelper hash =
     DSImpl
-        { dsIGetDigest = hashWith hash
+        { dsIGetDigest = BA.convert . hashWith hash
         , dsIVerify = verify
         }
   where
-    verify digest bs = BA.convert digest == bs
+    verify digest bs = digest == bs
