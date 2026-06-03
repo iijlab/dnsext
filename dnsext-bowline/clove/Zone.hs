@@ -15,6 +15,8 @@ import Text.Read
 
 import DNS.Auth.Algorithm
 import DNS.Auth.DB
+import DNS.SEC
+import DNS.SEC.Verify
 import DNS.Types
 
 import qualified Axfr
@@ -46,7 +48,10 @@ loadSource :: Env -> Domain -> Serial -> Source -> IO (Maybe DB)
 loadSource env zone serial source = case source of
     FromUpstream4 ip4 -> toDB <$> Axfr.client env serial (IPv4 ip4) zone
     FromUpstream6 ip6 -> toDB <$> Axfr.client env serial (IPv6 ip6) zone
-    FromFile fn -> loadDB zone fn
+    FromFile fn -> do
+        rrs0 <- loadZoneFile zone fn
+        rrs1 <- signZone zone ED25519 rrs0
+        return $ makeDB zone (rrs0 ++ rrs1)
   where
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs

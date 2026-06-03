@@ -110,7 +110,7 @@ signZone zone alg rrs0 = E.handle handler $ do
                         }
             inception <- toDNSTime <$> getCurrentTime
             let expiration = inception + 86400 -- fixme
-            mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
+            (rrdnskey :) <$> mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
   where
     handler SignFailure = return []
     sortedRRs = sort rrs0

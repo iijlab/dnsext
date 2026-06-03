@@ -5,6 +5,7 @@ module DNS.Auth.DB (
     loadDB,
     makeDB,
     emptyDB,
+    loadZoneFile,
 ) where
 
 import Data.Function (on)
