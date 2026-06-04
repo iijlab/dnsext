@@ -99,6 +99,7 @@ signZone zone alg rrs0 = E.handle handler $ do
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
             let dnskey = makeDNSKEY alg pubkey False
+                ds = makeDS zone SHA256 dnskey -- fixme
                 tag = keyTag dnskey
                 rrdnskey =
                     ResourceRecord
@@ -108,9 +109,17 @@ signZone zone alg rrs0 = E.handle handler $ do
                         , rrttl = 3600 -- fixme
                         , rdata = toRData dnskey
                         }
+                rrds =
+                    ResourceRecord
+                        { rrname = zone
+                        , rrtype = DS
+                        , rrclass = IN
+                        , rrttl = 3600 -- fixme
+                        , rdata = toRData ds
+                        }
             inception <- toDNSTime <$> getCurrentTime
             let expiration = inception + 86400 -- fixme
-            (rrdnskey :) <$> mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
+            ([rrdnskey, rrds] ++) <$> mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
   where
     handler SignFailure = return []
     sortedRRs = sort rrs0
