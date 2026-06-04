@@ -125,6 +125,7 @@ findAuthority db@DB{..} Question{..} reply = loop qname
             Just (_, dom') -> case lookupD dom dbAuthority of
                 Nothing -> loop dom'
                 Just IDB{..}
+                    -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
                     | null idbAll -> makeReply reply [] [dbSOArr] [] NoErr True -- fixme
                     | otherwise ->
                         let add = findAdditional db idbAll
