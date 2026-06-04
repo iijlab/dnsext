@@ -1,11 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module DNS.Auth.DB (
+    Entry (..),
+    IDB (..),
+    ODB (..),
     DB (..),
     loadDB,
     makeDB,
     emptyDB,
     loadZoneFile,
+    lookupT,
+    lookupD,
 ) where
 
 import Data.Function (on)
@@ -13,9 +19,40 @@ import Data.List (groupBy, partition, sort)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromJust)
 import qualified Data.Set as Set
+import GHC.Stack
 
+import DNS.SEC
 import DNS.Types
 import qualified DNS.ZoneFile as ZF
+
+----------------------------------------------------------------
+
+data Entry = Entry
+    { entRRSet :: [ResourceRecord]
+    , entRRSIG :: Maybe ResourceRecord
+    }
+    deriving (Show)
+
+data IDB = IDB
+    { idbAll :: [ResourceRecord]
+    , idbMap :: M.Map TYPE Entry
+    }
+    deriving (Show)
+
+lookupT :: TYPE -> IDB -> Maybe Entry
+lookupT typ IDB{..} = M.lookup typ idbMap
+
+data ODB = ODB
+    { odbAll :: [ResourceRecord]
+    , odbMap :: M.Map Domain IDB
+    }
+    deriving (Show)
+
+lookupD :: Domain -> ODB -> Maybe IDB
+lookupD dom ODB{..} = M.lookup dom odbMap
+
+emptyODB :: ODB
+emptyODB = ODB{odbAll = [], odbMap = M.empty}
 
 ----------------------------------------------------------------
 
@@ -23,12 +60,14 @@ data DB = DB
     { dbZone :: Domain
     , dbSOA :: RD_SOA
     , dbSOArr :: ResourceRecord
-    , dbAnswer :: M.Map Domain [ResourceRecord]
-    , dbAuthority :: M.Map Domain [ResourceRecord]
-    , dbAdditional :: M.Map Domain [ResourceRecord]
+    , dbAnswer :: ODB
+    , dbAuthority :: ODB
+    , dbAdditional :: ODB
     , dbAll :: [ResourceRecord]
     }
     deriving (Show)
+
+----------------------------------------------------------------
 
 emptyDB :: DB
 emptyDB =
@@ -36,9 +75,9 @@ emptyDB =
         { dbZone = "."
         , dbSOA = soa
         , dbSOArr = soarr
-        , dbAnswer = M.empty
-        , dbAuthority = M.empty
-        , dbAdditional = M.empty
+        , dbAnswer = emptyODB
+        , dbAuthority = emptyODB
+        , dbAdditional = emptyODB
         , dbAll = []
         }
   where
@@ -92,10 +131,10 @@ makeDB zone (soarr : rrs)
     -- gs: glue (in delegated domain)
     -- zs: in-domain
     -- expand is for RFC 4592 Sec 2.2.2.Empty Non-terminals
-    ans = makeMap $ [soarr] ++ concat (map (expand zone) zs)
-    auth = makeMap ns
+    ans = makeODB $ [soarr] ++ concat (map (expand zone) zs)
+    auth = makeODB ns
     xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
-    add = makeMap $ xs ++ gs
+    add = makeODB $ xs ++ gs
 
 partition3
     :: Domain
@@ -120,15 +159,38 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
-makeMap :: [ResourceRecord] -> M.Map Domain [ResourceRecord]
-makeMap rrs = M.fromList kvs
+makeODB :: [ResourceRecord] -> ODB
+makeODB rrs =
+    ODB
+        { odbAll = rrs'
+        , odbMap = M.fromList kvs
+        }
   where
+    -- NULL for RFC 4592 Sec 2.2.2.Empty Non-terminals
+    rrs' = filter (\rr -> rrtype rr /= NULL) rrs
     ts = groupBy ((==) `on` rrname) $ sort rrs
     vs = map (filter (\rr -> rrtype rr /= NULL)) ts
     ks = map (rrname . unsafeHead) ts
-    kvs = zip ks vs
+    kvs = zip ks $ map makeIDB vs
 
-unsafeHead :: [a] -> a
+makeIDB :: [ResourceRecord] -> IDB
+makeIDB rrs =
+    IDB
+        { idbAll = rrs
+        , idbMap = M.fromList kvs
+        }
+  where
+    vs = groupBy ((==) `on` rrtype) $ sort rrs
+    ks = map (rrtype . unsafeHead) vs
+    kvs = zip ks $ map makeEntry vs
+    makeEntry :: [ResourceRecord] -> Entry
+    makeEntry rrs' =
+        Entry
+            { entRRSet = rrs'
+            , entRRSIG = Nothing
+            }
+
+unsafeHead :: HasCallStack => [a] -> a
 unsafeHead (x : _) = x
 unsafeHead _ = error "unsafeHead"
 

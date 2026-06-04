@@ -17,6 +17,7 @@ library
     build-depends:
         base >=4 && <5,
         containers,
+        dnsext-dnssec,
         dnsext-types,
         dnsext-utils
 

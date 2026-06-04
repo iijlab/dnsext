@@ -7,8 +7,7 @@ module DNS.Auth.Algorithm (
 ) where
 
 import Data.List (nub, sort)
-import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes)
 
 import DNS.Auth.DB
 import DNS.Types
@@ -63,21 +62,22 @@ getAnswer db query
     reply = fromQuery query
 
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
-processPositive db@DB{..} q@Question{..} reply = case M.lookup qname dbAnswer of
+processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
     Nothing -> findAuthority db q reply
-    Just rs
+    Just idb@IDB{..}
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
-        | qtype == ANY -> makeAnswer (take 1 rs) []
-        | otherwise -> case filter (\r -> rrtype r == CNAME) rs of
-            [] ->
-                let ans = filter (\r -> rrtype r == qtype) rs
+        | qtype == ANY -> makeAnswer (take 1 idbAll) []
+        | otherwise -> case lookupT CNAME idb of
+            Nothing ->
+                let ans = maybe [] entRRSet $ lookupT qtype idb
                     add = if qtype == NS then findAdditional db ans else []
                  in makeAnswer ans add
-            [c] | length rs == 1 -> case fromRData $ rdata c of
-                Nothing -> makeReply reply [] [] [] ServFail False
-                Just cname -> processCNAME db q reply c $ cname_domain cname
-            _ -> makeReply reply [] [] [] ServFail False
+            Just ent -> case entRRSet ent of
+                [c] | length idbAll == 1 -> case fromRData $ rdata c of
+                    Nothing -> makeReply reply [] [] [] ServFail False
+                    Just cname -> processCNAME db q reply c $ cname_domain cname
+                _ -> makeReply reply [] [] [] ServFail False
   where
     -- RFC2308 Sec 2.2 No Data
     makeAnswer ans add = makeReply reply ans auth add NoErr True
@@ -94,16 +94,16 @@ processCNAME DB{..} Question{..} reply c cname
   where
     add
         | cname `isSubDomainOf` dbZone =
-            fromMaybe [] $ M.lookup cname dbAdditional
+            maybe [] idbAll $ lookupD cname dbAdditional
         | otherwise = []
 processCNAME DB{..} Question{..} reply c cname = makeReply reply ans auth [] code True
   where
     (ans, auth, code)
-        | cname `isSubDomainOf` dbZone = case M.lookup cname dbAnswer of
+        | cname `isSubDomainOf` dbZone = case lookupD cname dbAnswer of
             -- RFC 2308 Sec 2.1 Name Error
             Nothing -> ([c], [dbSOArr], NXDomain)
-            Just rs ->
-                let ans' = filter (\r -> rrtype r == qtype) rs
+            Just idb ->
+                let ans' = maybe [] entRRSet $ lookupT qtype idb
                     -- RFC2308 Sec 2.2 No Data
                     auth'
                         | null ans' = [dbSOArr]
@@ -122,13 +122,13 @@ findAuthority db@DB{..} Question{..} reply = loop qname
         | dom == dbZone = makeReply reply [] [dbSOArr] [] NXDomain True
         | otherwise = case unconsDomain dom of
             Nothing -> makeReply reply [] [dbSOArr] [] NXDomain True
-            Just (_, dom') -> case M.lookup dom dbAuthority of
+            Just (_, dom') -> case lookupD dom dbAuthority of
                 Nothing -> loop dom'
-                Just auth
-                    | null auth -> makeReply reply [] [dbSOArr] [] NoErr True
+                Just IDB{..}
+                    | null idbAll -> makeReply reply [] [dbSOArr] [] NoErr True -- fixme
                     | otherwise ->
-                        let add = findAdditional db auth
-                         in makeReply reply [] auth add NoErr False
+                        let add = findAdditional db idbAll
+                         in makeReply reply [] idbAll add NoErr False
 
 findAdditional
     :: DB
@@ -139,7 +139,7 @@ findAdditional DB{..} rs0 = add
     doms0 = nub $ sort $ catMaybes $ map extractNS rs0
     doms = filter (\d -> d `isSubDomainOf` dbZone) doms0
     add = concat $ map lookupAdd doms
-    lookupAdd dom = fromMaybe [] $ M.lookup dom dbAdditional
+    lookupAdd dom = maybe [] idbAll $ lookupD dom dbAdditional
     extractNS rr = ns_domain <$> fromRData (rdata rr)
 
 makeReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage
