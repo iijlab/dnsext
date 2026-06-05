@@ -43,8 +43,7 @@ lookupT :: TYPE -> IDB -> Maybe Entry
 lookupT typ IDB{..} = M.lookup typ idbMap
 
 data ODB = ODB
-    { odbAll :: [ResourceRecord]
-    , odbMap :: M.Map Domain IDB
+    { odbMap :: M.Map Domain IDB
     }
     deriving (Show)
 
@@ -52,7 +51,7 @@ lookupD :: Domain -> ODB -> Maybe IDB
 lookupD dom ODB{..} = M.lookup dom odbMap
 
 emptyODB :: ODB
-emptyODB = ODB{odbAll = [], odbMap = M.empty}
+emptyODB = ODB{odbMap = M.empty}
 
 ----------------------------------------------------------------
 
@@ -160,14 +159,9 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
 makeODB :: [ResourceRecord] -> ODB
-makeODB rrs =
-    ODB
-        { odbAll = rrs'
-        , odbMap = M.fromList kvs
-        }
+makeODB rrs = ODB{odbMap = M.fromList kvs}
   where
     -- NULL for RFC 4592 Sec 2.2.2.Empty Non-terminals
-    rrs' = filter (\rr -> rrtype rr /= NULL) rrs
     ts = groupBy ((==) `on` rrname) $ sort rrs
     vs = map (filter (\rr -> rrtype rr /= NULL)) ts
     ks = map (rrname . unsafeHead) ts
