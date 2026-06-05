@@ -3,6 +3,9 @@
 module DNS.Auth.Algorithm (
     getAnswer,
     DB (..),
+    dbRD_SOA,
+    dbSOArr,
+    dbSOARRSIGrr,
     fromQuery,
 ) where
 
@@ -83,7 +86,7 @@ processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
     makeAnswer ans add = makeReply reply ans auth add NoErr True
       where
         auth
-            | null ans = [dbSOArr]
+            | null ans = [dbSOArr db]
             | otherwise = []
 
 -- RFC 1912 Sec 2.4 CNAME records
@@ -96,17 +99,17 @@ processCNAME DB{..} Question{..} reply c cname
         | cname `isSubDomainOf` dbZone =
             maybe [] idbAll $ lookupD cname dbAdditional
         | otherwise = []
-processCNAME DB{..} Question{..} reply c cname = makeReply reply ans auth [] code True
+processCNAME db@DB{..} Question{..} reply c cname = makeReply reply ans auth [] code True
   where
     (ans, auth, code)
         | cname `isSubDomainOf` dbZone = case lookupD cname dbAnswer of
             -- RFC 2308 Sec 2.1 Name Error
-            Nothing -> ([c], [dbSOArr], NXDomain)
+            Nothing -> ([c], [dbSOArr db], NXDomain)
             Just idb ->
                 let ans' = maybe [] entRRSet $ lookupT qtype idb
                     -- RFC2308 Sec 2.2 No Data
                     auth'
-                        | null ans' = [dbSOArr]
+                        | null ans' = [dbSOArr db]
                         | otherwise = []
                  in (c : ans', auth', NoErr)
         | otherwise = ([c], [], NoErr)
@@ -119,14 +122,14 @@ findAuthority
 findAuthority db@DB{..} Question{..} reply = loop qname
   where
     loop dom
-        | dom == dbZone = makeReply reply [] [dbSOArr] [] NXDomain True
+        | dom == dbZone = makeReply reply [] [dbSOArr db] [] NXDomain True
         | otherwise = case unconsDomain dom of
-            Nothing -> makeReply reply [] [dbSOArr] [] NXDomain True
+            Nothing -> makeReply reply [] [dbSOArr db] [] NXDomain True
             Just (_, dom') -> case lookupD dom dbAuthority of
                 Nothing -> loop dom'
                 Just IDB{..}
                     -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
-                    | null idbAll -> makeReply reply [] [dbSOArr] [] NoErr True -- fixme
+                    | null idbAll -> makeReply reply [] [dbSOArr db] [] NoErr True -- fixme
                     | otherwise ->
                         let add = findAdditional db idbAll
                          in makeReply reply [] idbAll add NoErr False

@@ -105,7 +105,7 @@ syncZone env zoneref = loop
         let tm
                 | not zoneShouldRefresh = 0
                 | not zoneReady = 10 -- retry
-                | otherwise = fromIntegral $ soa_refresh $ dbSOA zoneDB
+                | otherwise = fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
         zoneWait tm
         -- reading zone source
         updateZone env zoneref

@@ -112,7 +112,7 @@ shouldReload _ = True
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = do
     Zone{..} <- readIORef zoneref
-    let serial = soa_serial $ dbSOA zoneDB
+    let serial = soa_serial $ dbRD_SOA zoneDB
     mdb <- loadSource env zoneName serial zoneSource
     case mdb of
         Nothing -> return ()

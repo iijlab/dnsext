@@ -6,6 +6,9 @@ module DNS.Auth.DB (
     IDB (..),
     ODB (..),
     DB (..),
+    dbRD_SOA,
+    dbSOArr,
+    dbSOARRSIGrr,
     loadDB,
     makeDB,
     emptyDB,
@@ -57,8 +60,7 @@ emptyODB = ODB{odbMap = M.empty}
 
 data DB = DB
     { dbZone :: Domain
-    , dbSOA :: RD_SOA
-    , dbSOArr :: ResourceRecord
+    , dbSOA :: (RD_SOA, ResourceRecord, Maybe ResourceRecord)
     , dbAnswer :: ODB
     , dbAuthority :: ODB
     , dbAdditional :: ODB
@@ -66,14 +68,28 @@ data DB = DB
     }
     deriving (Show)
 
+dbRD_SOA :: DB -> RD_SOA
+dbRD_SOA db = soa
+  where
+    (soa, _, _) = dbSOA db
+
+dbSOArr :: DB -> ResourceRecord
+dbSOArr db = soarr
+  where
+    (_, soarr, _) = dbSOA db
+
+dbSOARRSIGrr :: DB -> Maybe ResourceRecord
+dbSOARRSIGrr db = mrrsig
+  where
+    (_, _, mrrsig) = dbSOA db
+
 ----------------------------------------------------------------
 
 emptyDB :: DB
 emptyDB =
     DB
         { dbZone = "."
-        , dbSOA = soa
-        , dbSOArr = soarr
+        , dbSOA = (soa, soarr, Nothing)
         , dbAnswer = emptyODB
         , dbAuthority = emptyODB
         , dbAdditional = emptyODB
@@ -113,8 +129,7 @@ makeDB zone (soarr : rrs)
             Just $
                 DB
                     { dbZone = zone
-                    , dbSOA = soa
-                    , dbSOArr = soarr
+                    , dbSOA = (soa, soarr, Nothing)
                     , dbAnswer = ans
                     , dbAuthority = auth
                     , dbAdditional = add
