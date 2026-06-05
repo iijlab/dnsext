@@ -5,7 +5,6 @@ module DNS.Auth.Algorithm (
     DB (..),
     dbRD_SOA,
     dbSOArr,
-    dbSOARRSIGrr,
     fromQuery,
 ) where
 
@@ -64,19 +63,22 @@ getAnswer db query
     q = question query
     reply = fromQuery query
 
+unwrap :: RRSetSig -> [ResourceRecord]
+unwrap RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
+
 processPositive :: DB -> Question -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
     Nothing -> findAuthority db q reply
     Just idb@IDB{..}
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
-        | qtype == ANY -> makeAnswer (take 1 idbAll) []
+        | qtype == ANY -> makeAnswer (take 1 $ allRRsofIDB True idb) []
         | otherwise -> case lookupT CNAME idb of
             Nothing ->
-                let ans = maybe [] entRRSet $ lookupT qtype idb
+                let ans = maybe [] unwrap $ lookupT qtype idb
                     add = if qtype == NS then findAdditional db ans else []
                  in makeAnswer ans add
-            Just ent -> case entRRSet ent of
+            Just ent -> case rrsetsigRRs ent of
                 [c] | length idbAll == 1 -> case fromRData $ rdata c of
                     Nothing -> makeReply reply [] [] [] ServFail False
                     Just cname -> processCNAME db q reply c $ cname_domain cname
@@ -86,7 +88,7 @@ processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
     makeAnswer ans add = makeReply reply ans auth add NoErr True
       where
         auth
-            | null ans = [dbSOArr db]
+            | null ans = dbSOArr True db
             | otherwise = []
 
 -- RFC 1912 Sec 2.4 CNAME records
@@ -97,19 +99,19 @@ processCNAME DB{..} Question{..} reply c cname
   where
     add
         | cname `isSubDomainOf` dbZone =
-            maybe [] idbAll $ lookupD cname dbAdditional
+            maybe [] (allRRsofIDB True) $ lookupD cname dbAdditional
         | otherwise = []
 processCNAME db@DB{..} Question{..} reply c cname = makeReply reply ans auth [] code True
   where
     (ans, auth, code)
         | cname `isSubDomainOf` dbZone = case lookupD cname dbAnswer of
             -- RFC 2308 Sec 2.1 Name Error
-            Nothing -> ([c], [dbSOArr db], NXDomain)
+            Nothing -> ([c], dbSOArr True db, NXDomain)
             Just idb ->
-                let ans' = maybe [] entRRSet $ lookupT qtype idb
+                let ans' = maybe [] unwrap $ lookupT qtype idb
                     -- RFC2308 Sec 2.2 No Data
                     auth'
-                        | null ans' = [dbSOArr db]
+                        | null ans' = dbSOArr True db
                         | otherwise = []
                  in (c : ans', auth', NoErr)
         | otherwise = ([c], [], NoErr)
@@ -122,17 +124,18 @@ findAuthority
 findAuthority db@DB{..} Question{..} reply = loop qname
   where
     loop dom
-        | dom == dbZone = makeReply reply [] [dbSOArr db] [] NXDomain True
+        | dom == dbZone = makeReply reply [] (dbSOArr True db) [] NXDomain True
         | otherwise = case unconsDomain dom of
-            Nothing -> makeReply reply [] [dbSOArr db] [] NXDomain True
+            Nothing -> makeReply reply [] (dbSOArr True db) [] NXDomain True
             Just (_, dom') -> case lookupD dom dbAuthority of
                 Nothing -> loop dom'
-                Just IDB{..}
+                Just idb
                     -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
-                    | null idbAll -> makeReply reply [] [dbSOArr db] [] NoErr True -- fixme
+                    | null (allRRsofIDB False idb) -> makeReply reply [] (dbSOArr True db) [] NoErr True -- fixme
                     | otherwise ->
-                        let add = findAdditional db idbAll
-                         in makeReply reply [] idbAll add NoErr False
+                        let allrrs = allRRsofIDB True idb
+                            add = findAdditional db allrrs
+                         in makeReply reply [] allrrs add NoErr False
 
 findAdditional
     :: DB
@@ -143,7 +146,7 @@ findAdditional DB{..} rs0 = add
     doms0 = nub $ sort $ catMaybes $ map extractNS rs0
     doms = filter (\d -> d `isSubDomainOf` dbZone) doms0
     add = concat $ map lookupAdd doms
-    lookupAdd dom = maybe [] idbAll $ lookupD dom dbAdditional
+    lookupAdd dom = maybe [] (allRRsofIDB True) $ lookupD dom dbAdditional
     extractNS rr = ns_domain <$> fromRData (rdata rr)
 
 makeReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage

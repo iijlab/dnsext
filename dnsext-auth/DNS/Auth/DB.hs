@@ -2,15 +2,17 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module DNS.Auth.DB (
-    Entry (..),
+    RRSetSig (..),
     IDB (..),
+    allRRsofIDB,
     ODB (..),
     DB (..),
     dbRD_SOA,
     dbSOArr,
-    dbSOARRSIGrr,
+    getRRs,
     loadDB,
     makeDB,
+    makeDBforDNSSEC,
     emptyDB,
     loadZoneFile,
     lookupT,
@@ -18,31 +20,36 @@ module DNS.Auth.DB (
 ) where
 
 import Data.Function (on)
-import Data.List (groupBy, partition, sort)
+import Data.List (groupBy, nub, partition, sort)
 import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes, fromJust)
+import Data.Maybe (catMaybes, fromJust, isNothing)
 import qualified Data.Set as Set
 import GHC.Stack
 
 import DNS.SEC
+import DNS.SEC.Verify
 import DNS.Types
 import qualified DNS.ZoneFile as ZF
 
 ----------------------------------------------------------------
 
-data Entry = Entry
-    { entRRSet :: [ResourceRecord]
-    , entRRSIG :: Maybe ResourceRecord
-    }
-    deriving (Show)
-
 data IDB = IDB
-    { idbAll :: [ResourceRecord]
-    , idbMap :: M.Map TYPE Entry
+    { idbAll :: [RRSetSig]
+    , idbMap :: M.Map TYPE RRSetSig
     }
     deriving (Show)
 
-lookupT :: TYPE -> IDB -> Maybe Entry
+emptyIDB :: IDB
+emptyIDB = IDB{idbAll = [], idbMap = M.empty}
+
+allRRsofIDB :: Bool -> IDB -> [ResourceRecord]
+allRRsofIDB wantRRSig IDB{..} = concat $ map (getRRs wantRRSig) idbAll
+
+getRRs :: Bool -> RRSetSig -> [ResourceRecord]
+getRRs True RRSetSig{..} = rrsetsigRRs ++ maybe [] (: []) rrsetsigSig
+getRRs False RRSetSig{..} = rrsetsigRRs
+
+lookupT :: TYPE -> IDB -> Maybe RRSetSig
 lookupT typ IDB{..} = M.lookup typ idbMap
 
 data ODB = ODB
@@ -60,7 +67,7 @@ emptyODB = ODB{odbMap = M.empty}
 
 data DB = DB
     { dbZone :: Domain
-    , dbSOA :: (RD_SOA, ResourceRecord, Maybe ResourceRecord)
+    , dbSOA :: (RD_SOA, RRSetSig)
     , dbAnswer :: ODB
     , dbAuthority :: ODB
     , dbAdditional :: ODB
@@ -71,17 +78,12 @@ data DB = DB
 dbRD_SOA :: DB -> RD_SOA
 dbRD_SOA db = soa
   where
-    (soa, _, _) = dbSOA db
+    (soa, _) = dbSOA db
 
-dbSOArr :: DB -> ResourceRecord
-dbSOArr db = soarr
+dbSOArr :: Bool -> DB -> [ResourceRecord]
+dbSOArr wantRRSig db = getRRs wantRRSig soarr
   where
-    (_, soarr, _) = dbSOA db
-
-dbSOARRSIGrr :: DB -> Maybe ResourceRecord
-dbSOARRSIGrr db = mrrsig
-  where
-    (_, _, mrrsig) = dbSOA db
+    (_, soarr) = dbSOA db
 
 ----------------------------------------------------------------
 
@@ -89,7 +91,7 @@ emptyDB :: DB
 emptyDB =
     DB
         { dbZone = "."
-        , dbSOA = (soa, soarr, Nothing)
+        , dbSOA = (soa, soarrsetsig)
         , dbAnswer = emptyODB
         , dbAuthority = emptyODB
         , dbAdditional = emptyODB
@@ -105,6 +107,13 @@ emptyDB =
             , rrclass = IN
             , rrttl = 0
             , rdata = soard
+            }
+    soarrsetsig =
+        RRSetSig
+            { rrsetsigName = "."
+            , rrsetsigType = SOA
+            , rrsetsigRRs = [soarr]
+            , rrsetsigSig = Nothing
             }
 
 ----------------------------------------------------------------
@@ -129,7 +138,7 @@ makeDB zone (soarr : rrs)
             Just $
                 DB
                     { dbZone = zone
-                    , dbSOA = (soa, soarr, Nothing)
+                    , dbSOA = (soa, unsafeHead uu)
                     , dbAnswer = ans
                     , dbAuthority = auth
                     , dbAdditional = add
@@ -139,16 +148,83 @@ makeDB zone (soarr : rrs)
     -- RFC 9471
     -- In-domain and sibling glues only.
     -- Unrelated glues are ignored.
+    -- as: possible in-domain
+    -- ns: NS except this domain
+    -- _os: unrelated, ignored
     (as, ns, _os) = partition3 zone rrs
     isDelegated = makeIsDelegated ns
     (gs, zs) = partition (\r -> isDelegated (rrname r)) as
     -- gs: glue (in delegated domain)
     -- zs: in-domain
-    -- expand is for RFC 4592 Sec 2.2.2.Empty Non-terminals
-    ans = makeODB $ [soarr] ++ concat (map (expand zone) zs)
-    auth = makeODB ns
+    uu = unsign [soarr]
+    ss = unsign zs
+    ans = setEmptyNonTerminals zone $ makeODB (uu ++ ss)
+    tt = unsign ns
+    auth = setEmptyNonTerminals zone $ makeODB tt
     xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
-    add = makeODB $ xs ++ gs
+    add = makeODB $ unsign $ xs ++ gs
+
+unsign :: [ResourceRecord] -> [RRSetSig]
+unsign rrs0 = map addNothing $ groupRRset rrs0
+  where
+    addNothing rrs =
+        RRSetSig
+            { rrsetsigName = rrname
+            , rrsetsigType = rrtype
+            , rrsetsigRRs = rrs
+            , rrsetsigSig = Nothing
+            }
+      where
+        ResourceRecord{..} = unsafeHead rrs
+
+makeDBforDNSSEC
+    :: Domain
+    -> ([ResourceRecord] -> IO [RRSetSig])
+    -> [ResourceRecord]
+    -> IO (Maybe DB)
+makeDBforDNSSEC _ _ [] = return Nothing
+-- RFC 1035 Sec 5.2
+-- Exactly one SOA RR should be present at the top of the zone.
+makeDBforDNSSEC zone doSign (soarr : rrs)
+    | rrtype soarr /= SOA = return Nothing
+    | otherwise = case fromRData $ rdata soarr of
+        Nothing -> return Nothing
+        Just soa -> do
+            -- RFC 9471
+            -- In-domain and sibling glues only.
+            -- Unrelated glues are ignored.
+            let (ps, ns, _os) = partition3 zone rrs
+                -- ps: possible in-domain
+                -- ns: NS except this domain
+                -- _os: unrelated, ignored
+                isDelegated = makeIsDelegated ns
+                (gs, is) = partition (\r -> isDelegated (rrname r)) ps
+            -- gs: glue (in delegated domain)
+            -- is: in-domain
+            ssSigned <- doSign [soarr]
+            isSigned <- doSign is
+            let ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
+            nsSigned <- doSign ns
+            let auth = setEmptyNonTerminals zone $ makeODB nsSigned
+            let as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
+                add = makeODB $ unsign (as ++ gs)
+                allrr =
+                    getRRs True (unsafeHead ssSigned)
+                        ++ concat (map (getRRs True) isSigned)
+                        ++ concat (map (getRRs True) nsSigned)
+                        ++ gs
+                        ++ _os
+                        ++ [soarr] -- for AXFR
+            return $
+                Just $
+                    DB
+                        { dbZone = zone
+                        , dbSOA = (soa, unsafeHead ssSigned)
+                        , dbAnswer = ans
+                        , dbAuthority = auth
+                        , dbAdditional = add
+                        , dbAll = allrr
+                        }
 
 partition3
     :: Domain
@@ -167,37 +243,33 @@ partition3 dom rrs0 = loop rrs0 [] [] []
                 else loop rs (r : as) ns os
         | otherwise = loop rs as ns (r : os)
 
-makeIsDelegated :: [ResourceRecord] -> (Domain -> Bool)
+makeIsDelegated
+    :: [ResourceRecord]
+    -- ^ NS resource records
+    -> (Domain -> Bool)
 makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
   where
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
 
-makeODB :: [ResourceRecord] -> ODB
-makeODB rrs = ODB{odbMap = M.fromList kvs}
+makeODB :: [RRSetSig] -> ODB
+makeODB rs = ODB{odbMap = M.fromList kvs}
   where
-    -- NULL for RFC 4592 Sec 2.2.2.Empty Non-terminals
-    ts = groupBy ((==) `on` rrname) $ sort rrs
-    vs = map (filter (\rr -> rrtype rr /= NULL)) ts
-    ks = map (rrname . unsafeHead) ts
-    kvs = zip ks $ map makeIDB vs
+    rss :: [[RRSetSig]]
+    rss = groupBy ((==) `on` rrsetsigName) rs
+    doms :: [Domain]
+    doms = map (rrsetsigName . unsafeHead) rss
+    kvs = zip doms $ map makeIDB rss
 
-makeIDB :: [ResourceRecord] -> IDB
-makeIDB rrs =
+makeIDB :: [RRSetSig] -> IDB
+makeIDB vs =
     IDB
-        { idbAll = rrs
+        { idbAll = vs
         , idbMap = M.fromList kvs
         }
   where
-    vs = groupBy ((==) `on` rrtype) $ sort rrs
-    ks = map (rrtype . unsafeHead) vs
-    kvs = zip ks $ map makeEntry vs
-    makeEntry :: [ResourceRecord] -> Entry
-    makeEntry rrs' =
-        Entry
-            { entRRSet = rrs'
-            , entRRSIG = Nothing
-            }
+    ks = map rrsetsigType vs
+    kvs = zip ks vs
 
 unsafeHead :: HasCallStack => [a] -> a
 unsafeHead (x : _) = x
@@ -210,22 +282,17 @@ fromResource (ZF.R_RR r) = Just r
 fromResource _ = Nothing
 
 -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
-expand :: Domain -> ResourceRecord -> [ResourceRecord]
-expand dom rr = loop r0
+--
+-- Example: _sip._tcp.example.com
+-- _tcp.example.com exists but does not have RRs
+setEmptyNonTerminals :: Domain -> ODB -> ODB
+setEmptyNonTerminals zone (ODB m) = ODB m'
   where
-    r0 = rrname rr
-    loop r
-        | r == dom = [rr]
-        | otherwise = case unconsDomain r of
-            Nothing -> [rr]
-            Just (_, r1) -> rrnull r : loop r1
-
-rrnull :: Domain -> ResourceRecord
-rrnull r =
-    ResourceRecord
-        { rrname = r
-        , rrtype = NULL
-        , rrclass = IN
-        , rrttl = 0
-        , rdata = rd_null ""
-        }
+    n = labelsCount zone
+    doms0 = filter (\d -> labelsCount d >= n + 2) $ M.keys m
+    doms1 = map snd $ catMaybes $ map unconsDomain doms0
+    doms2 = concat $ map (drop n) $ map superDomains doms1
+    doms3 = nub $ sort doms2
+    ments = map (\d -> (d, M.lookup d m)) doms3
+    ents = map fst $ filter (isNothing . snd) ments
+    m' = foldr (\d db -> M.insert d emptyIDB db) m ents

@@ -49,9 +49,18 @@ loadSource env zone serial source = case source of
     FromUpstream4 ip4 -> toDB <$> Axfr.client env serial (IPv4 ip4) zone
     FromUpstream6 ip6 -> toDB <$> Axfr.client env serial (IPv6 ip6) zone
     FromFile fn -> do
-        rrs0 <- loadZoneFile zone fn
-        rrs1 <- signZone zone ED25519 rrs0
-        return $ makeDB zone (rrs0 ++ rrs1)
+        -- head rrs is soa
+        rrs <- loadZoneFile zone fn
+        (_pub, _pri, dnskey, ds, doSign) <-
+            prepareDNSSEC $
+                DNSSECinfo
+                    { dnssecInfoZone = zone
+                    , dnssecInfoPubAlg = ED25519
+                    , dnssecInfoDigestAlg = SHA256
+                    , dnssecInfoTTL = 3600
+                    , dnssecInfoDuration = 86400
+                    }
+        makeDBforDNSSEC zone doSign (rrs ++ [dnskey, ds])
   where
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs

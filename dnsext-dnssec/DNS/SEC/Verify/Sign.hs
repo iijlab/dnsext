@@ -8,7 +8,10 @@ module DNS.SEC.Verify.Sign (
     genKeyPair,
     makeDNSKEY,
     makeDS,
-    signZone,
+    DNSSECinfo (..),
+    prepareDNSSEC,
+    RRSetSig (..),
+    groupRRset,
 )
 where
 
@@ -25,6 +28,7 @@ import Control.Exception as E
 import Data.ByteString ()
 import Data.List
 import Data.Maybe
+import Data.Word (Word16)
 
 data SignFailure = SignFailure deriving (Show)
 
@@ -92,55 +96,111 @@ makeDS owner digestalg dnskey =
     tag = keyTag dnskey
     dsimpl = fromJust $ getDSImpl digestalg
 
-signZone :: Domain -> PubAlg -> [ResourceRecord] -> IO [ResourceRecord]
-signZone zone alg rrs0 = E.handle handler $ do
-    mp <- genKeyPair alg
+data DNSSECinfo = DNSSECinfo
+    { dnssecInfoZone :: Domain
+    , dnssecInfoPubAlg :: PubAlg
+    , dnssecInfoDigestAlg :: DigestAlg
+    , dnssecInfoTTL :: TTL
+    -- ^ TTL for DNSKEY and DS
+    , dnssecInfoDuration :: DNSTime
+    -- ^ Duration of RRSIG. This value is added to inception to
+    -- calculate expiration.
+    }
+
+data RRSetSig = RRSetSig
+    { rrsetsigName :: Domain
+    , rrsetsigType :: TYPE
+    , rrsetsigRRs :: [ResourceRecord]
+    , rrsetsigSig :: Maybe ResourceRecord
+    }
+    deriving (Show)
+
+prepareDNSSEC
+    :: DNSSECinfo
+    -> IO
+        ( PubKey
+        , PriKey
+        , ResourceRecord -- DNSKEY
+        , ResourceRecord -- DS
+        , [ResourceRecord] -> IO [RRSetSig]
+        )
+prepareDNSSEC info@DNSSECinfo{..} = do
+    mp <- genKeyPair dnssecInfoPubAlg
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY alg pubkey False
-                ds = makeDS zone SHA256 dnskey -- fixme
-                tag = keyTag dnskey
+            let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
+                ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
+                tag = ds_key_tag ds
                 rrdnskey =
                     ResourceRecord
-                        { rrname = zone
+                        { rrname = dnssecInfoZone
                         , rrtype = DNSKEY
                         , rrclass = IN
-                        , rrttl = 3600 -- fixme
+                        , rrttl = dnssecInfoTTL
                         , rdata = toRData dnskey
                         }
                 rrds =
                     ResourceRecord
-                        { rrname = zone
+                        { rrname = dnssecInfoZone
                         , rrtype = DS
                         , rrclass = IN
-                        , rrttl = 3600 -- fixme
+                        , rrttl = dnssecInfoTTL
                         , rdata = toRData ds
                         }
-            inception <- toDNSTime <$> getCurrentTime
-            let expiration = inception + 86400 -- fixme
-            ([rrdnskey, rrds] ++) <$> mapM (f prikey tag inception expiration) ([rrdnskey] : rrss)
+            rrsigTemp <- makeRRSIGtemplate info tag
+            let signRRs = signZone prikey rrsigTemp
+            return (pubkey, prikey, rrdnskey, rrds, signRRs)
+
+makeRRSIGtemplate :: DNSSECinfo -> Word16 -> IO RD_RRSIG
+makeRRSIGtemplate DNSSECinfo{..} tag = do
+    inception <- toDNSTime <$> getCurrentTime
+    let expiration = inception + dnssecInfoDuration
+    return $
+        RD_RRSIG
+            { rrsig_type = A -- overridden
+            , rrsig_pubalg = dnssecInfoPubAlg
+            , rrsig_num_labels = 0 -- overridden
+            , rrsig_ttl = 0 -- overridden
+            , rrsig_expiration = expiration
+            , rrsig_inception = inception
+            , rrsig_key_tag = tag
+            , rrsig_zone = dnssecInfoZone
+            , rrsig_signature = Opaque.fromByteString "" -- overridden
+            }
+
+groupRRset :: [ResourceRecord] -> [[ResourceRecord]]
+groupRRset rrs = groupBy rreq $ sort rrs
   where
-    handler SignFailure = return []
-    sortedRRs = sort rrs0
     rreq r0 r1 =
         rrname r0 == rrname r1
             && rrtype r0 == rrtype r1
             && rrclass r0 == rrclass r1
             && rrttl r0 == rrttl r1
-    rrss = groupBy rreq sortedRRs
-    f _ _ _ _ [] = E.throwIO SignFailure
-    f prikey tag inception expiration rrs@(ResourceRecord{..} : _) = sign prikey rrsig rrs
+
+signZone
+    :: PriKey
+    -> RD_RRSIG
+    -> [ResourceRecord]
+    -> IO [RRSetSig]
+signZone prikey rrsigTemp0 rrs0 = E.handle handler $ mapM f rrss
+  where
+    handler SignFailure = return []
+    rrss = groupRRset rrs0
+    f [] = E.throwIO SignFailure
+    f rrs@(ResourceRecord{..} : _) = do
+        sig <- sign prikey rrsigTemp rrs
+        return $
+            RRSetSig
+                { rrsetsigName = rrname
+                , rrsetsigType = rrtype
+                , rrsetsigRRs = rrs
+                , rrsetsigSig = Just sig
+                }
       where
-        rrsig =
-            RD_RRSIG
+        rrsigTemp =
+            rrsigTemp0
                 { rrsig_type = rrtype
-                , rrsig_pubalg = alg
                 , rrsig_num_labels = fromIntegral $ labelsCount rrname
                 , rrsig_ttl = rrttl
-                , rrsig_expiration = expiration
-                , rrsig_inception = inception
-                , rrsig_key_tag = tag
-                , rrsig_zone = zone
-                , rrsig_signature = Opaque.fromByteString ""
                 }
