@@ -58,30 +58,34 @@ getAnswer db query
     -- RFC 8906 Sec3.1.3.1. Recursive Queries
     -- A non-recursive server is supposed to respond to recursive
     -- queries as if the Recursion Desired (RD) bit is not set.
-    | otherwise = processPositive db q reply
+    | otherwise = processPositive db q dnssecOK reply
   where
     q = question query
     reply = fromQuery query
+    dnssecOK = case ednsHeader query of
+        EDNSheader eh -> ednsDnssecOk eh
+        _ -> False
 
-unwrap :: RRSetSig -> [ResourceRecord]
-unwrap RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
+unwrap :: Bool -> RRSetSig -> [ResourceRecord]
+unwrap False RRSetSig{..} = rrsetsigRRs
+unwrap True RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
 
-processPositive :: DB -> Question -> DNSMessage -> DNSMessage
-processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
-    Nothing -> findAuthority db q reply
+processPositive :: DB -> Question -> Bool -> DNSMessage -> DNSMessage
+processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbAnswer of
+    Nothing -> findAuthority db q dnssecOK reply
     Just idb@IDB{..}
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
-        | qtype == ANY -> makeAnswer (take 1 $ allRRsofIDB True idb) []
+        | qtype == ANY -> makeAnswer (take 1 $ allRRsofIDB dnssecOK idb) []
         | otherwise -> case lookupT CNAME idb of
             Nothing ->
-                let ans = maybe [] unwrap $ lookupT qtype idb
-                    add = if qtype == NS then findAdditional db ans else []
+                let ans = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
+                    add = if qtype == NS then findAdditional db dnssecOK ans else []
                  in makeAnswer ans add
             Just ent -> case rrsetsigRRs ent of
                 [c] | length idbAll == 1 -> case fromRData $ rdata c of
                     Nothing -> makeReply reply [] [] [] ServFail False
-                    Just cname -> processCNAME db q reply c $ cname_domain cname
+                    Just cname -> processCNAME db q dnssecOK reply c $ cname_domain cname
                 _ -> makeReply reply [] [] [] ServFail False
   where
     -- RFC2308 Sec 2.2 No Data
@@ -93,22 +97,22 @@ processPositive db@DB{..} q@Question{..} reply = case lookupD qname dbAnswer of
 
 -- RFC 1912 Sec 2.4 CNAME records
 -- This function does not follow CNAME of CNAME.
-processCNAME :: DB -> Question -> DNSMessage -> ResourceRecord -> Domain -> DNSMessage
-processCNAME DB{..} Question{..} reply c cname
+processCNAME :: DB -> Question -> Bool -> DNSMessage -> ResourceRecord -> Domain -> DNSMessage
+processCNAME DB{..} Question{..} dnssecOK reply c cname
     | qtype == CNAME = makeReply reply [c] [] add NoErr True
   where
     add
         | cname `isSubDomainOf` dbZone =
-            maybe [] (allRRsofIDB True) $ lookupD cname dbAdditional
+            maybe [] (allRRsofIDB dnssecOK) $ lookupD cname dbAdditional
         | otherwise = []
-processCNAME db@DB{..} Question{..} reply c cname = makeReply reply ans auth [] code True
+processCNAME db@DB{..} Question{..} dnssecOK reply c cname = makeReply reply ans auth [] code True
   where
     (ans, auth, code)
         | cname `isSubDomainOf` dbZone = case lookupD cname dbAnswer of
             -- RFC 2308 Sec 2.1 Name Error
             Nothing -> ([c], dbSOArr True db, NXDomain)
             Just idb ->
-                let ans' = maybe [] unwrap $ lookupT qtype idb
+                let ans' = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
                     -- RFC2308 Sec 2.2 No Data
                     auth'
                         | null ans' = dbSOArr True db
@@ -119,9 +123,10 @@ processCNAME db@DB{..} Question{..} reply c cname = makeReply reply ans auth [] 
 findAuthority
     :: DB
     -> Question
+    -> Bool
     -> DNSMessage
     -> DNSMessage
-findAuthority db@DB{..} Question{..} reply = loop qname
+findAuthority db@DB{..} Question{..} dnssecOK reply = loop qname
   where
     loop dom
         | dom == dbZone = makeReply reply [] (dbSOArr True db) [] NXDomain True
@@ -133,20 +138,21 @@ findAuthority db@DB{..} Question{..} reply = loop qname
                     -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
                     | null (allRRsofIDB False idb) -> makeReply reply [] (dbSOArr True db) [] NoErr True -- fixme
                     | otherwise ->
-                        let allrrs = allRRsofIDB True idb
-                            add = findAdditional db allrrs
+                        let allrrs = allRRsofIDB dnssecOK idb
+                            add = findAdditional db dnssecOK allrrs
                          in makeReply reply [] allrrs add NoErr False
 
 findAdditional
     :: DB
+    -> Bool
     -> [ResourceRecord] -- NSs in Answer or Authority
     -> [ResourceRecord]
-findAdditional DB{..} rs0 = add
+findAdditional DB{..} dnssecOK rs0 = add
   where
     doms0 = nub $ sort $ catMaybes $ map extractNS rs0
     doms = filter (\d -> d `isSubDomainOf` dbZone) doms0
     add = concat $ map lookupAdd doms
-    lookupAdd dom = maybe [] (allRRsofIDB True) $ lookupD dom dbAdditional
+    lookupAdd dom = maybe [] (allRRsofIDB dnssecOK) $ lookupD dom dbAdditional
     extractNS rr = ns_domain <$> fromRData (rdata rr)
 
 makeReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage

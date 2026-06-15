@@ -43,7 +43,7 @@ emptyIDB :: IDB
 emptyIDB = IDB{idbAll = [], idbMap = M.empty}
 
 allRRsofIDB :: Bool -> IDB -> [ResourceRecord]
-allRRsofIDB wantRRSig IDB{..} = concat $ map (getRRs wantRRSig) idbAll
+allRRsofIDB dnssecOK IDB{..} = concat $ map (getRRs dnssecOK) idbAll
 
 getRRs :: Bool -> RRSetSig -> [ResourceRecord]
 getRRs True RRSetSig{..} = rrsetsigRRs ++ maybe [] (: []) rrsetsigSig
