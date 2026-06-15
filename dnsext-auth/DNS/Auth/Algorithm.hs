@@ -55,6 +55,7 @@ getAnswer db query
             { rcode = Refused
             , flags = (flags reply){authAnswer = False}
             }
+    | ednsVerErr = reply{rcode = BadVers}
     -- RFC 8906 Sec3.1.3.1. Recursive Queries
     -- A non-recursive server is supposed to respond to recursive
     -- queries as if the Recursion Desired (RD) bit is not set.
@@ -62,9 +63,9 @@ getAnswer db query
   where
     q = question query
     reply = fromQuery query
-    dnssecOK = case ednsHeader query of
-        EDNSheader eh -> ednsDnssecOk eh
-        _ -> False
+    (ednsVerErr, dnssecOK) = case ednsHeader query of
+        EDNSheader eh -> (ednsVersion eh /= 0, ednsDnssecOk eh)
+        _ -> (False, False)
 
 unwrap :: Bool -> RRSetSig -> [ResourceRecord]
 unwrap False RRSetSig{..} = rrsetsigRRs
