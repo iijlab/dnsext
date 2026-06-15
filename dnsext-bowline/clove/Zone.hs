@@ -60,7 +60,9 @@ loadSource env zone serial source = case source of
                     , dnssecInfoTTL = 3600
                     , dnssecInfoDuration = 86400
                     }
-        makeDBforDNSSEC zone doSign (rrs ++ [dnskey, ds])
+        -- fixme:
+        print ds
+        makeDBforDNSSEC zone doSign (rrs ++ [dnskey])
   where
     toDB [] = Nothing
     toDB rrs = makeDB zone rrs
