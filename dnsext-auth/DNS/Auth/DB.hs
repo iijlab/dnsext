@@ -265,11 +265,19 @@ makeIDB :: [RRSetSig] -> IDB
 makeIDB vs =
     IDB
         { idbAll = vs
-        , idbMap = M.fromList kvs
+        , idbMap = M.fromList ((RRSIG, rrsetsigRRSIG) : kvs)
         }
   where
     ks = map rrsetsigType vs
     kvs = zip ks vs
+    rrsigs = catMaybes $ map rrsetsigSig vs
+    rrsetsigRRSIG =
+        RRSetSig
+            { rrsetsigName = rrsetsigName $ unsafeHead vs
+            , rrsetsigType = RRSIG
+            , rrsetsigRRs = rrsigs
+            , rrsetsigSig = Nothing
+            }
 
 unsafeHead :: HasCallStack => [a] -> a
 unsafeHead (x : _) = x
