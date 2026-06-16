@@ -130,7 +130,7 @@ makeDB :: Domain -> [ResourceRecord] -> Maybe DB
 makeDB _ [] = Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDB zone (soarr : rrs)
+makeDB zone (soarr : rrs0)
     | rrtype soarr /= SOA = Nothing
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> Nothing
@@ -138,31 +138,56 @@ makeDB zone (soarr : rrs)
             Just $
                 DB
                     { dbZone = zone
-                    , dbSOA = (soa, unsafeHead uu)
+                    , dbSOA = (soa, unsafeHead ssSigned)
                     , dbAnswer = ans
                     , dbAuthority = auth
                     , dbAdditional = add
                     , dbAll = [soarr] ++ rrs ++ [soarr] -- for AXFR
                     }
   where
+    (sigs, rrs) = partition (\r -> rrtype r == RRSIG) rrs0
+    sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
     -- RFC 9471
     -- In-domain and sibling glues only.
     -- Unrelated glues are ignored.
     -- as: possible in-domain
     -- ns: NS except this domain
     -- _os: unrelated, ignored
-    (as, ns, _os) = partition3 zone rrs
+    (ps, ns, _os) = partition3 zone rrs
     isDelegated = makeIsDelegated ns
-    (gs, zs) = partition (\r -> isDelegated (rrname r)) as
+    (gs, is) = partition (\r -> isDelegated (rrname r)) ps
     -- gs: glue (in delegated domain)
-    -- zs: in-domain
-    uu = unsign [soarr]
-    ss = unsign zs
-    ans = setEmptyNonTerminals zone $ makeODB (uu ++ ss)
-    tt = unsign ns
-    auth = setEmptyNonTerminals zone $ makeODB tt
-    xs = filter (\r -> rrtype r == A || rrtype r == AAAA) zs
-    add = makeODB $ unsign $ xs ++ gs
+    -- is: in-domain
+    ssSigned = groupAndSig sigDB [soarr]
+    isSigned = groupAndSig sigDB is
+    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
+    nsSigned = groupAndSig sigDB ns
+    auth = setEmptyNonTerminals zone $ makeODB nsSigned
+    as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
+    add = makeODB $ groupAndSig sigDB $ as ++ gs
+
+rrsigKV :: ResourceRecord -> Maybe ((Domain, TYPE), ResourceRecord)
+rrsigKV rr = case fromRData $ rdata rr of
+    Nothing -> Nothing
+    Just rrsig -> Just ((rrname rr, rrsig_type rrsig), rr)
+
+groupAndSig
+    :: M.Map (Domain, TYPE) ResourceRecord
+    -> [ResourceRecord]
+    -> [RRSetSig]
+groupAndSig db rrs0 = map (bindSIG db) $ groupRRset rrs0
+
+bindSIG :: M.Map (Domain, TYPE) ResourceRecord -> [ResourceRecord] -> RRSetSig
+bindSIG db rrs =
+    RRSetSig
+        { rrsetsigName = rrname
+        , rrsetsigType = rrtype
+        , rrsetsigRRs = rrs
+        , rrsetsigSig = msig
+        }
+  where
+    ResourceRecord{..} = unsafeHead rrs
+    msig = M.lookup (rrname, rrtype) db
 
 unsign :: [ResourceRecord] -> [RRSetSig]
 unsign rrs0 = map addNothing $ groupRRset rrs0
