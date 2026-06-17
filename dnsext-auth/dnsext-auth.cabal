@@ -16,6 +16,7 @@ library
     ghc-options:      -Wall
     build-depends:
         base >=4 && <5,
+        bytestring,
         containers,
         dnsext-dnssec,
         dnsext-types,

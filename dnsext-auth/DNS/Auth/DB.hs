@@ -17,8 +17,11 @@ module DNS.Auth.DB (
     loadZoneFile,
     lookupT,
     lookupD,
+    NSECDB,
+    DomainRange (..),
 ) where
 
+import qualified Data.ByteString.Short as Short
 import Data.Function (on)
 import Data.List (groupBy, nub, partition, sort)
 import qualified Data.Map.Strict as M
@@ -72,6 +75,7 @@ data DB = DB
     , dbAuthority :: ODB
     , dbAdditional :: ODB
     , dbAll :: [ResourceRecord]
+    , dbNsecMap :: NSECDB
     }
     deriving (Show)
 
@@ -96,6 +100,7 @@ emptyDB =
         , dbAuthority = emptyODB
         , dbAdditional = emptyODB
         , dbAll = []
+        , dbNsecMap = M.empty
         }
   where
     soard = rd_soa "." "." 0 0 0 0 0
@@ -143,6 +148,7 @@ makeDB zone (soarr : rrs0)
                     , dbAuthority = auth
                     , dbAdditional = add
                     , dbAll = [soarr] ++ rrs ++ [soarr] -- for AXFR
+                    , dbNsecMap = M.empty
                     }
   where
     (sigs, rrs) = partition (\r -> rrtype r == RRSIG) rrs0
@@ -204,7 +210,7 @@ unsign rrs0 = map addNothing $ groupRRset rrs0
 
 makeDBforDNSSEC
     :: Domain
-    -> ([ResourceRecord] -> IO [RRSetSig])
+    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
     -> [ResourceRecord]
     -> IO (Maybe DB)
 makeDBforDNSSEC _ _ [] = return Nothing
@@ -226,10 +232,11 @@ makeDBforDNSSEC zone doSign (soarr : rrs)
                 (gs, is) = partition (\r -> isDelegated (rrname r)) ps
             -- gs: glue (in delegated domain)
             -- is: in-domain
-            ssSigned <- doSign [soarr]
-            isSigned <- doSign is
+            ssSigned <- doSign True [soarr]
+            isSigned <- doSign True is
             let ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
-            nsSigned <- doSign ns
+            nsSigned <- doSign True ns
+            nsecSigned <- makeNSEC doSign $ ssSigned ++ isSigned ++ nsSigned
             let auth = setEmptyNonTerminals zone $ makeODB nsSigned
             let as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
                 add = makeODB $ unsign (as ++ gs)
@@ -237,6 +244,7 @@ makeDBforDNSSEC zone doSign (soarr : rrs)
                     getRRs True (unsafeHead ssSigned)
                         ++ concat (map (getRRs True) isSigned)
                         ++ concat (map (getRRs True) nsSigned)
+                        ++ concat (map (getRRs True) nsecSigned)
                         ++ gs
                         ++ _os
                         ++ [soarr] -- for AXFR
@@ -249,6 +257,7 @@ makeDBforDNSSEC zone doSign (soarr : rrs)
                         , dbAuthority = auth
                         , dbAdditional = add
                         , dbAll = allrr
+                        , dbNsecMap = makeNSECDB nsecSigned
                         }
 
 partition3
@@ -329,3 +338,69 @@ setEmptyNonTerminals zone (ODB m) = ODB m'
     ments = map (\d -> (d, M.lookup d m)) doms3
     ents = map fst $ filter (isNothing . snd) ments
     m' = foldr (\d db -> M.insert d emptyIDB db) m ents
+
+----------------------------------------------------------------
+
+data DomainRange = Exact Domain | Range Domain Domain deriving (Show)
+
+{- FOURMOLU_DISABLE -}
+instance Eq DomainRange where
+    Exact k1      == Exact k2      = k1 == k2
+    Range r1s r1e == Range r2s r2e = r1s == r2s && r1e == r2e
+    Exact k       == Range rs re   = rs <= k    && k < re
+    Range rs re   == Exact k       = rs <= k    && k < re
+
+instance Ord DomainRange where
+    Exact k1    <= Exact k2    = k1 <= k2
+    Range _ r1e <= Range r2s _ = r1e <= r2s
+    Exact k     <= Range rs _  = k <= rs
+    Range _ re  <= Exact k     = re <= k
+{- FOURMOLU_ENABLE -}
+
+type NSECDB = M.Map DomainRange RRSetSig
+
+makeNSEC
+    :: (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> [RRSetSig]
+    -> IO [RRSetSig]
+makeNSEC doSign signed = doSign False $ map pack zipped
+  where
+    nameTypes :: [(Domain, TYPE)]
+    nameTypes = map (\x -> (rrsetsigName x, rrsetsigType x)) signed
+    packedNameTypes :: [(Domain, [TYPE])]
+    packedNameTypes =
+        map (\xs -> (fst (unsafeHead xs), map snd xs)) $
+            groupBy ((==) `on` fst) nameTypes
+    h = unsafeHead packedNameTypes
+    slided = drop 1 packedNameTypes ++ [h]
+    zipped :: [((Domain, [TYPE]), (Domain, [TYPE]))]
+    zipped = zip packedNameTypes slided
+    pack ((dom, types), (nxt, _)) =
+        ResourceRecord
+            { rrname = dom
+            , rrclass = IN
+            , rrtype = NSEC
+            , rrttl = 3600
+            , rdata = rd_nsec nxt types
+            }
+
+makeNSECDB :: [RRSetSig] -> NSECDB
+makeNSECDB vals = M.fromList $ zip keys vals
+  where
+    keys = modifyTail $ catMaybes $ map unpack vals
+    unpack :: RRSetSig -> Maybe (Domain, Domain)
+    unpack rss = case fromRData $ rdata r of
+        Nothing -> Nothing
+        Just nsec -> Just (rrsetsigName rss, nsec_next_domain nsec)
+      where
+        r = unsafeHead $ rrsetsigRRs rss
+    modifyTail [] = []
+    modifyTail [(x, y)] = [Range x (modify y)]
+    modifyTail ((x, y) : xys) = Range x y : modifyTail xys
+
+    zero :: Short.ShortByteString
+    zero = "\x00"
+    modify :: Domain -> Domain
+    modify dom = case toWireLabels dom of
+        [] -> fromWireLabels [zero]
+        l : ls -> fromWireLabels (l <> zero : ls)

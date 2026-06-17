@@ -122,7 +122,7 @@ prepareDNSSEC
         , PriKey
         , ResourceRecord -- DNSKEY
         , ResourceRecord -- DS
-        , [ResourceRecord] -> IO [RRSetSig]
+        , Bool -> [ResourceRecord] -> IO [RRSetSig]
         )
 prepareDNSSEC info@DNSSECinfo{..} = do
     mp <- genKeyPair dnssecInfoPubAlg
@@ -181,12 +181,15 @@ groupRRset rrs = groupBy rreq $ sort rrs
 signZone
     :: PriKey
     -> RD_RRSIG
+    -> Bool
     -> [ResourceRecord]
     -> IO [RRSetSig]
-signZone prikey rrsigTemp0 rrs0 = E.handle handler $ mapM f rrss
+signZone prikey rrsigTemp0 groupup rrs0 = E.handle handler $ mapM f rrss
   where
     handler SignFailure = return []
-    rrss = groupRRset rrs0
+    rrss
+        | groupup = groupRRset rrs0
+        | otherwise = map (: []) rrs0
     f [] = E.throwIO SignFailure
     f rrs@(ResourceRecord{..} : _) = do
         sig <- sign prikey rrsigTemp rrs
