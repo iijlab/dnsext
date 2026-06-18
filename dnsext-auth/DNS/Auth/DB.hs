@@ -389,7 +389,7 @@ makeNSEC doSign signed = doSign False $ map pack zipped
             , rrclass = IN
             , rrtype = NSEC
             , rrttl = 3600
-            , rdata = rd_nsec nxt types
+            , rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
             }
 
 makeNSECDB :: [RRSetSig] -> NSECDB
