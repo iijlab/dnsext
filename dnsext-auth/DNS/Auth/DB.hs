@@ -148,10 +148,11 @@ makeDB zone (soarr : rrs0)
                     , dbAuthority = auth
                     , dbAdditional = add
                     , dbAll = [soarr] ++ rrs ++ [soarr] -- for AXFR
-                    , dbNsecMap = M.empty
+                    , dbNsecMap = makeNSECDB nsecSigned
                     }
   where
-    (sigs, rrs) = partition (\r -> rrtype r == RRSIG) rrs0
+    (sigs, rrs1) = partition (\r -> rrtype r == RRSIG) rrs0
+    (nsec, rrs) = partition (\r -> rrtype r == NSEC) rrs1
     sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
     -- RFC 9471
     -- In-domain and sibling glues only.
@@ -171,11 +172,18 @@ makeDB zone (soarr : rrs0)
     auth = setEmptyNonTerminals zone $ makeODB nsSigned
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
     add = makeODB $ groupAndSig sigDB $ as ++ gs
+    nsecSigned = findSig sigDB nsec
 
 rrsigKV :: ResourceRecord -> Maybe ((Domain, TYPE), ResourceRecord)
 rrsigKV rr = case fromRData $ rdata rr of
     Nothing -> Nothing
     Just rrsig -> Just ((rrname rr, rrsig_type rrsig), rr)
+
+findSig
+    :: M.Map (Domain, TYPE) ResourceRecord
+    -> [ResourceRecord]
+    -> [RRSetSig]
+findSig db rrs0 = map (bindSIG db) $ map (: []) rrs0
 
 groupAndSig
     :: M.Map (Domain, TYPE) ResourceRecord
