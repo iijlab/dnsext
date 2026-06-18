@@ -113,7 +113,7 @@ data RRSetSig = RRSetSig
     , rrsetsigRRs :: [ResourceRecord]
     , rrsetsigSig :: Maybe ResourceRecord
     }
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
 prepareDNSSEC
     :: DNSSECinfo

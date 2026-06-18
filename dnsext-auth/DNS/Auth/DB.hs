@@ -167,12 +167,12 @@ makeDB zone (soarr : rrs0)
     -- is: in-domain
     ssSigned = groupAndSig sigDB [soarr]
     isSigned = groupAndSig sigDB is
-    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
     nsSigned = groupAndSig sigDB ns
+    nsecSigned = findSig sigDB nsec
+    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
     auth = setEmptyNonTerminals zone $ makeODB nsSigned
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
     add = makeODB $ groupAndSig sigDB $ as ++ gs
-    nsecSigned = findSig sigDB nsec
 
 rrsigKV :: ResourceRecord -> Maybe ((Domain, TYPE), ResourceRecord)
 rrsigKV rr = case fromRData $ rdata rr of
@@ -242,9 +242,9 @@ makeDBforDNSSEC zone doSign (soarr : rrs)
             -- is: in-domain
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
-            let ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
             nsSigned <- doSign True ns
             nsecSigned <- makeNSEC doSign $ ssSigned ++ isSigned ++ nsSigned
+            let ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
             let auth = setEmptyNonTerminals zone $ makeODB nsSigned
             let as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
                 add = makeODB $ unsign (as ++ gs)
@@ -298,7 +298,7 @@ makeODB :: [RRSetSig] -> ODB
 makeODB rs = ODB{odbMap = M.fromList kvs}
   where
     rss :: [[RRSetSig]]
-    rss = groupBy ((==) `on` rrsetsigName) rs
+    rss = groupBy ((==) `on` rrsetsigName) $ sort rs
     doms :: [Domain]
     doms = map (rrsetsigName . unsafeHead) rss
     kvs = zip doms $ map makeIDB rss
