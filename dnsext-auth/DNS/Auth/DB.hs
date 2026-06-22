@@ -201,7 +201,8 @@ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr =
         , dbNsecMap = makeNSECDB nsecSigned
         }
   where
-    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
+    -- "zonemaster" checks if NSEC RR of apex exits or not.
+    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
     auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
     add = makeODB $ unsign (as ++ gs)
