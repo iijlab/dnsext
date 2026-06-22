@@ -139,25 +139,24 @@ makeDBforPrimary
 makeDBforPrimary _ _ [] = return Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforPrimary zone doSign (soarr : rrs)
+makeDBforPrimary zone doSign rrs_@(soarr : rrs)
     | rrtype soarr /= SOA = return Nothing
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> return Nothing
         Just soa -> do
-            let (ns, _os, gs, is) = divide zone rrs
+            let (is, ns, gs, _os) = divide zone rrs
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
-            nsSigned <- doSign True ns
-            nsecSigned <- makeNSEC doSign $ ssSigned ++ isSigned ++ nsSigned
+            nsecSigned <- makeNSECforPrimary doSign rrs_
             let allrr =
                     getRRs True (unsafeHead ssSigned)
                         ++ concat (map (getRRs True) isSigned)
-                        ++ concat (map (getRRs True) nsSigned)
+                        ++ ns
                         ++ concat (map (getRRs True) nsecSigned)
                         ++ gs
                         ++ _os
                         ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr
 
 makeDBforSecondary :: Domain -> [ResourceRecord] -> IO (Maybe DB)
 makeDBforSecondary _ [] = return Nothing
@@ -170,14 +169,13 @@ makeDBforSecondary zone (soarr : rrs0)
         Just soa -> do
             let (sigs, rrs1) = partition (\r -> rrtype r == RRSIG) rrs0
                 (nsec, rrs) = partition (\r -> rrtype r == NSEC) rrs1
-            let (ns, _os, gs, is) = divide zone rrs
+            let (is, ns, gs, _os) = divide zone rrs
                 sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
                 ssSigned = groupAndSig sigDB [soarr]
                 isSigned = groupAndSig sigDB is
-                nsSigned = groupAndSig sigDB ns
-                nsecSigned = findSig sigDB nsec
+            let nsecSigned = makeNSECforSecondary sigDB nsec
             let allrr = [soarr] ++ rrs ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr
 
 ----------------------------------------------------------------
 
@@ -186,13 +184,13 @@ makeDBFinal
     -> RD_SOA
     -> [ResourceRecord]
     -> [ResourceRecord]
-    -> [RRSetSig]
+    -> [ResourceRecord]
     -> [RRSetSig]
     -> [RRSetSig]
     -> [RRSetSig]
     -> [ResourceRecord]
     -> DB
-makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr =
+makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr =
     DB
         { dbZone = zone
         , dbSOA = (soa, unsafeHead ssSigned)
@@ -204,7 +202,7 @@ makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr =
         }
   where
     ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
-    auth = setEmptyNonTerminals zone $ makeODB nsSigned
+    auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
     add = makeODB $ unsign (as ++ gs)
 
@@ -214,12 +212,6 @@ rrsigKV :: ResourceRecord -> Maybe ((Domain, TYPE), ResourceRecord)
 rrsigKV rr = case fromRData $ rdata rr of
     Nothing -> Nothing
     Just rrsig -> Just ((rrname rr, rrsig_type rrsig), rr)
-
-findSig
-    :: M.Map (Domain, TYPE) ResourceRecord
-    -> [ResourceRecord]
-    -> [RRSetSig]
-findSig db rrs0 = map (bindSIG db) $ map (: []) rrs0
 
 groupAndSig
     :: M.Map (Domain, TYPE) ResourceRecord
@@ -257,15 +249,15 @@ unsign rrs0 = map addNothing $ groupRRset rrs0
 -- RFC 9471
 -- In-domain and sibling glues only.
 -- Unrelated glues are ignored.
--- ns: NS except this domain
--- _os: unrelated, ignored
--- gs: glue (in delegated domain)
 -- is: in-domain
+-- ns: NS except this domain
+-- gs: glue (in delegated domain)
+-- _os: unrelated, ignored
 divide
     :: Domain
     -> [ResourceRecord]
     -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
-divide zone rrs = (ns, _os, gs, is)
+divide zone rrs = (is, ns, gs, _os)
   where
     -- ps: possible in-domain
     (ps, ns, _os) = partition3 zone rrs
@@ -355,6 +347,39 @@ setEmptyNonTerminals zone (ODB m) = ODB m'
 
 ----------------------------------------------------------------
 
+makeNSECforPrimary
+    :: (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> [ResourceRecord]
+    -> IO [RRSetSig]
+makeNSECforPrimary doSign rrs = doSign False $ map pack zipped
+  where
+    nameTypes :: [(Domain, TYPE)]
+    nameTypes = map (\x -> (rrname x, rrtype x)) $ nub $ sort rrs
+    packedNameTypes :: [(Domain, [TYPE])]
+    packedNameTypes =
+        map (\xs -> (fst (unsafeHead xs), map snd xs)) $
+            groupBy ((==) `on` fst) nameTypes
+    h = unsafeHead packedNameTypes
+    slided = drop 1 packedNameTypes ++ [h]
+    zipped :: [((Domain, [TYPE]), (Domain, [TYPE]))]
+    zipped = zip packedNameTypes slided
+    pack ((dom, types), (nxt, _)) =
+        ResourceRecord
+            { rrname = dom
+            , rrclass = IN
+            , rrtype = NSEC
+            , rrttl = 3600
+            , rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
+            }
+
+makeNSECforSecondary
+    :: M.Map (Domain, TYPE) ResourceRecord
+    -> [ResourceRecord]
+    -> [RRSetSig]
+makeNSECforSecondary db rrs0 = map (bindSIG db) $ map (: []) rrs0
+
+----------------------------------------------------------------
+
 data DomainRange = Exact Domain | Range Domain Domain deriving (Show)
 
 {- FOURMOLU_DISABLE -}
@@ -372,31 +397,6 @@ instance Ord DomainRange where
 {- FOURMOLU_ENABLE -}
 
 type NSECDB = M.Map DomainRange RRSetSig
-
-makeNSEC
-    :: (Bool -> [ResourceRecord] -> IO [RRSetSig])
-    -> [RRSetSig]
-    -> IO [RRSetSig]
-makeNSEC doSign signed = doSign False $ map pack zipped
-  where
-    nameTypes :: [(Domain, TYPE)]
-    nameTypes = map (\x -> (rrsetsigName x, rrsetsigType x)) signed
-    packedNameTypes :: [(Domain, [TYPE])]
-    packedNameTypes =
-        map (\xs -> (fst (unsafeHead xs), map snd xs)) $
-            groupBy ((==) `on` fst) nameTypes
-    h = unsafeHead packedNameTypes
-    slided = drop 1 packedNameTypes ++ [h]
-    zipped :: [((Domain, [TYPE]), (Domain, [TYPE]))]
-    zipped = zip packedNameTypes slided
-    pack ((dom, types), (nxt, _)) =
-        ResourceRecord
-            { rrname = dom
-            , rrclass = IN
-            , rrtype = NSEC
-            , rrttl = 3600
-            , rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
-            }
 
 makeNSECDB :: [RRSetSig] -> NSECDB
 makeNSECDB vals = M.fromList $ zip keys vals
