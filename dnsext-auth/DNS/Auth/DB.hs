@@ -201,7 +201,7 @@ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr =
         , dbNsecMap = makeNSECDB nsecSigned
         }
   where
-    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
+    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
     auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
     add = makeODB $ unsign (as ++ gs)
