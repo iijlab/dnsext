@@ -11,8 +11,8 @@ module DNS.Auth.DB (
     dbSOArr,
     getRRs,
     loadDB,
-    makeDB,
-    makeDBforDNSSEC,
+    makeDBforPrimary,
+    makeDBforSecondary,
     emptyDB,
     loadZoneFile,
     lookupT,
@@ -124,55 +124,91 @@ emptyDB =
 ----------------------------------------------------------------
 
 loadDB :: Domain -> FilePath -> IO (Maybe DB)
-loadDB zone file = makeDB zone <$> loadZoneFile zone file
+loadDB zone file = loadZoneFile zone file >>= makeDBforSecondary zone
 
 loadZoneFile :: Domain -> FilePath -> IO [ResourceRecord]
 loadZoneFile zone file = catMaybes . map fromResource <$> ZF.parseFile file zone
 
 ----------------------------------------------------------------
 
-makeDB :: Domain -> [ResourceRecord] -> Maybe DB
-makeDB _ [] = Nothing
+makeDBforPrimary
+    :: Domain
+    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> [ResourceRecord]
+    -> IO (Maybe DB)
+makeDBforPrimary _ _ [] = return Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDB zone (soarr : rrs0)
-    | rrtype soarr /= SOA = Nothing
+makeDBforPrimary zone doSign (soarr : rrs)
+    | rrtype soarr /= SOA = return Nothing
     | otherwise = case fromRData $ rdata soarr of
-        Nothing -> Nothing
-        Just soa ->
-            Just $
-                DB
-                    { dbZone = zone
-                    , dbSOA = (soa, unsafeHead ssSigned)
-                    , dbAnswer = ans
-                    , dbAuthority = auth
-                    , dbAdditional = add
-                    , dbAll = [soarr] ++ rrs ++ [soarr] -- for AXFR
-                    , dbNsecMap = makeNSECDB nsecSigned
-                    }
+        Nothing -> return Nothing
+        Just soa -> do
+            let (ns, _os, gs, is) = divide zone rrs
+            ssSigned <- doSign True [soarr]
+            isSigned <- doSign True is
+            nsSigned <- doSign True ns
+            nsecSigned <- makeNSEC doSign $ ssSigned ++ isSigned ++ nsSigned
+            let allrr =
+                    getRRs True (unsafeHead ssSigned)
+                        ++ concat (map (getRRs True) isSigned)
+                        ++ concat (map (getRRs True) nsSigned)
+                        ++ concat (map (getRRs True) nsecSigned)
+                        ++ gs
+                        ++ _os
+                        ++ [soarr] -- for AXFR
+            return $ Just $ makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr
+
+makeDBforSecondary :: Domain -> [ResourceRecord] -> IO (Maybe DB)
+makeDBforSecondary _ [] = return Nothing
+-- RFC 1035 Sec 5.2
+-- Exactly one SOA RR should be present at the top of the zone.
+makeDBforSecondary zone (soarr : rrs0)
+    | rrtype soarr /= SOA = return Nothing
+    | otherwise = case fromRData $ rdata soarr of
+        Nothing -> return Nothing
+        Just soa -> do
+            let (sigs, rrs1) = partition (\r -> rrtype r == RRSIG) rrs0
+                (nsec, rrs) = partition (\r -> rrtype r == NSEC) rrs1
+            let (ns, _os, gs, is) = divide zone rrs
+                sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
+                ssSigned = groupAndSig sigDB [soarr]
+                isSigned = groupAndSig sigDB is
+                nsSigned = groupAndSig sigDB ns
+                nsecSigned = findSig sigDB nsec
+            let allrr = [soarr] ++ rrs ++ [soarr] -- for AXFR
+            return $ Just $ makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr
+
+----------------------------------------------------------------
+
+makeDBFinal
+    :: Domain
+    -> RD_SOA
+    -> [ResourceRecord]
+    -> [ResourceRecord]
+    -> [RRSetSig]
+    -> [RRSetSig]
+    -> [RRSetSig]
+    -> [RRSetSig]
+    -> [ResourceRecord]
+    -> DB
+makeDBFinal zone soa is gs ssSigned isSigned nsSigned nsecSigned allrr =
+    DB
+        { dbZone = zone
+        , dbSOA = (soa, unsafeHead ssSigned)
+        , dbAnswer = ans
+        , dbAuthority = auth
+        , dbAdditional = add
+        , dbAll = allrr
+        , dbNsecMap = makeNSECDB nsecSigned
+        }
   where
-    (sigs, rrs1) = partition (\r -> rrtype r == RRSIG) rrs0
-    (nsec, rrs) = partition (\r -> rrtype r == NSEC) rrs1
-    sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
-    -- RFC 9471
-    -- In-domain and sibling glues only.
-    -- Unrelated glues are ignored.
-    -- as: possible in-domain
-    -- ns: NS except this domain
-    -- _os: unrelated, ignored
-    (ps, ns, _os) = partition3 zone rrs
-    isDelegated = makeIsDelegated ns
-    (gs, is) = partition (\r -> isDelegated (rrname r)) ps
-    -- gs: glue (in delegated domain)
-    -- is: in-domain
-    ssSigned = groupAndSig sigDB [soarr]
-    isSigned = groupAndSig sigDB is
-    nsSigned = groupAndSig sigDB ns
-    nsecSigned = findSig sigDB nsec
     ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
     auth = setEmptyNonTerminals zone $ makeODB nsSigned
     as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
-    add = makeODB $ groupAndSig sigDB $ as ++ gs
+    add = makeODB $ unsign (as ++ gs)
+
+----------------------------------------------------------------
 
 rrsigKV :: ResourceRecord -> Maybe ((Domain, TYPE), ResourceRecord)
 rrsigKV rr = case fromRData $ rdata rr of
@@ -216,57 +252,25 @@ unsign rrs0 = map addNothing $ groupRRset rrs0
       where
         ResourceRecord{..} = unsafeHead rrs
 
-makeDBforDNSSEC
+----------------------------------------------------------------
+
+-- RFC 9471
+-- In-domain and sibling glues only.
+-- Unrelated glues are ignored.
+-- ns: NS except this domain
+-- _os: unrelated, ignored
+-- gs: glue (in delegated domain)
+-- is: in-domain
+divide
     :: Domain
-    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
     -> [ResourceRecord]
-    -> IO (Maybe DB)
-makeDBforDNSSEC _ _ [] = return Nothing
--- RFC 1035 Sec 5.2
--- Exactly one SOA RR should be present at the top of the zone.
-makeDBforDNSSEC zone doSign (soarr : rrs)
-    | rrtype soarr /= SOA = return Nothing
-    | otherwise = case fromRData $ rdata soarr of
-        Nothing -> return Nothing
-        Just soa -> do
-            -- RFC 9471
-            -- In-domain and sibling glues only.
-            -- Unrelated glues are ignored.
-            let (ps, ns, _os) = partition3 zone rrs
-                -- ps: possible in-domain
-                -- ns: NS except this domain
-                -- _os: unrelated, ignored
-                isDelegated = makeIsDelegated ns
-                (gs, is) = partition (\r -> isDelegated (rrname r)) ps
-            -- gs: glue (in delegated domain)
-            -- is: in-domain
-            ssSigned <- doSign True [soarr]
-            isSigned <- doSign True is
-            nsSigned <- doSign True ns
-            nsecSigned <- makeNSEC doSign $ ssSigned ++ isSigned ++ nsSigned
-            let ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
-            let auth = setEmptyNonTerminals zone $ makeODB nsSigned
-            let as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
-                add = makeODB $ unsign (as ++ gs)
-                allrr =
-                    getRRs True (unsafeHead ssSigned)
-                        ++ concat (map (getRRs True) isSigned)
-                        ++ concat (map (getRRs True) nsSigned)
-                        ++ concat (map (getRRs True) nsecSigned)
-                        ++ gs
-                        ++ _os
-                        ++ [soarr] -- for AXFR
-            return $
-                Just $
-                    DB
-                        { dbZone = zone
-                        , dbSOA = (soa, unsafeHead ssSigned)
-                        , dbAnswer = ans
-                        , dbAuthority = auth
-                        , dbAdditional = add
-                        , dbAll = allrr
-                        , dbNsecMap = makeNSECDB nsecSigned
-                        }
+    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
+divide zone rrs = (ns, _os, gs, is)
+  where
+    -- ps: possible in-domain
+    (ps, ns, _os) = partition3 zone rrs
+    isDelegated = makeIsDelegated ns
+    (gs, is) = partition (\r -> isDelegated (rrname r)) ps
 
 partition3
     :: Domain
@@ -293,6 +297,8 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
   where
     s = Set.fromList $ map rrname rrs
     ps = map (\x -> (`isSubDomainOf` x)) $ Set.toList s
+
+----------------------------------------------------------------
 
 makeODB :: [RRSetSig] -> ODB
 makeODB rs = ODB{odbMap = M.fromList kvs}

@@ -46,8 +46,10 @@ readSource s
 
 loadSource :: Env -> Domain -> Serial -> Source -> IO (Maybe DB)
 loadSource env zone serial source = case source of
-    FromUpstream4 ip4 -> toDB <$> Axfr.client env serial (IPv4 ip4) zone
-    FromUpstream6 ip6 -> toDB <$> Axfr.client env serial (IPv6 ip6) zone
+    FromUpstream4 ip4 ->
+        Axfr.client env serial (IPv4 ip4) zone >>= makeDBforSecondary zone
+    FromUpstream6 ip6 ->
+        Axfr.client env serial (IPv6 ip6) zone >>= makeDBforSecondary zone
     FromFile fn -> do
         -- head rrs is soa
         rrs <- loadZoneFile zone fn
@@ -62,10 +64,7 @@ loadSource env zone serial source = case source of
                     }
         -- fixme:
         print ds
-        makeDBforDNSSEC zone doSign (rrs ++ [dnskey])
-  where
-    toDB [] = Nothing
-    toDB rrs = makeDB zone rrs
+        makeDBforPrimary zone doSign (rrs ++ [dnskey])
 
 ----------------------------------------------------------------
 
