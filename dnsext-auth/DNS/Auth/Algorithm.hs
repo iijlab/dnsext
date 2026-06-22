@@ -72,6 +72,8 @@ unwrap :: Bool -> RRSetSig -> [ResourceRecord]
 unwrap False RRSetSig{..} = rrsetsigRRs
 unwrap True RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
 
+-- dbAnswer contains empty ODBs for For RFC 4592 Sec 2.2.2.Empty
+-- Non-terminals.
 processPositive :: DB -> Question -> Bool -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbAnswer of
     Nothing -> findAuthority db q dnssecOK reply
