@@ -370,7 +370,11 @@ makeNSECforPrimary doSign rrs = doSign False $ map pack zipped
             , rrclass = IN
             , rrtype = NSEC
             , rrttl = 3600
-            , rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
+            , -- RFC 4035 Sec 2.3: The type bitmap of every NSEC
+              -- resource record in a signed zone MUST indicate the
+              -- presence of both the NSEC record itself and its
+              -- corresponding RRSIG record.
+              rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
             }
 
 makeNSECforSecondary
