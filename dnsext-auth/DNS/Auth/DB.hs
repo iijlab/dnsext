@@ -374,7 +374,7 @@ makeNSECforPrimary doSign rrs = doSign False $ map pack zipped
               -- resource record in a signed zone MUST indicate the
               -- presence of both the NSEC record itself and its
               -- corresponding RRSIG record.
-              rdata = rd_nsec nxt (sort (NSEC : RRSIG : types))
+              rdata = rd_nsec nxt (NSEC : RRSIG : types) -- putNsecTypes sorts this.
             }
 
 makeNSECforSecondary
