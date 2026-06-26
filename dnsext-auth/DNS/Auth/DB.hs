@@ -358,7 +358,7 @@ makeNSECforPrimary doSign rrs = doSign False $ map pack zipped
     nameTypes = map (\x -> (rrname x, rrtype x)) $ nub $ sort rrs
     packedNameTypes :: [(Domain, [TYPE])]
     packedNameTypes =
-        map (\xs -> (fst (unsafeHead xs), map snd xs)) $
+        map (\xs -> (fst (unsafeHead xs), nub $ sort $ map snd xs)) $
             groupBy ((==) `on` fst) nameTypes
     h = unsafeHead packedNameTypes
     slided = drop 1 packedNameTypes ++ [h]

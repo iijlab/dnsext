@@ -30,13 +30,15 @@ test-suite spec
     main-is:            Spec.hs
     build-tool-depends: hspec-discover:hspec-discover
     hs-source-dirs:     test
-    other-modules:      AlgorithmSpec
+    other-modules:      AlgorithmSecSpec
+                        AlgorithmSpec
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
         base,
         bytestring,
         dnsext-auth,
+        dnsext-dnssec,
         dnsext-types,
         hspec
 
