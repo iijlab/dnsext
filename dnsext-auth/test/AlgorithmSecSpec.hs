@@ -182,6 +182,37 @@ spec = describe "authoritative algorithm" $ do
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
 
+    it "can answer an existing domain for NSEC" $ do
+        let query = dnssecQuery{question = Question "exist.example.jp." NSEC IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        answer ans `shouldSatisfy` include "exist.example.jp." NSEC
+        answer ans `shouldSatisfy` includeRRSIG "exist.example.jp." NSEC
+        length (authority ans) `shouldBe` 0
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+    it "can answer an non-existing domain for NSEC" $ do
+        let query = dnssecQuery{question = Question "nonexist.example.jp." NSEC IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NXDomain
+        length (answer ans) `shouldBe` 0
+        authority ans `shouldSatisfy` include "example.jp." SOA
+        authority ans `shouldSatisfy` includeRRSIG "example.jp." SOA
+        authority ans `shouldSatisfy` include "fault-cname.example.jp." NSEC
+        authority ans `shouldSatisfy` includeRRSIG "fault-cname.example.jp." NSEC
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+
+    it "can handle Empty Non-Terminal node for NSEC" $ do
+        let query = dnssecQuery{question = Question "ent1.example.jp." NSEC IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 0
+        authority ans `shouldSatisfy` include "example.jp." SOA
+        authority ans `shouldSatisfy` includeRRSIG "example.jp." SOA
+        length (additional ans) `shouldBe` 0
+        flags ans `shouldSatisfy` authAnswer
+
 includeRRSIG :: Domain -> TYPE -> [ResourceRecord] -> Bool
 includeRRSIG dom typ rs = any has rs
   where
