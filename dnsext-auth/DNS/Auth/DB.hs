@@ -5,6 +5,7 @@ module DNS.Auth.DB (
     RRSetSig (..),
     IDB (..),
     allRRsofIDB,
+    headIDB,
     ODB (..),
     DB (..),
     dbRD_SOA,
@@ -47,6 +48,9 @@ emptyIDB = IDB{idbAll = [], idbMap = M.empty}
 
 allRRsofIDB :: Bool -> IDB -> [ResourceRecord]
 allRRsofIDB dnssecOK IDB{..} = concat $ map (getRRs dnssecOK) idbAll
+
+headIDB :: Bool -> IDB -> [ResourceRecord]
+headIDB dnssecOK IDB{..} = concat $ map (getRRs dnssecOK) $ take 1 idbAll
 
 getRRs :: Bool -> RRSetSig -> [ResourceRecord]
 getRRs True RRSetSig{..} = rrsetsigRRs ++ maybe [] (: []) rrsetsigSig
@@ -139,7 +143,7 @@ makeDBforPrimary
 makeDBforPrimary _ _ [] = return Nothing
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforPrimary zone doSign rrs_@(soarr : rrs)
+makeDBforPrimary zone doSign (soarr : rrs)
     | rrtype soarr /= SOA = return Nothing
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> return Nothing
@@ -147,7 +151,7 @@ makeDBforPrimary zone doSign rrs_@(soarr : rrs)
             let (is, ns, gs, _os) = divide zone rrs
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
-            nsecSigned <- makeNSECforPrimary doSign rrs_
+            nsecSigned <- makeNSECforPrimary doSign (soarr : is)
             let allrr =
                     getRRs True (unsafeHead ssSigned)
                         ++ concat (map (getRRs True) isSigned)
@@ -156,7 +160,7 @@ makeDBforPrimary zone doSign rrs_@(soarr : rrs)
                         ++ gs
                         ++ _os
                         ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr
 
 makeDBforSecondary :: Domain -> [ResourceRecord] -> IO (Maybe DB)
 makeDBforSecondary _ [] = return Nothing
@@ -175,7 +179,7 @@ makeDBforSecondary zone (soarr : rrs0)
                 isSigned = groupAndSig sigDB is
             let nsecSigned = makeNSECforSecondary sigDB nsec
             let allrr = [soarr] ++ rrs ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr
 
 ----------------------------------------------------------------
 
@@ -184,13 +188,12 @@ makeDBFinal
     -> RD_SOA
     -> [ResourceRecord]
     -> [ResourceRecord]
-    -> [ResourceRecord]
     -> [RRSetSig]
     -> [RRSetSig]
     -> [RRSetSig]
     -> [ResourceRecord]
     -> DB
-makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr =
+makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr =
     DB
         { dbZone = zone
         , dbSOA = (soa, unsafeHead ssSigned)
@@ -204,8 +207,8 @@ makeDBFinal zone soa is ns gs ssSigned isSigned nsecSigned allrr =
     -- "zonemaster" checks if NSEC RR of apex exits or not.
     ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
     auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
-    as = filter (\r -> rrtype r == A || rrtype r == AAAA) is
-    add = makeODB $ unsign (as ++ gs)
+    asSigned = filter (\r -> rrsetsigType r == A || rrsetsigType r == AAAA) isSigned
+    add = makeODB (asSigned ++ unsign gs)
 
 ----------------------------------------------------------------
 

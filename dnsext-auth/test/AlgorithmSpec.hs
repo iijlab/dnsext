@@ -51,6 +51,19 @@ spec = describe "authoritative algorithm" $ do
         additional ans `shouldSatisfy` include "ns.in.example.jp." A
         additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
         flags ans `shouldSatisfy` not . authAnswer
+    it "can answer referrals via NS" $ do
+        let query = defaultQuery{question = Question "ns.in.example.jp." NS IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 0
+        length (authority ans) `shouldBe` 3
+        authority ans `shouldSatisfy` includeNS "ns.in.example.jp."
+        authority ans `shouldSatisfy` includeNS "ns.sibling.example.jp."
+        authority ans `shouldSatisfy` includeNS "unrelated.com."
+        length (additional ans) `shouldBe` 2
+        additional ans `shouldSatisfy` include "ns.in.example.jp." A
+        additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
+        flags ans `shouldSatisfy` not . authAnswer
     it "returns AA for NS of this domain" $ do
         let query = defaultQuery{question = Question "example.jp." NS IN}
             ans = getAnswer db query

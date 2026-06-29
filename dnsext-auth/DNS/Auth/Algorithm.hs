@@ -80,40 +80,44 @@ processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbA
     Just idb
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
-        | qtype == ANY -> makeReply db reply (take 1 $ allRRsofIDB dnssecOK idb) []
+        | qtype == ANY -> makeReply db reply dnssecOK (headIDB dnssecOK idb) []
         | otherwise -> case lookupT CNAME idb of
             Nothing ->
                 let ans = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
                     add = if qtype == NS then findAdditional db dnssecOK ans else []
-                 in makeReply db reply ans add
+                 in makeReply db reply dnssecOK ans add
             Just ent -> case rrsetsigRRs ent of
                 [c] -> case fromRData $ rdata c of
                     Nothing -> makeErrorReply reply ServFail
-                    Just cname -> processCNAME db q dnssecOK reply c $ cname_domain cname
+                    Just cname ->
+                        let cc = case rrsetsigSig ent of
+                                Nothing -> [c]
+                                Just sig -> [c, sig]
+                         in processCNAME db q dnssecOK reply cc $ cname_domain cname
                 _ -> makeErrorReply reply ServFail
 
 -- RFC 1912 Sec 2.4 CNAME records
 -- This function does not follow CNAME of CNAME.
-processCNAME :: DB -> Question -> Bool -> DNSMessage -> ResourceRecord -> Domain -> DNSMessage
-processCNAME DB{..} Question{..} dnssecOK reply c cname
-    | qtype == CNAME = makePositiveReply reply [c] [] add NoErr True
+processCNAME :: DB -> Question -> Bool -> DNSMessage -> [ResourceRecord] -> Domain -> DNSMessage
+processCNAME DB{..} Question{..} dnssecOK reply cc cname
+    | qtype == CNAME = makePositiveReply reply cc [] add NoErr True
   where
     add
         | cname `isSubDomainOf` dbZone =
             maybe [] (allRRsofIDB dnssecOK) $ lookupD cname dbAdditional
         | otherwise = []
-processCNAME db@DB{..} Question{..} dnssecOK reply c cname
+processCNAME db@DB{..} Question{..} dnssecOK reply cc cname
     | cname `isSubDomainOf` dbZone = case lookupD cname dbAnswer of
         -- RFC 2308 Sec 2.1 Name Error
-        Nothing -> makeNegativeReply db reply [c] [] NXDomain
+        Nothing -> makeNegativeReply db reply dnssecOK cc [] NXDomain
         Just idb ->
             let ans = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
                 -- RFC2308 Sec 2.2 No Data
                 auth
                     | null ans = dbSOArr True db
                     | otherwise = []
-             in makePositiveReply reply (c : ans) auth [] NoErr True
-    | otherwise = makePositiveReply reply [c] [] [] NoErr True
+             in makePositiveReply reply (cc ++ ans) auth [] NoErr True
+    | otherwise = makePositiveReply reply cc [] [] NoErr True
 
 findAuthority
     :: DB
@@ -124,9 +128,9 @@ findAuthority
 findAuthority db@DB{..} Question{..} dnssecOK reply = loop qname
   where
     loop dom
-        | dom == dbZone = makeNegativeReply db reply [] [] NXDomain
+        | dom == dbZone = makeNegativeReply db reply dnssecOK [] [] NXDomain
         | otherwise = case unconsDomain dom of
-            Nothing -> makeNegativeReply db reply [] [] NXDomain
+            Nothing -> makeNegativeReply db reply dnssecOK [] [] NXDomain
             Just (_, dom') -> case lookupD dom dbAuthority of
                 Nothing -> loop dom'
                 Just idb
@@ -152,9 +156,9 @@ findAdditional DB{..} dnssecOK rs0 = add
     extractNS rr = ns_domain <$> fromRData (rdata rr)
 
 -- RFC2308 Sec 2.2 No Data
-makeReply :: DB -> DNSMessage -> [ResourceRecord] -> AdditionalRecords -> DNSMessage
-makeReply db reply [] add = makeNegativeReply db reply [] add NoErr
-makeReply _ reply ans add = makePositiveReply reply ans [] add NoErr True
+makeReply :: DB -> DNSMessage -> Bool -> [ResourceRecord] -> AdditionalRecords -> DNSMessage
+makeReply db reply dnssecOK [] add = makeNegativeReply db reply dnssecOK [] add NoErr
+makeReply _ reply _ ans add = makePositiveReply reply ans [] add NoErr True
 
 makePositiveReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage
 makePositiveReply reply ans auth add code aa =
@@ -166,8 +170,8 @@ makePositiveReply reply ans auth add code aa =
         , flags = (flags reply){authAnswer = aa}
         }
 
-makeNegativeReply :: DB -> DNSMessage -> Answers -> AdditionalRecords -> RCODE -> DNSMessage
-makeNegativeReply db reply ans add code =
+makeNegativeReply :: DB -> DNSMessage -> Bool -> Answers -> AdditionalRecords -> RCODE -> DNSMessage
+makeNegativeReply db reply dnssecOK ans add code =
     reply
         { answer = ans -- CNAME sometime
         , authority = auth ++ nsec
@@ -178,9 +182,11 @@ makeNegativeReply db reply ans add code =
   where
     key = Exact $ qname $ question reply
     auth = dbSOArr True db
-    nsec = case M.lookup key $ dbNsecMap db of
-        Nothing -> []
-        Just n -> getRRs True n
+    nsec
+        | dnssecOK = case M.lookup key $ dbNsecMap db of
+            Nothing -> []
+            Just n -> getRRs True n
+        | otherwise = []
 
 makeErrorReply :: DNSMessage -> RCODE -> DNSMessage
 makeErrorReply reply code =
