@@ -10,11 +10,13 @@ import DNS.SEC
 import DNS.SEC.Verify
 import DNS.Types
 
+import Data.Maybe
+
 spec :: Spec
 spec = describe "authoritative algorithm" $ do
     runIO $ runInitIO $ addResourceDataForDNSSEC
+    let zone = "example.jp."
     edb <- runIO $ do
-        let zone = "example.jp."
         rrs <- loadZoneFile zone "test/example.zone"
         (_pub, _pri, dnskey, _ds, doSign) <-
             prepareDNSSEC $
@@ -26,9 +28,13 @@ spec = describe "authoritative algorithm" $ do
                     , dnssecInfoDuration = 86400
                     }
         makeDBforPrimary zone doSign (rrs ++ [dnskey])
-    let db = case edb of
-            Nothing -> error "DB"
-            Just db' -> db'
+    let db = fromJust edb
+    doit db
+    db2 <- fromJust <$> runIO (makeDBforSecondary zone $ dbAll db)
+    doit db2
+
+doit :: DB -> Spec
+doit db = do
     it "can answer an existing domain" $ do
         let query = dnssecQuery{question = Question "exist.example.jp." A IN}
             ans = getAnswer db query
