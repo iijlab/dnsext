@@ -114,7 +114,7 @@ processCNAME db@DB{..} Question{..} dnssecOK reply cc cname
             let ans = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
                 -- RFC2308 Sec 2.2 No Data
                 auth
-                    | null ans = dbSOArr True db
+                    | null ans = dbSOArr dnssecOK db
                     | otherwise = []
              in makePositiveReply reply (cc ++ ans) auth [] NoErr True
     | otherwise = makePositiveReply reply cc [] [] NoErr True
@@ -136,7 +136,7 @@ findAuthority db@DB{..} Question{..} dnssecOK reply = loop qname
                 Just idb
                     -- For RFC 4592 Sec 2.2.2.Empty Non-terminals
                     | null (allRRsofIDB False idb) ->
-                        makePositiveReply reply [] (dbSOArr True db) [] NoErr True -- fixme
+                        makePositiveReply reply [] (dbSOArr dnssecOK db) [] NoErr True -- fixme
                     | otherwise ->
                         let allrrs = allRRsofIDB dnssecOK idb
                             add = findAdditional db dnssecOK allrrs
@@ -181,11 +181,11 @@ makeNegativeReply db reply dnssecOK ans add code =
         }
   where
     key = Exact $ qname $ question reply
-    auth = dbSOArr True db
+    auth = dbSOArr dnssecOK db
     nsec
         | dnssecOK = case M.lookup key $ dbNsecMap db of
             Nothing -> []
-            Just n -> getRRs True n
+            Just n -> getRRs dnssecOK n
         | otherwise = []
 
 makeErrorReply :: DNSMessage -> RCODE -> DNSMessage
