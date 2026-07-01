@@ -151,7 +151,8 @@ makeDBforPrimary zone doSign (soarr : rrs)
             let (is, ns, gs, _os) = divide zone rrs
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
-            nsecSigned <- makeNSECforPrimary doSign (soarr : is)
+            -- In-domain NS/DS should have NSEC.
+            nsecSigned <- makeNSECforPrimary doSign (soarr : (is ++ ns))
             let allrr =
                     getRRs True (unsafeHead ssSigned)
                         ++ concat (map (getRRs True) isSigned)
@@ -205,6 +206,8 @@ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr =
         }
   where
     -- "zonemaster" checks if NSEC RR of apex exits or not.
+    -- Originally, in-domain NS should not be included in dbAnswer.
+    -- NSEC breaks this invariant, sigh.
     ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
     auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
     asSigned = filter (\r -> rrsetsigType r == A || rrsetsigType r == AAAA) isSigned

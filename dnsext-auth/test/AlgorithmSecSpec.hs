@@ -51,8 +51,8 @@ doit db = do
         length (answer ans) `shouldBe` 0
         authority ans `shouldSatisfy` include "example.jp." SOA
         authority ans `shouldSatisfy` includeRRSIG "example.jp." SOA
-        authority ans `shouldSatisfy` include "fault-cname.example.jp." NSEC
-        authority ans `shouldSatisfy` includeRRSIG "fault-cname.example.jp." NSEC
+        authority ans `shouldSatisfy` include "in2.example.jp." NSEC
+        authority ans `shouldSatisfy` includeRRSIG "in2.example.jp." NSEC
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
     it "can refuse unrelated domains" $ do
@@ -217,8 +217,8 @@ doit db = do
         length (answer ans) `shouldBe` 0
         authority ans `shouldSatisfy` include "example.jp." SOA
         authority ans `shouldSatisfy` includeRRSIG "example.jp." SOA
-        authority ans `shouldSatisfy` include "fault-cname.example.jp." NSEC
-        authority ans `shouldSatisfy` includeRRSIG "fault-cname.example.jp." NSEC
+        authority ans `shouldSatisfy` include "in2.example.jp." NSEC
+        authority ans `shouldSatisfy` includeRRSIG "in2.example.jp." NSEC
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
 

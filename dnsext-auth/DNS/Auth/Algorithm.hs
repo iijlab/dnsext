@@ -74,18 +74,34 @@ unwrap True RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
 
 -- dbAnswer contains empty ODBs for For RFC 4592 Sec 2.2.2.Empty
 -- Non-terminals.
+--                     RRSIG   NSEC
+-- Exist               has     has
+-- In-domain NS/DS     not     has
+-- Empty non-terminal  not     not
 processPositive :: DB -> Question -> Bool -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbAnswer of
     Nothing -> findAuthority db q dnssecOK reply
     Just idb
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
-        | qtype == ANY -> makeReply db reply dnssecOK (headIDB dnssecOK idb) []
+        | qtype == ANY ->
+            let ans = headIDB dnssecOK idb
+             in if null ans
+                    then makeNegativeReply db reply dnssecOK [] [] NoErr
+                    else makePositiveReply reply ans [] [] NoErr True
         | otherwise -> case lookupT CNAME idb of
             Nothing ->
                 let ans = maybe [] (unwrap dnssecOK) $ lookupT qtype idb
                     add = if qtype == NS then findAdditional db dnssecOK ans else []
-                 in makeReply db reply dnssecOK ans add
+                 in if ans == []
+                        then
+                            if null (idbAll idb)
+                                then makeNegativeReply db reply dnssecOK [] add NoErr
+                                -- In-domain NS/DS is included due to
+                                -- NSEC, sigh.  In this case, idb has
+                                -- entries for NSEC.
+                                else findAuthority db q dnssecOK reply
+                        else makePositiveReply reply ans [] add NoErr True
             Just ent -> case rrsetsigRRs ent of
                 [c] -> case fromRData $ rdata c of
                     Nothing -> makeErrorReply reply ServFail
@@ -154,11 +170,6 @@ findAdditional DB{..} dnssecOK rs0 = add
     add = concat $ map lookupAdd doms
     lookupAdd dom = maybe [] (allRRsofIDB dnssecOK) $ lookupD dom dbAdditional
     extractNS rr = ns_domain <$> fromRData (rdata rr)
-
--- RFC2308 Sec 2.2 No Data
-makeReply :: DB -> DNSMessage -> Bool -> [ResourceRecord] -> AdditionalRecords -> DNSMessage
-makeReply db reply dnssecOK [] add = makeNegativeReply db reply dnssecOK [] add NoErr
-makeReply _ reply _ ans add = makePositiveReply reply ans [] add NoErr True
 
 makePositiveReply :: DNSMessage -> Answers -> AuthorityRecords -> AdditionalRecords -> RCODE -> Bool -> DNSMessage
 makePositiveReply reply ans auth add code aa =
