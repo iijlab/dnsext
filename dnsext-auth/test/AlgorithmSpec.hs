@@ -24,7 +24,7 @@ spec = describe "authoritative algorithm" $ do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
-    it "can answer an non-existing domain" $ do
+    it "can answer a non-existing domain" $ do
         let query = defaultQuery{question = Question "nonexist.example.jp." A IN}
             ans = getAnswer db query
         rcode ans `shouldBe` NXDomain
