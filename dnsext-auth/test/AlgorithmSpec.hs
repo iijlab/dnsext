@@ -6,10 +6,12 @@ import Test.Hspec
 
 import DNS.Auth.Algorithm
 import DNS.Auth.DB
+import DNS.SEC
 import DNS.Types
 
 spec :: Spec
 spec = describe "authoritative algorithm" $ do
+    runIO $ runInitIO $ addResourceDataForDNSSEC
     edb <- runIO $ loadDB "example.jp." "test/example.zone"
     let db = case edb of
             Nothing -> error "DB"
