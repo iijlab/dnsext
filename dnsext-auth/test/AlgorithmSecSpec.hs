@@ -63,7 +63,20 @@ doit db = do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` not . authAnswer
-    it "can answer referrals" $ do
+    it "can answer referrals (1)" $ do
+        let query = dnssecQuery{question = Question "in.example.jp." NS IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 0
+        length (authority ans) `shouldBe` 3
+        authority ans `shouldSatisfy` includeNS "ns.in.example.jp."
+        authority ans `shouldSatisfy` includeNS "ns.sibling.example.jp."
+        authority ans `shouldSatisfy` includeNS "unrelated.com."
+        length (additional ans) `shouldBe` 2
+        additional ans `shouldSatisfy` include "ns.in.example.jp." A
+        additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
+        flags ans `shouldSatisfy` not . authAnswer
+    it "can answer referrals (2)" $ do
         let query = dnssecQuery{question = Question "foo.in.example.jp." A IN}
             ans = getAnswer db query
         rcode ans `shouldBe` NoErr
