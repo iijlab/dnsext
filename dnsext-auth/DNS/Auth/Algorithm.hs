@@ -76,7 +76,8 @@ unwrap True RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
 -- Non-terminals.
 --                     RRSIG   NSEC
 -- Exist               has     has
--- In-domain NS/DS     not     has
+-- In-domain NS        not     has
+-- In-domain DS        has     has
 -- Empty non-terminal  not     not
 processPositive :: DB -> Question -> Bool -> DNSMessage -> DNSMessage
 processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbAnswer of
@@ -97,9 +98,9 @@ processPositive db@DB{..} q@Question{..} dnssecOK reply = case lookupD qname dbA
                         then
                             if null (idbAll idb)
                                 then makeNegativeReply db reply dnssecOK [] add NoErr
-                                -- In-domain NS/DS is included due to
-                                -- NSEC, sigh.  In this case, idb has
-                                -- entries for NSEC.
+                                -- In-domain NS is included due to
+                                -- NSEC and DS, sigh. In this case, idb has
+                                -- entries for DS and NSEC.
                                 else findAuthority db q dnssecOK reply
                         else makePositiveReply reply ans [] add NoErr True
             Just ent -> case rrsetsigRRs ent of
@@ -154,7 +155,10 @@ findAuthority db@DB{..} Question{..} dnssecOK reply = loop qname
                     | null (allRRsofIDB False idb) ->
                         makePositiveReply reply [] (dbSOArr dnssecOK db) [] NoErr True -- fixme
                     | otherwise ->
-                        let allrrs = allRRsofIDB dnssecOK idb
+                        let allrrs' = allRRsofIDB dnssecOK idb
+                            allrrs
+                                | dnssecOK = allrrs'
+                                | otherwise = filter (\r -> rrtype r == NS) allrrs'
                             add = findAdditional db dnssecOK allrrs
                          in makePositiveReply reply [] allrrs add NoErr False
 

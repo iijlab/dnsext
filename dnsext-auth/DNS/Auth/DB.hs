@@ -148,20 +148,22 @@ makeDBforPrimary zone doSign (soarr : rrs)
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> return Nothing
         Just soa -> do
-            let (is, ns, gs, _os) = divide zone rrs
+            let (is, ns, ds, gs, _os) = divide zone rrs
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
+            dsSigned <- doSign True ds
             -- In-domain NS/DS should have NSEC.
             nsecSigned <- makeNSECforPrimary doSign (soarr : (is ++ ns))
             let allrr =
                     getRRs True (unsafeHead ssSigned)
                         ++ concat (map (getRRs True) isSigned)
                         ++ ns
+                        ++ concat (map (getRRs True) dsSigned)
                         ++ concat (map (getRRs True) nsecSigned)
                         ++ gs
                         ++ _os
                         ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned dsSigned nsecSigned allrr
 
 makeDBforSecondary :: Domain -> [ResourceRecord] -> IO (Maybe DB)
 makeDBforSecondary _ [] = return Nothing
@@ -174,13 +176,14 @@ makeDBforSecondary zone (soarr : rrs0)
         Just soa -> do
             let (sigs, rrs1) = partition (\r -> rrtype r == RRSIG) rrs0
                 (nsec, rrs) = partition (\r -> rrtype r == NSEC) rrs1
-            let (is, ns, gs, _os) = divide zone rrs
+            let (is, ns, ds, gs, _os) = divide zone rrs
                 sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
                 ssSigned = groupAndSig sigDB [soarr]
                 isSigned = groupAndSig sigDB is
+                dsSigned = groupAndSig sigDB ds
             let nsecSigned = makeNSECforSecondary sigDB nsec
             let allrr = [soarr] ++ rrs ++ [soarr] -- for AXFR
-            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr
+            return $ Just $ makeDBFinal zone soa ns gs ssSigned isSigned dsSigned nsecSigned allrr
 
 ----------------------------------------------------------------
 
@@ -192,9 +195,10 @@ makeDBFinal
     -> [RRSetSig]
     -> [RRSetSig]
     -> [RRSetSig]
+    -> [RRSetSig]
     -> [ResourceRecord]
     -> DB
-makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr =
+makeDBFinal zone soa ns gs ssSigned isSigned dsSigned nsecSigned allrr =
     DB
         { dbZone = zone
         , dbSOA = (soa, unsafeHead ssSigned)
@@ -208,8 +212,8 @@ makeDBFinal zone soa ns gs ssSigned isSigned nsecSigned allrr =
     -- "zonemaster" checks if NSEC RR of apex exits or not.
     -- Originally, in-domain NS should not be included in dbAnswer.
     -- NSEC breaks this invariant, sigh.
-    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ nsecSigned)
-    auth = setEmptyNonTerminals zone $ makeODB $ unsign ns
+    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned ++ dsSigned ++ nsecSigned)
+    auth = setEmptyNonTerminals zone $ makeODB (unsign ns ++ dsSigned)
     asSigned = filter (\r -> rrsetsigType r == A || rrsetsigType r == AAAA) isSigned
     add = makeODB (asSigned ++ unsign gs)
 
@@ -258,35 +262,40 @@ unsign rrs0 = map addNothing $ groupRRset rrs0
 -- Unrelated glues are ignored.
 -- is: in-domain
 -- ns: NS except this domain
+-- ds: DS
 -- gs: glue (in delegated domain)
 -- _os: unrelated, ignored
 divide
     :: Domain
     -> [ResourceRecord]
-    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
-divide zone rrs = (is, ns, gs, _os)
+    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
+divide zone rrs = (is, ns, ds, gs, _os)
   where
     -- ps: possible in-domain
-    (ps, ns, _os) = partition3 zone rrs
+    (ps, ns, ds, _os) = divide4 zone rrs
     isDelegated = makeIsDelegated ns
     (gs, is) = partition (\r -> isDelegated (rrname r)) ps
 
-partition3
+divide4
     :: Domain
     -> [ResourceRecord]
     -> ( [ResourceRecord] -- Possible in-domain
        , [ResourceRecord] -- NS except this domain
+       , [ResourceRecord] -- DS
        , [ResourceRecord] -- Unrelated, ignored
        )
-partition3 dom rrs0 = loop rrs0 [] [] []
+divide4 dom rrs0 = loop rrs0 [] [] [] []
   where
-    loop [] as ns os = (as, ns, os)
-    loop (r : rs) as ns os
+    loop [] as ns ds os = (as, ns, ds, os)
+    loop (r : rs) as ns ds os
         | rrname r `isSubDomainOf` dom =
             if rrtype r == NS && rrname r /= dom
-                then loop rs as (r : ns) os
-                else loop rs (r : as) ns os
-        | otherwise = loop rs as ns (r : os)
+                then loop rs as (r : ns) ds os
+                else
+                    if rrtype r == DS
+                        then loop rs as ns (r : ds) os
+                        else loop rs (r : as) ns ds os
+        | otherwise = loop rs as ns ds (r : os)
 
 makeIsDelegated
     :: [ResourceRecord]
