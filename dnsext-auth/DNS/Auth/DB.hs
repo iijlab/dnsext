@@ -3,10 +3,6 @@
 
 module DNS.Auth.DB (
     RRSetSig (..),
-    IDB (..),
-    allRRsofIDB,
-    headIDB,
-    ODB (..),
     DB (..),
     dbRD_SOA,
     dbSOArr,
@@ -16,25 +12,21 @@ module DNS.Auth.DB (
     makeDBforSecondary,
     emptyDB,
     loadZoneFile,
-    lookupT,
-    lookupD,
-    lookupDorW,
-    lookupDforAns,
-    lookupDforAuth,
     NSECDB,
     lookupN,
     DomainRange (..),
     toWildcard,
+    Result (..),
+    lookupDB,
     CNAMECheck (..),
     checkCNAME,
 ) where
 
-import Control.Applicative ((<|>))
 import qualified Data.ByteString.Short as Short
 import Data.Function (on)
 import Data.List (groupBy, nub, partition, sort)
 import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes, fromJust, isNothing)
+import Data.Maybe (catMaybes, fromJust)
 import qualified Data.Set as Set
 import GHC.Stack
 
@@ -44,101 +36,6 @@ import DNS.Types
 import qualified DNS.ZoneFile as ZF
 
 ----------------------------------------------------------------
-
-data IDB = IDB
-    { idbAll :: [RRSetSig]
-    , idbMap :: M.Map TYPE RRSetSig
-    }
-    deriving (Show)
-
-emptyIDB :: IDB
-emptyIDB = IDB{idbAll = [], idbMap = M.empty}
-
-allRRsofIDB :: Bool -> IDB -> [ResourceRecord]
-allRRsofIDB dnssecOK IDB{..} = concat $ map (getRRs dnssecOK) idbAll
-
-headIDB :: Bool -> IDB -> [ResourceRecord]
-headIDB dnssecOK IDB{..} = concat $ map (getRRs dnssecOK) $ take 1 idbAll
-
-getRRs :: Bool -> RRSetSig -> [ResourceRecord]
-getRRs True RRSetSig{..} = rrsetsigRRs ++ maybe [] (: []) rrsetsigSig
-getRRs False RRSetSig{..} = rrsetsigRRs
-
-lookupT :: Domain -> TYPE -> IDB -> Bool -> [ResourceRecord]
-lookupT dom typ IDB{..} dnssecOK = maybe [] (unwrap dnssecOK) rs
-  where
-    rs = synthesize dom <$> M.lookup typ idbMap
-
-unwrap :: Bool -> RRSetSig -> [ResourceRecord]
-unwrap False RRSetSig{..} = rrsetsigRRs
-unwrap True RRSetSig{..} = rrsetsigRRs ++ maybe [] pure rrsetsigSig
-
-data CNAMECheck = Canon | Alias Domain [ResourceRecord] | CNErr
-
-checkCNAME :: IDB -> CNAMECheck
-checkCNAME IDB{..} = case M.lookup CNAME idbMap of
-    Nothing -> Canon
-    Just ent -> case rrsetsigRRs ent of
-        [c] -> case fromRData $ rdata c of
-            Nothing -> CNErr
-            Just cname ->
-                let cc = case rrsetsigSig ent of -- fixme: dnssecOK
-                        Nothing -> [c]
-                        Just sig -> [c, sig]
-                    dom = cname_domain cname
-                 in Alias dom cc
-        _ -> CNErr
-
-data ODB = ODB
-    { odbMap :: M.Map Domain IDB
-    }
-    deriving (Show)
-
-lookupD :: Domain -> ODB -> Maybe IDB
-lookupD dom ODB{..} = M.lookup dom odbMap
-
-lookupDorW :: Domain -> ODB -> Maybe IDB
-lookupDorW dom ODB{..} = case leafDomain dom of
-    Just l | l /= "*" -> M.lookup dom odbMap <|> M.lookup (toWildcard dom) odbMap
-    _ -> M.lookup dom odbMap
-
-lookupDforAns :: DB -> Question -> Maybe IDB
-lookupDforAns DB{..} Question{..} = case lookupD qname odb of
-    Nothing -> loop qname
-    x -> x
-  where
-    odb
-        | qtype == DS = dbAuthority
-        | otherwise = dbAnswer
-    loop dom
-        | dom == dbZone = Nothing
-        | otherwise = case unconsDomain dom of
-            Nothing -> Nothing
-            Just (_, dom') -> case lookupD dom odb of
-                Nothing -> case lookupD (consAsterisk dom') odb of
-                    Nothing -> loop dom'
-                    Just idb -> Just idb
-                -- domain exists, so don't lookup with wildcard
-                _ -> Nothing
-
-lookupDforAuth :: DB -> Question -> Maybe IDB
-lookupDforAuth DB{..} Question{..} = loop qname
-  where
-    loop dom
-        | dom == dbZone = Nothing
-        | otherwise = case unconsDomain dom of
-            Nothing -> Nothing
-            Just (_, dom') -> case lookupDorW dom dbAuthority of
-                Nothing -> loop dom'
-                Just idb -> Just idb
-
-emptyODB :: ODB
-emptyODB = ODB{odbMap = M.empty}
-
-----------------------------------------------------------------
-
-consAsterisk :: Domain -> Domain
-consAsterisk dom = fromWireLabels ("*" : wireLabels dom)
 
 toWildcard :: Domain -> Domain
 toWildcard dom = case unconsDomain dom of
@@ -166,10 +63,9 @@ isWildcard dom = case leafDomain dom of
 
 data DB = DB
     { dbZone :: Domain
+    , dbLabelsCount :: Int
     , dbSOA :: (RD_SOA, RRSetSig)
-    , dbAnswer :: ODB
-    , dbAuthority :: ODB
-    , dbAdditional :: ODB
+    , dbNode :: Node
     , dbAll :: [ResourceRecord]
     , dbNsecMap :: NSECDB
     }
@@ -185,16 +81,19 @@ dbSOArr wantRRSig db = getRRs wantRRSig soarr
   where
     (_, soarr) = dbSOA db
 
+getRRs :: Bool -> RRSetSig -> [ResourceRecord]
+getRRs True RRSetSig{..} = rrsetsigRRs ++ maybe [] (: []) rrsetsigSig
+getRRs False RRSetSig{..} = rrsetsigRRs
+
 ----------------------------------------------------------------
 
 emptyDB :: DB
 emptyDB =
     DB
         { dbZone = "."
+        , dbLabelsCount = 0
         , dbSOA = (soa, soarrsetsig)
-        , dbAnswer = emptyODB
-        , dbAuthority = emptyODB
-        , dbAdditional = emptyODB
+        , dbNode = emptyNode
         , dbAll = []
         , dbNsecMap = emptyNSECDB
         }
@@ -295,18 +194,15 @@ makeDBFinal
 makeDBFinal zone soa ns gs ssSigned isSigned dsSigned nsecSigned allrr =
     DB
         { dbZone = zone
+        , dbLabelsCount = n
         , dbSOA = (soa, unsafeHead ssSigned)
-        , dbAnswer = ans
-        , dbAuthority = auth
-        , dbAdditional = add
+        , dbNode = node
         , dbAll = allrr
         , dbNsecMap = makeNSECDB nsecSigned
         }
   where
-    ans = setEmptyNonTerminals zone $ makeODB (ssSigned ++ isSigned)
-    auth = setEmptyNonTerminals zone $ makeODB (unsign ns ++ dsSigned)
-    asSigned = filter (\r -> rrsetsigType r == A || rrsetsigType r == AAAA) isSigned
-    add = makeODB (asSigned ++ unsign gs)
+    n = labelsCount zone
+    node = makeNode n (ssSigned ++ isSigned ++ unsign ns ++ dsSigned ++ unsign gs)
 
 ----------------------------------------------------------------
 
@@ -399,33 +295,6 @@ makeIsDelegated rrs = \dom -> or (map (\f -> f dom) ps)
 
 ----------------------------------------------------------------
 
-makeODB :: [RRSetSig] -> ODB
-makeODB rs = ODB{odbMap = M.fromList kvs}
-  where
-    rss :: [[RRSetSig]]
-    rss = groupBy ((==) `on` rrsetsigName) $ sort rs
-    doms :: [Domain]
-    doms = map (rrsetsigName . unsafeHead) rss
-    kvs = zip doms $ map makeIDB rss
-
-makeIDB :: [RRSetSig] -> IDB
-makeIDB vs =
-    IDB
-        { idbAll = vs
-        , idbMap = M.fromList ((RRSIG, rrsetsigRRSIG) : kvs)
-        }
-  where
-    ks = map rrsetsigType vs
-    kvs = zip ks vs
-    rrsigs = catMaybes $ map rrsetsigSig vs
-    rrsetsigRRSIG =
-        RRSetSig
-            { rrsetsigName = rrsetsigName $ unsafeHead vs
-            , rrsetsigType = RRSIG
-            , rrsetsigRRs = rrsigs
-            , rrsetsigSig = Nothing
-            }
-
 unsafeHead :: HasCallStack => [a] -> a
 unsafeHead (x : _) = x
 unsafeHead _ = error "unsafeHead"
@@ -435,22 +304,6 @@ unsafeHead _ = error "unsafeHead"
 fromResource :: ZF.Record -> Maybe ResourceRecord
 fromResource (ZF.R_RR r) = Just r
 fromResource _ = Nothing
-
--- For RFC 4592 Sec 2.2.2.Empty Non-terminals
---
--- Example: _sip._tcp.example.com
--- _tcp.example.com exists but does not have RRs
-setEmptyNonTerminals :: Domain -> ODB -> ODB
-setEmptyNonTerminals zone (ODB m) = ODB m'
-  where
-    n = labelsCount zone
-    doms0 = filter (\d -> labelsCount d >= n + 2) $ M.keys m
-    doms1 = map snd $ catMaybes $ map unconsDomain doms0
-    doms2 = concat $ map (drop n) $ map superDomains doms1
-    doms3 = nub $ sort doms2
-    ments = map (\d -> (d, M.lookup d m)) doms3
-    ents = map fst $ filter (isNothing . snd) ments
-    m' = foldr (\d db -> M.insert d emptyIDB db) m ents
 
 ----------------------------------------------------------------
 
@@ -538,3 +391,93 @@ makeNSECDB vals = NSECDB $ M.fromList $ zip keys vals
     modify dom = case toWireLabels dom of
         [] -> fromWireLabels [zero]
         l : ls -> fromWireLabels (l <> zero : ls)
+
+----------------------------------------------------------------
+
+data Node = Node
+    { nodeMap :: M.Map Label Node
+    , nodeRRs :: [RRSetSig]
+    , nodeDelegated :: Bool
+    }
+    deriving (Show)
+
+emptyNode :: Node
+emptyNode = Node M.empty [] False
+
+makeNode :: Int -> [RRSetSig] -> Node
+makeNode n rrs0 = foldr (\(ls, ts) node -> insert ls ts node) emptyNode kvs
+  where
+    rrs :: [RRSetSig]
+    rrs = nub $ sort rrs0
+    rrss :: [[RRSetSig]]
+    rrss = groupBy ((==) `on` rrsetsigName) rrs
+    kvs :: [([Label], [RRSetSig])]
+    kvs = map (\xs -> (getLabels xs, xs)) rrss
+    getLabels xs = drop n $ revLabels $ rrsetsigName $ unsafeHead xs
+
+checkDelegated :: [RRSetSig] -> Bool
+checkDelegated rrs = any (\x -> rrsetsigType x `elem` [NS, DS]) rrs
+
+insert :: [Label] -> [RRSetSig] -> Node -> Node
+insert [] rrs node = node{nodeRRs = rrs}
+insert [l] rrs node@Node{..} =
+    let n = case M.lookup l nodeMap of
+            Nothing -> emptyNode
+            Just n0 -> n0
+        deleg = checkDelegated rrs
+        n' = n{nodeRRs = rrs, nodeDelegated = deleg}
+        m' = M.insert l n' nodeMap
+        node' = node{nodeMap = m'}
+     in node'
+insert (l : ls) rrs node@Node{..} =
+    let n = case M.lookup l nodeMap of
+            Nothing -> emptyNode
+            Just n0 -> n0
+        n' = insert ls rrs n
+        m' = M.insert l n' nodeMap
+        node' = node{nodeMap = m'}
+     in node'
+
+data Result
+    = Exist [RRSetSig]
+    | Deleg [RRSetSig] (Maybe [RRSetSig])
+    | NX
+
+lookupDB :: Domain -> DB -> Result
+lookupDB dom DB{..} = loop ls0 dbNode Nothing
+  where
+    ls0 = drop dbLabelsCount $ revLabels dom
+    loop [] node Nothing = Exist $ nodeRRs node
+    loop [] node (Just x) = Deleg (nodeRRs x) $ Just $ nodeRRs node
+    loop (l : ls) node mx = case M.lookup l $ nodeMap node of
+        -- If l is "*" and "*" exist, match here.
+        Just node'
+            | nodeDelegated node' -> loop ls node' $ Just node'
+            | otherwise -> loop ls node' mx
+        Nothing
+            | l /= "*" -> case M.lookup "*" $ nodeMap node of
+                Nothing -> case mx of
+                    Nothing -> NX
+                    Just cut -> Deleg (nodeRRs cut) Nothing
+                -- fixme deleg
+                Just node' -> Exist $ map (synthesize dom) $ nodeRRs node'
+            | otherwise -> case mx of
+                Nothing -> NX
+                Just cut -> Deleg (nodeRRs cut) Nothing
+
+----------------------------------------------------------------
+
+data CNAMECheck = Canon | Alias Domain [ResourceRecord] | CNErr
+
+checkCNAME :: Bool -> [RRSetSig] -> CNAMECheck
+checkCNAME dnssecOK rrs = case filter (\x -> rrsetsigType x == CNAME) rrs of
+    [] -> Canon
+    [rr] -> case rrsetsigRRs rr of
+        [c] -> case fromRData $ rdata c of
+            Nothing -> CNErr
+            Just cname ->
+                let cc = getRRs dnssecOK rr
+                    dom = cname_domain cname
+                 in Alias dom cc
+        _ -> CNErr
+    _ -> CNErr

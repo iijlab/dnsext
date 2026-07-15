@@ -11,13 +11,15 @@ import DNS.Types
 
 import Data.Maybe
 
+import Debug.Trace
+
 spec :: Spec
 spec = describe "authoritative algorithm" $ do
     let zone = "example.jp."
     runIO $ runInitIO $ addResourceDataForDNSSEC
     edb <- runIO $ loadDB zone "test/example.zone"
     let db = fromJust edb
-    doit db
+    doit $ trace (show db) db
     db2 <- fromJust <$> runIO (makeDBforSecondary zone $ dbAll db)
     doit db2
 
@@ -142,7 +144,7 @@ doit db = do
         let query = defaultQuery{question = Question "exist-cname.example.jp." A IN}
             ans = getAnswer db query
         rcode ans `shouldBe` NoErr
-        length (answer ans) `shouldBe` 2
+        length (trace (show (answer ans)) (answer ans)) `shouldBe` 2
         answer ans `shouldSatisfy` include "exist-cname.example.jp." CNAME
         answer ans `shouldSatisfy` include "exist.example.jp." A
         length (authority ans) `shouldBe` 0
