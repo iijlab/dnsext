@@ -179,6 +179,21 @@ doit db = do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
+    it "can handle delegated CNAME" $ do
+        let query = defaultQuery{question = Question "in-cname.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 1
+        answer ans `shouldSatisfy` include "in-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 3
+        authority ans `shouldSatisfy` includeNS "ns.in.example.jp."
+        authority ans `shouldSatisfy` includeNS "ns.sibling.example.jp."
+        authority ans `shouldSatisfy` includeNS "unrelated.com."
+        length (additional ans) `shouldBe` 2
+        additional ans `shouldSatisfy` include "ns.in.example.jp." A
+        additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
+        additional ans `shouldSatisfy` not . include "unrelated.com." A
+        flags ans `shouldSatisfy` authAnswer
     it "can handle existing CNAME for CNAME query" $ do
         let query = defaultQuery{question = Question "exist-cname.example.jp." CNAME IN}
             ans = getAnswer db query

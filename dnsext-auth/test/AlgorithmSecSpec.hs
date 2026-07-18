@@ -47,6 +47,7 @@ spec = describe "authoritative algorithm" $ do
 -- in.example.jp.
 -- in2.example.jp.
 -- -- nonexist.example.jp.
+-- in-cname.example.jp.
 -- ns.example.jp.
 -- sibling.example.jp.
 -- -- ns.sibling.example.jp.
@@ -249,6 +250,24 @@ doit db = do
         length (authority ans) `shouldBe` 0
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
+    it "can handle delegated CNAME" $ do
+        let query = dnssecQuery{question = Question "in-cname.example.jp." A IN}
+            ans = getAnswer db query
+        rcode ans `shouldBe` NoErr
+        length (answer ans) `shouldBe` 2
+        answer ans `shouldSatisfy` include "in-cname.example.jp." CNAME
+        answer ans `shouldSatisfy` includeRRSIG "in-cname.example.jp." CNAME
+        length (authority ans) `shouldBe` 5
+        authority ans `shouldSatisfy` includeNS "ns.in.example.jp."
+        authority ans `shouldSatisfy` includeNS "ns.sibling.example.jp."
+        authority ans `shouldSatisfy` includeNS "unrelated.com."
+        authority ans `shouldSatisfy` include "in-cname.example.jp." NSEC
+        authority ans `shouldSatisfy` includeRRSIG "in-cname.example.jp." NSEC
+        length (additional ans) `shouldBe` 2
+        additional ans `shouldSatisfy` include "ns.in.example.jp." A
+        additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
+        additional ans `shouldSatisfy` not . include "unrelated.com." A
+        flags ans `shouldSatisfy` not . authAnswer
     it "can handle existing CNAME for CNAME query" $ do
         let query = dnssecQuery{question = Question "exist-cname.example.jp." CNAME IN}
             ans = getAnswer db query
