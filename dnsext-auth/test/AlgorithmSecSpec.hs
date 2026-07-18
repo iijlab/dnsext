@@ -267,7 +267,7 @@ doit db = do
         additional ans `shouldSatisfy` include "ns.in.example.jp." A
         additional ans `shouldSatisfy` include "ns.sibling.example.jp." A
         additional ans `shouldSatisfy` not . include "unrelated.com." A
-        flags ans `shouldSatisfy` not . authAnswer
+        flags ans `shouldSatisfy` authAnswer
     it "can handle existing CNAME for CNAME query" $ do
         let query = dnssecQuery{question = Question "exist-cname.example.jp." CNAME IN}
             ans = getAnswer db query

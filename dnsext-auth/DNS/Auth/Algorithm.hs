@@ -88,7 +88,7 @@ processPositive :: DB -> Question -> Bool -> DNSMessage -> DNSMessage
 processPositive db q@Question{..} dnssecOK reply = case lookupDB qname db of
     -- RFC 2308 Sec 2.1 Name Error
     NX -> makeNegativeReply db qname reply dnssecOK [] [] NXDomain
-    Deleg rrs _ -> processDelegation db q dnssecOK reply [] rrs
+    Deleg rrs _ -> processDelegation db q dnssecOK reply [] rrs False
     Exist rrs
         -- RFC 8482 Sec 4.1
         -- Answer with a Subset of Available RRsets
@@ -108,8 +108,8 @@ processPositive db q@Question{..} dnssecOK reply = case lookupDB qname db of
 
 ----------------------------------------------------------------
 
-processDelegation :: DB -> Question -> Bool -> DNSMessage -> Answers -> [RRSetSig] -> DNSMessage
-processDelegation db Question{..} dnssecOK reply cc rrs
+processDelegation :: DB -> Question -> Bool -> DNSMessage -> Answers -> [RRSetSig] -> Bool -> DNSMessage
+processDelegation db Question{..} dnssecOK reply cc rrs aa
     | qtype == DS = makePositiveReply reply dss [] [] NoErr True
     | otherwise = do
         let auth
@@ -119,7 +119,7 @@ processDelegation db Question{..} dnssecOK reply cc rrs
                 | dnssecOK = allrrs
                 | otherwise = nss
             add = findAdditional db dnssecOK auth
-         in makePositiveReply reply cc auth add NoErr False
+         in makePositiveReply reply cc auth add NoErr aa
   where
     allrrs = cook dnssecOK id rrs
     (nss, dss) = partition (\r -> rrtype r == NS) allrrs
@@ -156,7 +156,7 @@ processCNAME db@DB{..} q@Question{..} dnssecOK reply cc cname
     | cname `isSubDomainOf` dbZone = case lookupDB cname db of
         -- RFC 2308 Sec 2.1 Name Error
         NX -> makeNegativeReply db cname reply dnssecOK cc [] NXDomain
-        Deleg rrs _ -> processDelegation db q dnssecOK reply cc rrs
+        Deleg rrs _ -> processDelegation db q dnssecOK reply cc rrs True
         Exist rrs ->
             let ans = cook dnssecOK (filter (\x -> rrsetsigType x == qtype)) rrs
                 -- RFC2308 Sec 2.2 No Data
