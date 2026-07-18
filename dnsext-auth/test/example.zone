@@ -1,5 +1,5 @@
 @  IN SOA ns.example.jp. hostmaster.example.jp. (
-                            870802 ;serial
+                            870804 ;serial
                             5 ;refresh every 30 minutes
                             300 ;retry every 5 minutes
                             604800 ;expire after a week
@@ -18,6 +18,7 @@ sibling.example.jp.     3600 NS    ns.sibling.example.jp.
 ns.sibling.example.jp.  3600 A     192.0.2.4 ; glue
 unrelated.com.          3600 A     192.0.2.10 ; glue
 exist-cname.example.jp. 3600 CNAME exist.example.jp.
+in-cname.example.jp.    3600 CNAME foo.in.example.jp.
 fault-cname.example.jp. 3600 CNAME nonexist.example.jp.
 ext-cname.example.jp.   3600 CNAME foo.unrelated.com.
 a.ent2.ent1.example.jp. 3600 A     192.0.2.5
