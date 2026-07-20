@@ -72,8 +72,6 @@ getAnswer db query
 
 ----------------------------------------------------------------
 
--- dbAnswer contains empty ODBs for For RFC 4592 Sec 2.2.2.Empty
--- Non-terminals.
 --                     RRSIG   NSEC
 -- Exist               has     has
 -- In-domain NS        not     has
