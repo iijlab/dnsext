@@ -23,7 +23,8 @@ module DNS.TAP.FastStream (
     bye,
 ) where
 
-import Control.Exception as E
+import Control.Exception (Exception (..))
+import qualified Control.Exception as E
 import Control.Monad
 import qualified Data.ByteString.Char8 as C8
 import Data.Word
@@ -144,7 +145,7 @@ recvControlFrame ctx@Context{..} ctrl skipEscape = do
         c <- recvControl ctx
         check c ESCAPE
     l0 <- recvLength ctx
-    when (l0 < 4) $ throwIO $ FSException "illegal control length"
+    when (l0 < 4) $ E.throwIO $ FSException "illegal control length"
     c <- recvControl ctx
     check c ctrl
     when ctxDebug $ print ctrl
@@ -153,7 +154,7 @@ recvControlFrame ctx@Context{..} ctrl skipEscape = do
   where
     loop 0 build = return $ build []
     loop l build = do
-        when (l < 8) $ throwIO $ FSException "illegal field length"
+        when (l < 8) $ E.throwIO $ FSException "illegal field length"
         ft <- FieldType <$> recvLength ctx
         l0 <- recvLength ctx
         ct <- recvContent ctx l0
@@ -166,7 +167,7 @@ recvControlFrame ctx@Context{..} ctrl skipEscape = do
         loop (l - 8 - l0) (build . ((ft, ct) :))
 
 check :: Control -> Control -> IO ()
-check c ctrl = when (c /= ctrl) $ throwIO $ FSException ("no " ++ show ctrl)
+check c ctrl = when (c /= ctrl) $ E.throwIO $ FSException ("no " ++ show ctrl)
 
 sendControlFrame :: Context -> Control -> [(FieldType, ByteString)] -> IO ()
 sendControlFrame Context{..} ctrl xs = do
@@ -212,12 +213,12 @@ recvData ctx@Context{..}
             else do
                 when ctxDebug $ putStrLn $ "fstrm data length: " ++ show l
                 recvContent ctx l
-    | otherwise = throwIO $ FSException "client cannot use recvData"
+    | otherwise = E.throwIO $ FSException "client cannot use recvData"
 
 -- | Writing data.
 sendData :: Context -> ByteString -> IO ()
 sendData Context{..} bs
-    | ctxReader = throwIO $ FSException "server cannot use sendData"
+    | ctxReader = E.throwIO $ FSException "server cannot use sendData"
     | otherwise = do
         let len = bytestring32 $ fromIntegral $ C8.length bs
         ctxSend [len, bs]

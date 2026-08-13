@@ -9,7 +9,7 @@ module DNS.Iterative.Server.HTTP2 (
 ) where
 
 -- GHC packages
-import Control.Exception (bracket)
+import qualified Control.Exception as E
 import Control.Monad (forever)
 import Data.ByteString.Builder (byteString)
 import qualified Data.ByteString.Char8 as C8
@@ -123,7 +123,7 @@ doHTTP name sbracket incQuery env toCacher dox ServerIO{..} = do
         sfinalize (Output _ VcPendingOp{..} _) = vpDelete
         sloop =
             forever $
-                bracket fromX sfinalize $ \(Output bs' _ peerInfo) -> do
+                E.bracket fromX sfinalize $ \(Output bs' _ peerInfo) -> do
                     let ~(PeerInfoStream _ sprstrm) = peerInfo
                         header = mkHeader bs'
                         response = H2.responseBuilder HT.ok200 header $ byteString bs'

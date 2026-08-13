@@ -15,7 +15,8 @@ module DNS.Do53.Do53 (
 where
 
 import Control.Concurrent.Async (AsyncCancelled)
-import Control.Exception as E
+import Control.Exception (AsyncException (..), SomeException (..))
+import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
@@ -70,11 +71,11 @@ tryDNS ~tag action =
     E.try action >>= either left (return . Right)
   where
     left se
-        | Just (e :: DNSError)       <- fromException se = return $ Left   e
-        | Just (e :: IOError)        <- fromException se = return $ Left $ fromIOException tag e
-        | Just (e :: AsyncException) <- fromException se = throwIO e
-        | Just (e :: AsyncCancelled) <- fromException se = throwIO e
-        | otherwise                                      = return $ Left $ BadThing (show se)
+        | Just (e :: DNSError)       <- E.fromException se = return $ Left   e
+        | Just (e :: IOError)        <- E.fromException se = return $ Left $ fromIOException tag e
+        | Just (e :: AsyncException) <- E.fromException se = E.throwIO e
+        | Just (e :: AsyncCancelled) <- E.fromException se = E.throwIO e
+        | otherwise                                        = return $ Left $ BadThing (show se)
 {- FOURMOLU_ENABLE -}
 
 queryTag :: Question -> NameTag -> QueryControls -> String
@@ -116,7 +117,7 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
     tag = nameTag ri "UDP"
     ~qtag = queryTag q tag qctl_
     -- Using only one socket and the same identifier.
-    go qctl = bracket open close $ \sock -> do
+    go qctl = E.bracket open close $ \sock -> do
         ractionSetSockOpt sock
         let send = NSB.send sock
             recv = NSB.recv sock 2048
@@ -187,7 +188,7 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
 tcpResolver :: OneshotResolver
 tcpResolver ri@ResolveInfo{..} q qctl =
     -- Using a fresh connection
-    bracket open close $ \sock -> do
+    E.bracket open close $ \sock -> do
         ractionSetSockOpt rinfoActions sock
         let send = sendVC $ sendTCP sock
             recv = recvVC rinfoVCLimit $ recvTCP sock

@@ -11,7 +11,8 @@ import GHC.Event (getSystemTimerManager, registerTimeout, unregisterTimeout)
 import Control.Applicative
 import Control.Concurrent hiding (forkIO)
 import Control.Concurrent.STM
-import Control.Exception
+import Control.Exception (AsyncException (..))
+import qualified Control.Exception as E
 import Control.Monad
 import Data.Functor
 
@@ -25,14 +26,14 @@ import DNS.Types (DNSError (NetworkFailure))
 {- FOURMOLU_DISABLE -}
 -- try function for doctests
 _tryDNS :: IO a -> IO (Either DNSError a)
-_tryDNS action = either left right =<< try action
+_tryDNS action = either left right =<< E.try action
   where
     right x = pure (Right x)
     left ex
       -- -- | Just ae <- fromException ex :: Maybe AsyncCancelled  = throwIO ae
-      | Just ae <- fromException ex :: Maybe AsyncException  = throwIO ae
-      | Just de <- fromException ex :: Maybe DNSError        = pure (Left de)
-      | otherwise                                            = pure (Left $ NetworkFailure ex "")
+      | Just ae <- E.fromException ex :: Maybe AsyncException = E.throwIO ae
+      | Just de <- E.fromException ex :: Maybe DNSError       = pure (Left de)
+      | otherwise                                             = pure (Left $ NetworkFailure ex "")
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -101,7 +102,7 @@ _tryDNS action = either left right =<< try action
 -- EvNoRunning
 --   Left <lastE>
 --
--- >>> steppedWait' 1_000_000 [threadDelay 100_000 >> throwIO UnknownDNSError] :: IO (Either DNSError ())
+-- >>> steppedWait' 1_000_000 [threadDelay 100_000 >> E.throwIO UnknownDNSError] :: IO (Either DNSError ())
 -- Left UnknownDNSError
 --
 -- --------------------------------------------------------------------------------
@@ -127,7 +128,7 @@ _tryDNS action = either left right =<< try action
 -- EvResult (Right x)
 --   Right x
 --
--- >>> steppedWait' 150_000 [threadDelay 200_000 >> throwIO UnknownDNSError, threadDelay 100_000 $> '2']
+-- >>> steppedWait' 150_000 [threadDelay 200_000 >> E.throwIO UnknownDNSError, threadDelay 100_000 $> '2']
 -- Right '2'
 --
 -- --------------------------------------------------------------------------------
@@ -153,7 +154,7 @@ _tryDNS action = either left right =<< try action
 -- EvResult (Right x)
 --   Right x
 --
--- >>> steppedWait' 1_000_000 [threadDelay 100_000 >> throwIO UnknownDNSError, threadDelay 100_000 $> '3']
+-- >>> steppedWait' 1_000_000 [threadDelay 100_000 >> E.throwIO UnknownDNSError, threadDelay 100_000 $> '3']
 -- Right '3'
 --
 -- --------------------------------------------------------------------------------
@@ -179,7 +180,7 @@ _tryDNS action = either left right =<< try action
 -- EvResult (Right x)
 --   Right x
 --
--- >>> steppedWait' 150_000 [threadDelay 250_000 $> '4', threadDelay 50_000 >> throwIO UnknownDNSError]
+-- >>> steppedWait' 150_000 [threadDelay 250_000 $> '4', threadDelay 50_000 >> E.throwIO UnknownDNSError]
 -- Right '4'
 --
 steppedWait
@@ -256,7 +257,7 @@ doFork
 doFork vrun qres (label, x) = do
     let bgn = atomically $ modifyTVar vrun (+ 1)
         end = atomically $ modifyTVar vrun (subtract 1)
-    bgn >> forkIO label (finally (x >>= \e -> atomically $ writeTQueue qres e) end)
+    bgn >> forkIO label (E.finally (x >>= \e -> atomically $ writeTQueue qres e) end)
 {- FOURMOLU_ENABLE -}
 
 --------------------------------------------------------------------------------

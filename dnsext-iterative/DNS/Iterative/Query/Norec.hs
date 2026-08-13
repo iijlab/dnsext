@@ -4,7 +4,7 @@
 module DNS.Iterative.Query.Norec where
 
 -- GHC packages
-import Control.Exception (bracket_)
+import qualified Control.Exception as E
 
 -- other packages
 
@@ -21,8 +21,8 @@ import DNS.Do53.Client (
  )
 import qualified DNS.Do53.Client as DNS
 import DNS.Do53.Internal (
-    ResolveEnv (..),
     ResolveActions (..),
+    ResolveEnv (..),
     ResolveInfo (..),
     defaultResolveInfo,
  )
@@ -43,7 +43,7 @@ norec cxt wstat dnssecOK aservers name typ =
     tag = let (a:|as) = aservers in show (a:as)
     apair tag_ = (tag_, getWithBStats >>= \asps -> blockingIO_ tag_ (action asps))
     action asps@(x:|xs) =
-        bracket_ openTasks closeTasks (norec_ 500_000 cxt dnssecOK asps name typ)
+        E.bracket_ openTasks closeTasks (norec_ 500_000 cxt dnssecOK asps name typ)
       where
         openTasks   = setTasks wstat [bstat | (_, bstat) <- x:xs]
         closeTasks  = clearTasks wstat

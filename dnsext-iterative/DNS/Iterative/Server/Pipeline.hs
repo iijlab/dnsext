@@ -41,7 +41,7 @@ module DNS.Iterative.Server.Pipeline (
 
 -- GHC packages
 import Control.Concurrent.STM
-import Control.Exception (SomeAsyncException (..), SomeException (..), bracket, handle, throwIO, try)
+import Control.Exception (SomeAsyncException (..), SomeException (..))
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.IntSet as Set
@@ -321,7 +321,7 @@ receiverVC name env vcs@VcSession{..} recv toCacher mkInput_ =
     loop 1 `E.catch` onError
   where
     -- SomeException: asynchronous exceptions are re-thrown
-    onError se@(SomeException e) = warnOnError env name se >> throwIO e
+    onError se@(SomeException e) = warnOnError env name se >> E.throwIO e
     loop i = cases =<< waitVcInput vcs
       where
         cases timeout
@@ -382,7 +382,7 @@ receiverVCnonBlocking name env lim vcs@VcSession{..} peerInfo recvN onRecv toCac
     loop ctl 1 `E.catch` onError
   where
     -- SomeException: asynchronous exceptions are re-thrown
-    onError se@(SomeException e) = warnOnError env name se >> throwIO e
+    onError se@(SomeException e) = warnOnError env name se >> E.throwIO e
     loop ctl i = do
         ex <- controlledRecvVC ctl recvN lim
         case ex of
@@ -439,7 +439,7 @@ senderVC name env vcs send fromX = loop `E.catch` onError
   where
     -- logging async exception intentionally, for not expected `cancel`
     -- SomeException: asynchronous exceptions are re-thrown
-    onError se@(SomeException e) = warnOnError env name se >> throwIO e
+    onError se@(SomeException e) = warnOnError env name se >> E.throwIO e
     loop = do
         mx <- waitVcOutput vcs
         case mx of
@@ -523,7 +523,7 @@ withVcTimer
     -> IO ()
     -> (VcTimer -> IO a)
     -> IO a
-withVcTimer micro actionTO = bracket (initVcTimer micro actionTO) finalizeVcTimer
+withVcTimer micro actionTO = E.bracket (initVcTimer micro actionTO) finalizeVcTimer
 
 initVcSession
     :: IO (STM VcWaitRead)
@@ -669,12 +669,12 @@ mkConnector' = do
 
 {- FOURMOLU_DISABLE -}
 handledLoop :: Env -> String -> IO () -> IO ()
-handledLoop env tag body = forever $ handle (\e -> loggingExp env Log.DEBUG tag e >> takeEx e) body
+handledLoop env tag body = forever $ E.handle (\e -> loggingExp env Log.DEBUG tag e >> takeEx e) body
   where
     -- SomeException: asynchronous exceptions are re-thrown
     takeEx :: SomeException -> IO ()
     takeEx e
-        | Just (SomeAsyncException _) <- E.fromException e  = throwIO e
+        | Just (SomeAsyncException _) <- E.fromException e  = E.throwIO e
         | otherwise                                         = pure ()
 {- FOURMOLU_ENABLE -}
 
@@ -687,13 +687,13 @@ loggingExp env lv tag (SomeException e) = logLn env lv (tag ++ ": exception: " +
 {- FOURMOLU_DISABLE -}
 exceptionCase :: (String -> IO ()) -> IO a -> IO a
 exceptionCase logLn' body = do
-    e <- try body
+    e <- E.try body
     either handler pure e
   where
     logging e = logLn' $ "received exception: " ++ (show e)
     -- SomeException: asynchronous exceptions and others are re-thrown
     handler :: SomeException -> IO a
-    handler e = logging e  >> throwIO e
+    handler e = logging e  >> E.throwIO e
 {- FOURMOLU_ENABLE -}
 
 ----------------------------------------------------------------

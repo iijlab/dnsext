@@ -28,7 +28,7 @@ module DNS.RRCache.ReaperReduced (
 where
 
 import Control.Concurrent (ThreadId, killThread, threadDelay)
-import Control.Exception (mask_)
+import qualified Control.Exception as E
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 
 import qualified DNS.ThreadStats as TStat
@@ -111,7 +111,7 @@ update
     -> (workload -> workload)
     -> IO ()
 update settings@ReaperSettings{..} stateRef lookupRef tidRef modifyWL =
-    mask_ $ do
+    E.mask_ $ do
         next <- atomicModifyIORef' stateRef modify
         next
   where

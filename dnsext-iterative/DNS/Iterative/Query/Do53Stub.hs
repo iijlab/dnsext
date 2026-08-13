@@ -4,7 +4,8 @@
 module DNS.Iterative.Query.Do53Stub where
 
 -- GHC packages
-import Control.Exception as E
+import Control.Exception (SomeException (..))
+import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
 import System.Timeout (timeout)
@@ -53,13 +54,13 @@ tryDNS ~tag action =
     E.try action >>= either left (return . Right)
   where
     left se
-        | Just (e :: DNSError)  <- fromException se  = return $ Left   e
-        | Just (e :: IOError)   <- fromException se  = return $ Left $ fromIOException tag e
-        | otherwise                                  = throw se
+        | Just (e :: DNSError) <- E.fromException se  = return $ Left   e
+        | Just (e :: IOError)  <- E.fromException se  = return $ Left $ fromIOException tag e
+        | otherwise                                   = E.throw se
 {- FOURMOLU_ENABLE -}
 
 timeoutDNS' :: String -> Int -> IO a -> IO a
-timeoutDNS' tag micro action = maybe (throwIO $ DNSErrorInfo TimeoutExpired tag) pure =<< timeout micro action
+timeoutDNS' tag micro action = maybe (E.throwIO $ DNSErrorInfo TimeoutExpired tag) pure =<< timeout micro action
 
 ----------------------------------------------------------------
 
@@ -103,7 +104,7 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
     blockingIO n = raBlockingIO ra ("udp-rslv." ++ n ++ ": " ++ qtag)
 
     -- Using only one socket and the same identifier.
-    go qctl = bracket open close_ $ \sock -> do
+    go qctl = E.bracket open close_ $ \sock -> do
         ractionSetSockOpt sock
         let send bs = blockingIO "send" (NSB.send sock bs)
             recv = blockingIO "recv" (NSB.recv sock 2048)
@@ -162,7 +163,7 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
 tcpResolver1 :: OneshotResolver
 tcpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl =
     -- Using a fresh connection
-    bracket open close_ $ \sock -> do
+    E.bracket open close_ $ \sock -> do
         ractionSetSockOpt sock
         let send bs = sendVC (\xs -> blockingIO "sendTCP" $ sendTCP sock xs) bs
             recv = recvVC rinfoVCLimit $ blockingIO "recvTCP" $ recvTCP sock

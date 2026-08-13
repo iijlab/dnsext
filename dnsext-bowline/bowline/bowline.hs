@@ -8,7 +8,7 @@ module Main where
 -- GHC
 import Control.Concurrent (killThread, threadDelay)
 import Control.Concurrent.Async (mapConcurrently_, race_)
-import Control.Exception (bracket_, finally)
+import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString.Builder
 import Data.Functor
@@ -168,7 +168,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     sequence_ [TStat.forkIO "bw.dumper" (TStat.dumper $ putLines Log.SYSTEM Nothing) | cnf_threads_dumper]
     race_ concServer (conc monitor)
         -- Teardown
-        `finally` do
+        `E.finally` do
             mapM_ maybeKill [tidA, tidW]
             killSSLKeyLogger
             stopLogger
@@ -388,7 +388,7 @@ setGroupUser Config{..} = do
 
 withRoot :: UserID -> Config -> IO a -> IO a
 withRoot ruid conf act
-    | ruid == 0 = bracket_ recoverRoot (setGroupUser conf) act
+    | ruid == 0 = E.bracket_ recoverRoot (setGroupUser conf) act
     | otherwise = act
 
 withRootConf :: UserID -> IO Config -> IO Config

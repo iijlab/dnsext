@@ -24,7 +24,8 @@ import DNS.Types
 import qualified DNS.Types.Opaque as Opaque
 import DNS.Types.Time
 
-import Control.Exception as E
+import Control.Exception (Exception (..))
+import qualified Control.Exception as E
 import Data.ByteString ()
 import Data.List
 import Data.Maybe

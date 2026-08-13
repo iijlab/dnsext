@@ -4,7 +4,7 @@
 module DNS.WorkerStats where
 
 -- GHC packages
-import Control.Exception (bracket_)
+import qualified Control.Exception as E
 import Data.IORef
 import Data.List (sortBy)
 import Data.Ord (comparing)
@@ -162,23 +162,23 @@ pprCtxBlockingStat context =
 ------------------------------------------------------------
 
 class OpBlockingStat op where
-    setBlocking       :: op -> BlockingCause -> IO ()
-    setUnblocked      :: op -> IO ()
-    withBlockingStat  :: op -> (BlockingStat -> BlockingCause -> DiffTime -> IO a) -> IO a
+    setBlocking :: op -> BlockingCause -> IO ()
+    setUnblocked :: op -> IO ()
+    withBlockingStat :: op -> (BlockingStat -> BlockingCause -> DiffTime -> IO a) -> IO a
 
 ------------------------------------------------------------
 
-data BlockingStatOP =
-    BlockingStatOP
-    { setBlocking_       :: BlockingCause -> IO ()
-    , setUnblocked_      :: IO ()
-    , withBlockingStat_  :: forall a . (BlockingStat -> BlockingCause  -> DiffTime -> IO a) -> IO a
+data BlockingStatOP
+    = BlockingStatOP
+    { setBlocking_ :: BlockingCause -> IO ()
+    , setUnblocked_ :: IO ()
+    , withBlockingStat_ :: forall a. (BlockingStat -> BlockingCause -> DiffTime -> IO a) -> IO a
     }
 
 instance OpBlockingStat BlockingStatOP where
-    setBlocking       = setBlocking_
-    setUnblocked      = setUnblocked_
-    withBlockingStat  = withBlockingStat_
+    setBlocking = setBlocking_
+    setUnblocked = setUnblocked_
+    withBlockingStat = withBlockingStat_
 
 {- FOURMOLU_DISABLE -}
 data WorkerStatOP =
@@ -198,7 +198,7 @@ instance OpBlockingStat WorkerStatOP where
     withBlockingStat  = withBlockingStat_ . blockingOP
 {- FOURMOLU_ENABLE -}
 
-getBlockingStat  :: WorkerStatOP -> IO (BlockingContext, BlockingStat, BlockingCause, DiffTime)
+getBlockingStat :: WorkerStatOP -> IO (BlockingContext, BlockingStat, BlockingCause, DiffTime)
 getBlockingStat op = withContext op $ \cx -> withBlockingStat_ (blockingOP op) $ \bs bc dt -> return (cx, bs, bc, dt)
 
 data WBStatStore = WBStatStore BlockingStat TimeStamp
@@ -293,7 +293,7 @@ eventLogWS wstat = withContext wstat $ \context -> withBlockingStat wstat $ \bst
 {- FOURMOLU_ENABLE -}
 
 bracketBlocking :: OpBlockingStat op => op -> BlockingCause -> IO a -> IO a
-bracketBlocking wstat cause = bracket_ (setBlocking wstat cause) (setUnblocked wstat)
+bracketBlocking wstat cause = E.bracket_ (setBlocking wstat cause) (setUnblocked wstat)
 
 blockingRequest :: WorkerStatOP -> IO a -> IO a
 blockingRequest wstat x = bracketBlocking wstat CauseRequest (eventLogWS wstat >> x)

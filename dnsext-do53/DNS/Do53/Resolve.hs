@@ -9,7 +9,8 @@ where
 
 import Control.Concurrent.Async (Async, waitCatchSTM)
 import Control.Concurrent.STM
-import Control.Exception as E
+import Control.Exception (SomeException (..))
+import qualified Control.Exception as E
 import Control.Monad (when)
 import DNS.Do53.Types
 import qualified DNS.Log as Log
@@ -85,7 +86,7 @@ resolveConcurrent ris@(ResolveInfo{rinfoActions = riAct} :| _) resolver q@Questi
         erply <- E.mapException (appendErrorContext q ri) $ resolver ri q qctl
         case erply of
             Right rply -> return rply
-            Left e -> throwIO $ appendErrorContext q ri e
+            Left e -> E.throwIO $ appendErrorContext q ri e
 
 appendErrorContext :: Question -> ResolveInfo -> DNSError -> DNSError
 appendErrorContext Question{..} ResolveInfo{..} e = DNSErrorInfo e info

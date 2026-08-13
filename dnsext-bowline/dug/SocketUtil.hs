@@ -1,6 +1,6 @@
 module SocketUtil (checkDisableV6) where
 
-import Control.Exception (bracket)
+import qualified Control.Exception as E
 import Data.IP (IP (..), IPv6)
 import qualified Data.List.NonEmpty as NE
 import Network.Socket (AddrInfo (..), AddrInfoFlag (..), SocketType (..))
@@ -21,7 +21,7 @@ checkV6 :: IPv6 -> IO Bool
 checkV6 dst = do
     ai@AddrInfo{addrAddress = peer} <-
         NE.head <$> S.getAddrInfo (Just hint) (Just addr) (Just port)
-    bracket (S.openSocket ai) S.close $ \s -> S.connect s peer
+    E.bracket (S.openSocket ai) S.close $ \s -> S.connect s peer
     return False
   where
     addr = show dst
