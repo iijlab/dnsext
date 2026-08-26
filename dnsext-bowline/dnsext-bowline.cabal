@@ -164,6 +164,7 @@ executable clove
         -- GHC bundled
         base,
         async,
+        base16-bytestring,
         bytestring,
         network,
         -- dnsext packages
