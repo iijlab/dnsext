@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 
@@ -10,6 +11,8 @@ module Zone (
 
 import Control.Concurrent.STM
 import qualified Control.Exception as E
+import qualified Data.ByteString.Base16 as B16
+import qualified Data.ByteString.Char8 as C8
 import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
@@ -24,6 +27,7 @@ import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
 import DNS.Types
+import qualified DNS.Types.Opaque as Opaque
 
 import Algo
 import qualified Axfr
@@ -134,10 +138,18 @@ loadSourceWithSigning env zone serial source (Just (Signing info mn3p)) = do
     rrs <- loadSource env zone serial source
     ttl <- extractTTL rrs
     let info' = info{dnssecInfoTTL = ttl}
-    (_pub, _pri, dnskey, ds, doSign) <- prepareDNSSEC info'
-    -- fixme:
-    print ds
-    makeDBforPrimary zone mn3p doSign (rrs ++ [dnskey])
+    (pub, pri, dnskeyrr, dsrr, doSign) <- prepareDNSSEC info'
+    case fromRData $ rdata dsrr of
+        Nothing -> return ()
+        Just RD_DS{..} -> do
+            putStrLn $ "Zone: " ++ toRepresentation zone
+            putStrLn $ "KeyTag:     " ++ show ds_key_tag
+            putStrLn $ "Algorithm:  " ++ show ds_pubalg ++ " (" ++ show (fromPubAlg ds_pubalg) ++ ")"
+            putStrLn $ "DigestAlgo: " ++ show ds_digestalg ++ " (" ++ show (fromDigestAlg ds_digestalg) ++ ")"
+            C8.putStrLn $ "Digest:     " <> Opaque.toBase16 ds_digest
+            C8.putStrLn $ "PublicKey:  " <> Opaque.toBase16 (fromPubKey pub)
+            C8.putStrLn $ "PrivateKey: " <> B16.encode pri
+    makeDBforPrimary zone mn3p doSign (rrs ++ [dnskeyrr])
 
 -- | This function throws 'AuthException'.
 loadSource :: Env -> Domain -> Serial -> Source -> IO [ResourceRecord]
