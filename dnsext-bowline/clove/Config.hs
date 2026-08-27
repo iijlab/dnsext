@@ -21,6 +21,7 @@ data Config = Config
     , cnf_log       :: Bool
     , cnf_log_file  :: Maybe FilePath
     , cnf_log_level :: String
+    , cnf_clove_dir :: FilePath
     }
 
 defaultConfig :: Config
@@ -33,6 +34,7 @@ defaultConfig =
         , cnf_log       = False
         , cnf_log_file  = Nothing
         , cnf_log_level = "WARNING"
+        , cnf_clove_dir = "/var/clove/"
         }
 
 ----------------------------------------------------------------
@@ -48,7 +50,6 @@ data ZoneConf = ZoneConf
     , cnf_source               :: String
     , cnf_signing              :: Bool
     , cnf_nsec3                :: Bool
-    , cnf_key_dir              :: FilePath
     , cnf_pub_algo             :: String
     , cnf_ds_digest            :: String
     , cnf_nsec3_hash           :: String
@@ -68,7 +69,6 @@ defaultZoneConf =
         , cnf_signing              = True
         , cnf_source               = "example.zone"
         , cnf_nsec3                = True
-        , cnf_key_dir              = "/var/clove/keys/"
         , cnf_pub_algo             = "ED25519"
         , cnf_ds_digest            = "SHA-256"
         , cnf_nsec3_hash           = "SHA-1"
@@ -85,6 +85,7 @@ makeConfig def conf0 = do
     cnf_log       <- get "log"       cnf_log
     cnf_log_file  <- get "log-file"  cnf_log_file
     cnf_log_level <- get "log-level" cnf_log_level
+    cnf_clove_dir <- get "clove-dir" cnf_clove_dir
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
@@ -108,7 +109,6 @@ makeZoneConf def conf = do
     cnf_source               <- get "source"               cnf_source
     cnf_signing              <- get "signing"              cnf_signing
     cnf_nsec3                <- get "nsec3"                cnf_nsec3
-    cnf_key_dir              <- get "key-dir"              cnf_key_dir
     cnf_pub_algo             <- get "pub-algo"             cnf_pub_algo
     cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
     cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
