@@ -587,14 +587,14 @@ fromRRSetSigGroup zone kvs =
     zoneRoot = emptyNode zone
 
 checkRRSetSigGroup :: ((Domain, [Label]), [RRSetSig]) -> IO ()
-checkRRSetSigGroup (_, rrs)
+checkRRSetSigGroup (dl, rrs)
     | any (\x -> rrsetsigType x == CNAME) rrs = case rrs of
         [c]
             | length (rrsetsigRRs c) /= 1 ->
                 E.throwIO $ AuthException "Multiple CNAME"
             | otherwise ->
                 return ()
-        _ -> E.throwIO $ AuthException "CNAME with other RRs"
+        _ -> E.throwIO $ AuthException $ "CNAME with other RRs: " ++ show dl
     | otherwise = return ()
 
 checkDelegated :: [RRSetSig] -> Bool
