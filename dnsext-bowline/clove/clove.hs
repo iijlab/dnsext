@@ -10,6 +10,7 @@ import DNS.Do53.Internal
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
+import System.Directory
 import System.Environment (getArgs)
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 
@@ -38,6 +39,9 @@ main = do
     -- Initialization
     [conffile] <- getArgs
     (Config{..}, zonelist) <- loadConfig conffile
+    --
+    setCurrentDirectory cnf_clove_dir
+    --
     withStdLogger "dug logger" Stdout (read cnf_log_level) $ \Ops{..} -> do
         let env = Env{envPutLines = putLines}
         zones <- newZones env zonelist

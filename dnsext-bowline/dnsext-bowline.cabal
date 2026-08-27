@@ -166,6 +166,8 @@ executable clove
         async,
         base16-bytestring,
         bytestring,
+        directory,
+        filepath,
         network,
         -- dnsext packages
         dnsext-auth,

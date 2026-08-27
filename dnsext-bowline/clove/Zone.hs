@@ -19,6 +19,8 @@ import Data.IP.RouteTable
 import Data.List
 import Data.Maybe
 import GHC.Event
+import System.Directory
+import System.FilePath
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -139,16 +141,7 @@ loadSourceWithSigning env zone serial source (Just (Signing info mn3p)) = do
     ttl <- extractTTL rrs
     let info' = info{dnssecInfoTTL = ttl}
     (pub, pri, dnskeyrr, dsrr, doSign) <- prepareDNSSEC info'
-    case fromRData $ rdata dsrr of
-        Nothing -> return ()
-        Just RD_DS{..} -> do
-            putStrLn $ "Zone: " ++ toRepresentation zone
-            putStrLn $ "KeyTag:     " ++ show ds_key_tag
-            putStrLn $ "Algorithm:  " ++ show ds_pubalg ++ " (" ++ show (fromPubAlg ds_pubalg) ++ ")"
-            putStrLn $ "DigestAlgo: " ++ show ds_digestalg ++ " (" ++ show (fromDigestAlg ds_digestalg) ++ ")"
-            C8.putStrLn $ "Digest:     " <> Opaque.toBase16 ds_digest
-            C8.putStrLn $ "PublicKey:  " <> Opaque.toBase16 (fromPubKey pub)
-            C8.putStrLn $ "PrivateKey: " <> B16.encode pri
+    saveStatusFile zone pub pri dsrr
     makeDBforPrimary zone mn3p doSign (rrs ++ [dnskeyrr])
 
 -- | This function throws 'AuthException'.
@@ -215,3 +208,27 @@ toZoneAlist zones = do
     return $ zip names refs
   where
     names = map zoneName zones
+
+----------------------------------------------------------------
+
+{- FOURMOLU_DISABLE -}
+saveStatusFile :: Domain -> PubKey -> C8.ByteString -> ResourceRecord -> IO ()
+saveStatusFile zone pub pri dsrr = do
+    let zoneDir = init $ toRepresentation zone
+    createDirectoryIfMissing True zoneDir
+    case fromRData $ rdata dsrr of
+        Nothing -> return ()
+        Just RD_DS{..} -> do
+            let statusBS =
+                    "Zone: " <> toRepresentation zone <> "\n" <>
+                    "KeyTag:     " <> toB ds_key_tag <> "\n" <>
+                    "Algorithm:  " <> toB (fromPubAlg ds_pubalg)  <> " # " <> toB ds_pubalg <> "\n" <>
+                    "DigestAlgo: " <> toB (fromDigestAlg ds_digestalg) <> " # " <> toB ds_digestalg <> "\n" <>
+                    "Digest:     " <> Opaque.toBase16 ds_digest <> "\n" <>
+                    "PublicKey:  " <> Opaque.toBase16 (fromPubKey pub) <> "\n" <>
+                    "PrivateKey: " <> B16.encode pri <> "\n"
+            C8.writeFile (zoneDir </> "clove.status") statusBS
+  where
+    toB :: Show a => a -> C8.ByteString
+    toB = C8.pack . show
+{- FOURMOLU_ENABLE -}
