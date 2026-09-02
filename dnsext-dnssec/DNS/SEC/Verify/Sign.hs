@@ -10,6 +10,7 @@ module DNS.SEC.Verify.Sign (
     makeDS,
     DNSSECinfo (..),
     generateDNSKEY,
+    makeSigner,
     prepareDNSSEC,
     RRSetSig (..),
     groupRRset,
@@ -151,7 +152,7 @@ generateDNSKEY DNSSECinfo{..} = do
                         }
             return (pubkey, prikey, rrdnskey, rrds)
 
-makeSigner :: DNSSECinfo -> PriKey -> Word16 -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
+makeSigner :: DNSSECinfo -> PriKey -> KeyTag -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
 makeSigner info prikey tag = do
     rrsigTemp <- makeRRSIGtemplate info tag
     let signer = signZone prikey rrsigTemp
