@@ -8,7 +8,7 @@ module DNS.SEC.Verify.Sign (
     genKeyPair,
     makeDNSKEY,
     makeDS,
-    DNSSECinfo (..),
+    KeyConfig (..),
     generateDNSKEY,
     makeSigner,
     prepareDNSSEC,
@@ -34,13 +34,13 @@ import Data.Maybe
 
 ----------------------------------------------------------------
 
-data DNSSECinfo = DNSSECinfo
-    { dnssecInfoZone :: Domain
-    , dnssecInfoPubAlg :: PubAlg
-    , dnssecInfoDigestAlg :: DigestAlg
-    , dnssecInfoTTL :: TTL
+data KeyConfig = KeyConfig
+    { keyConfZone :: Domain
+    , keyConfPubAlg :: PubAlg
+    , keyConfDigestAlg :: DigestAlg
+    , keyConfTTL :: TTL
     -- ^ TTL for DNSKEY and DS
-    , dnssecInfoDuration :: DNSTime
+    , keyConfDuration :: DNSTime
     -- ^ Duration of RRSIG. This value is added to inception to
     -- calculate expiration.
     }
@@ -129,46 +129,46 @@ makeDS owner digestalg dnskey =
 ----------------------------------------------------------------
 
 generateDNSKEY
-    :: DNSSECinfo
+    :: KeyConfig
     -> IO
         ( PubKey
         , PriKey
         , ResourceRecord -- DNSKEY
         , ResourceRecord -- DS
         )
-generateDNSKEY DNSSECinfo{..} = do
-    mp <- genKeyPair dnssecInfoPubAlg
+generateDNSKEY KeyConfig{..} = do
+    mp <- genKeyPair keyConfPubAlg
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
-                ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey True -- fixme
+                ds = makeDS keyConfZone keyConfDigestAlg dnskey
                 rrdnskey =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DNSKEY
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData dnskey
                         }
                 rrds =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DS
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData ds
                         }
             return (pubkey, prikey, rrdnskey, rrds)
 
-makeSigner :: DNSSECinfo -> PriKey -> KeyTag -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
+makeSigner :: KeyConfig -> PriKey -> KeyTag -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
 makeSigner info prikey tag = do
     rrsigTemp <- makeRRSIGtemplate info tag
     let signer = signZone prikey rrsigTemp
     return signer
 
 prepareDNSSEC
-    :: DNSSECinfo
+    :: KeyConfig
     -> IO
         ( PubKey
         , PriKey
@@ -176,48 +176,48 @@ prepareDNSSEC
         , ResourceRecord -- DS
         , Bool -> [ResourceRecord] -> IO [RRSetSig]
         )
-prepareDNSSEC info@DNSSECinfo{..} = do
-    mp <- genKeyPair dnssecInfoPubAlg
+prepareDNSSEC conf@KeyConfig{..} = do
+    mp <- genKeyPair keyConfPubAlg
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
-                ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey True -- fixme
+                ds = makeDS keyConfZone keyConfDigestAlg dnskey
                 tag = ds_key_tag ds
                 rrdnskey =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DNSKEY
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData dnskey
                         }
                 rrds =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DS
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData ds
                         }
-            rrsigTemp <- makeRRSIGtemplate info tag
+            rrsigTemp <- makeRRSIGtemplate conf tag
             let signRRs = signZone prikey rrsigTemp
             return (pubkey, prikey, rrdnskey, rrds, signRRs)
 
-makeRRSIGtemplate :: DNSSECinfo -> KeyTag -> IO RD_RRSIG
-makeRRSIGtemplate DNSSECinfo{..} tag = do
+makeRRSIGtemplate :: KeyConfig -> KeyTag -> IO RD_RRSIG
+makeRRSIGtemplate KeyConfig{..} tag = do
     inception <- toDNSTime <$> getCurrentTime
-    let expiration = inception + dnssecInfoDuration
+    let expiration = inception + keyConfDuration
     return $
         RD_RRSIG
             { rrsig_type = A -- overridden
-            , rrsig_pubalg = dnssecInfoPubAlg
+            , rrsig_pubalg = keyConfPubAlg
             , rrsig_num_labels = 0 -- overridden
             , rrsig_ttl = 0 -- overridden
             , rrsig_expiration = expiration
             , rrsig_inception = inception
             , rrsig_key_tag = tag
-            , rrsig_zone = dnssecInfoZone
+            , rrsig_zone = keyConfZone
             , rrsig_signature = Opaque.fromByteString "" -- overridden
             }
 

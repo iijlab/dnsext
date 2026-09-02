@@ -140,7 +140,7 @@ loadSourceWithSigning env zone serial source Nothing =
 loadSourceWithSigning env zone serial source (Just (Signing info mn3p)) = do
     rrs <- loadSource env zone serial source
     ttl <- extractTTL rrs
-    let info' = info{dnssecInfoTTL = ttl}
+    let info' = info{keyConfTTL = ttl}
     (pub, pri, dnskeyrr, dsrr, doSign) <- prepareDNSSEC info'
     saveKSKFile zone pub pri dsrr
     makeDBforPrimary zone mn3p doSign (rrs ++ [dnskeyrr])
@@ -182,13 +182,13 @@ readSigning dom ZoneConf{..}
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.throwIO $ AuthException $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
-        let info =
-                DNSSECinfo
-                    { dnssecInfoZone = dom
-                    , dnssecInfoPubAlg = pa
-                    , dnssecInfoDigestAlg = dd
-                    , dnssecInfoTTL = 3600 -- overridden by SOA
-                    , dnssecInfoDuration = 86400 -- fixme
+        let keyConf =
+                KeyConfig
+                    { keyConfZone = dom
+                    , keyConfPubAlg = pa
+                    , keyConfDigestAlg = dd
+                    , keyConfTTL = 3600 -- overridden by SOA
+                    , keyConfDuration = 86400 -- fixme
                     }
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0
@@ -196,7 +196,7 @@ readSigning dom ZoneConf{..}
         let mn3p
                 | cnf_nsec3 = Just $ defaultNSEC3PARAM{nsec3param_hashalg = h}
                 | otherwise = Nothing
-        return $ Just $ Signing info mn3p
+        return $ Just $ Signing keyConf mn3p
 
 ----------------------------------------------------------------
 
