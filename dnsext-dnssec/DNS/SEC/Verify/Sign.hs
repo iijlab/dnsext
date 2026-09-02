@@ -9,6 +9,7 @@ module DNS.SEC.Verify.Sign (
     makeDNSKEY,
     makeDS,
     DNSSECinfo (..),
+    generateDNSKEY,
     prepareDNSSEC,
     RRSetSig (..),
     groupRRset,
@@ -115,6 +116,46 @@ data RRSetSig = RRSetSig
     , rrsetsigSig :: Maybe ResourceRecord
     }
     deriving (Show, Eq, Ord)
+
+generateDNSKEY
+    :: DNSSECinfo
+    -> IO
+        ( PubKey
+        , PriKey
+        , ResourceRecord -- DNSKEY
+        , ResourceRecord -- DS
+        )
+generateDNSKEY DNSSECinfo{..} = do
+    mp <- genKeyPair dnssecInfoPubAlg
+    case mp of
+        Nothing -> E.throwIO SignFailure
+        Just (pubkey, prikey) -> do
+            let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
+                ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
+                tag = ds_key_tag ds
+                rrdnskey =
+                    ResourceRecord
+                        { rrname = dnssecInfoZone
+                        , rrtype = DNSKEY
+                        , rrclass = IN
+                        , rrttl = dnssecInfoTTL
+                        , rdata = toRData dnskey
+                        }
+                rrds =
+                    ResourceRecord
+                        { rrname = dnssecInfoZone
+                        , rrtype = DS
+                        , rrclass = IN
+                        , rrttl = dnssecInfoTTL
+                        , rdata = toRData ds
+                        }
+            return (pubkey, prikey, rrdnskey, rrds)
+
+makeSigner :: DNSSECinfo -> PriKey -> Word16 -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
+makeSigner info prikey tag = do
+    rrsigTemp <- makeRRSIGtemplate info tag
+    let signer = signZone prikey rrsigTemp
+    return signer
 
 prepareDNSSEC
     :: DNSSECinfo
