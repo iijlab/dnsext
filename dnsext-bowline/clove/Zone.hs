@@ -221,7 +221,7 @@ saveKSKFile zone pub pri dsrr = do
         Nothing -> return ()
         Just RD_DS{..} -> do
             let statusBS =
-                    "Zone: " <> toRepresentation zone <> "\n" <>
+                    "Zone:       " <> toRepresentation zone <> "\n" <>
                     "KeyTag:     " <> toB ds_key_tag <> "\n" <>
                     "Algorithm:  " <> toB (fromPubAlg ds_pubalg)  <> " # " <> toB ds_pubalg <> "\n" <>
                     "DigestAlgo: " <> toB (fromDigestAlg ds_digestalg) <> " # " <> toB ds_digestalg <> "\n" <>
