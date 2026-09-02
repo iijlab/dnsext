@@ -32,9 +32,35 @@ import Data.ByteString ()
 import Data.List
 import Data.Maybe
 
+----------------------------------------------------------------
+
+data DNSSECinfo = DNSSECinfo
+    { dnssecInfoZone :: Domain
+    , dnssecInfoPubAlg :: PubAlg
+    , dnssecInfoDigestAlg :: DigestAlg
+    , dnssecInfoTTL :: TTL
+    -- ^ TTL for DNSKEY and DS
+    , dnssecInfoDuration :: DNSTime
+    -- ^ Duration of RRSIG. This value is added to inception to
+    -- calculate expiration.
+    }
+    deriving (Eq, Show)
+
+data RRSetSig = RRSetSig
+    { rrsetsigName :: Domain
+    , rrsetsigType :: TYPE
+    , rrsetsigRRs :: [ResourceRecord]
+    , rrsetsigSig :: Maybe ResourceRecord
+    }
+    deriving (Show, Eq, Ord)
+
+----------------------------------------------------------------
+
 data SignFailure = SignFailure deriving (Show)
 
 instance Exception SignFailure
+
+----------------------------------------------------------------
 
 sign :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO ResourceRecord
 sign _ _ [] = E.throwIO SignFailure
@@ -68,6 +94,8 @@ doSign RRSIGImpl{..} pri rrs rrsig = do
                     let str = encodeRRset rrsig rrset_dom typ cls sortedRDatas
                     rrsigIEncodeSignature <$> rrsigISign priK str
 
+----------------------------------------------------------------
+
 genKeyPair :: PubAlg -> IO (Maybe (PubKey, PriKey))
 genKeyPair alg = case getRRSIGImpl alg of
     Nothing -> return Nothing
@@ -98,25 +126,7 @@ makeDS owner digestalg dnskey =
     tag = keyTag dnskey
     dsimpl = fromJust $ getDSImpl digestalg
 
-data DNSSECinfo = DNSSECinfo
-    { dnssecInfoZone :: Domain
-    , dnssecInfoPubAlg :: PubAlg
-    , dnssecInfoDigestAlg :: DigestAlg
-    , dnssecInfoTTL :: TTL
-    -- ^ TTL for DNSKEY and DS
-    , dnssecInfoDuration :: DNSTime
-    -- ^ Duration of RRSIG. This value is added to inception to
-    -- calculate expiration.
-    }
-    deriving (Eq, Show)
-
-data RRSetSig = RRSetSig
-    { rrsetsigName :: Domain
-    , rrsetsigType :: TYPE
-    , rrsetsigRRs :: [ResourceRecord]
-    , rrsetsigSig :: Maybe ResourceRecord
-    }
-    deriving (Show, Eq, Ord)
+----------------------------------------------------------------
 
 generateDNSKEY
     :: DNSSECinfo
@@ -133,7 +143,6 @@ generateDNSKEY DNSSECinfo{..} = do
         Just (pubkey, prikey) -> do
             let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
                 ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
-                tag = ds_key_tag ds
                 rrdnskey =
                     ResourceRecord
                         { rrname = dnssecInfoZone
@@ -211,6 +220,8 @@ makeRRSIGtemplate DNSSECinfo{..} tag = do
             , rrsig_zone = dnssecInfoZone
             , rrsig_signature = Opaque.fromByteString "" -- overridden
             }
+
+----------------------------------------------------------------
 
 groupRRset :: [ResourceRecord] -> [[ResourceRecord]]
 groupRRset rrs = groupBy rreq $ sort rrs
