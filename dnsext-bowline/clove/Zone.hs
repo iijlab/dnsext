@@ -18,6 +18,7 @@ import Data.IP
 import Data.IP.RouteTable
 import Data.List
 import Data.Maybe
+import Data.UnixTime
 import GHC.Event
 import System.Directory
 import System.FilePath
@@ -141,7 +142,7 @@ loadSourceWithSigning env zone serial source (Just (Signing info mn3p)) = do
     ttl <- extractTTL rrs
     let info' = info{dnssecInfoTTL = ttl}
     (pub, pri, dnskeyrr, dsrr, doSign) <- prepareDNSSEC info'
-    saveStatusFile zone pub pri dsrr
+    saveKSKFile zone pub pri dsrr
     makeDBforPrimary zone mn3p doSign (rrs ++ [dnskeyrr])
 
 -- | This function throws 'AuthException'.
@@ -212,8 +213,8 @@ toZoneAlist zones = do
 ----------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
-saveStatusFile :: Domain -> PubKey -> C8.ByteString -> ResourceRecord -> IO ()
-saveStatusFile zone pub pri dsrr = do
+saveKSKFile :: Domain -> PubKey -> C8.ByteString -> ResourceRecord -> IO ()
+saveKSKFile zone pub pri dsrr = do
     let zoneDir = init $ toRepresentation zone
     createDirectoryIfMissing True zoneDir
     case fromRData $ rdata dsrr of
@@ -227,7 +228,9 @@ saveStatusFile zone pub pri dsrr = do
                     "Digest:     " <> Opaque.toBase16 ds_digest <> "\n" <>
                     "PublicKey:  " <> Opaque.toBase16 (fromPubKey pub) <> "\n" <>
                     "PrivateKey: " <> B16.encode pri <> "\n"
-            C8.writeFile (zoneDir </> "clove.status") statusBS
+            t <- getUnixTime
+            fn <- C8.unpack <$> formatUnixTime "%Y-%m-%d-%H:%M:%S.ksk" t
+            C8.writeFile (zoneDir </> fn) statusBS
   where
     toB :: Show a => a -> C8.ByteString
     toB = C8.pack . show

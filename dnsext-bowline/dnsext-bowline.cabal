@@ -179,7 +179,8 @@ executable clove
         iproute,
         network-run,
         stm,
-        unix
+        unix,
+        unix-time
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
