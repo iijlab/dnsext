@@ -20,7 +20,7 @@ data Source
     | FromUpstream6 IPv6
     deriving (Eq, Show)
 
-data Signing = Signing DNSSECinfo (Maybe RD_NSEC3PARAM) -- Nothing for NSEC
+data Signing = Signing KeyConfig (Maybe RD_NSEC3PARAM) -- Nothing for NSEC
     deriving (Eq, Show)
 
 ----------------------------------------------------------------
