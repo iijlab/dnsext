@@ -22,7 +22,7 @@ data Config = Config
     , cnf_log_file  :: Maybe FilePath
     , cnf_log_level :: String
     , cnf_clove_dir :: FilePath
-    }
+    } deriving (Show)
 
 defaultConfig :: Config
 defaultConfig =

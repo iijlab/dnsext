@@ -153,6 +153,7 @@ executable clove
                       Auth
                       Axfr
                       Config
+                      KeyFile
                       Net
                       Notify
                       Types
