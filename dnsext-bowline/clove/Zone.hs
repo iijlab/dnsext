@@ -11,17 +11,12 @@ module Zone (
 
 import Control.Concurrent.STM
 import qualified Control.Exception as E
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Char8 as C8
 import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
 import Data.List
 import Data.Maybe
-import Data.UnixTime
 import GHC.Event
-import System.Directory
-import System.FilePath
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -30,11 +25,11 @@ import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
 import DNS.Types
-import qualified DNS.Types.Opaque as Opaque
 
 import Algo
 import qualified Axfr
 import Config
+import KeyFile
 import Types
 
 ----------------------------------------------------------------
@@ -137,13 +132,14 @@ loadSourceWithSigning
     -> IO DB
 loadSourceWithSigning env zone serial source Nothing =
     loadSource env zone serial source >>= makeDBforSecondary zone
-loadSourceWithSigning env zone serial source (Just (Signing info mn3p)) = do
+loadSourceWithSigning env zone serial source (Just (Signing keyConf0 mn3p)) = do
     rrs <- loadSource env zone serial source
     ttl <- extractTTL rrs
-    let info' = info{keyConfTTL = ttl}
-    (pub, pri, dnskeyrr, dsrr, doSign) <- prepareDNSSEC info'
-    saveKSKFile zone pub pri dsrr
-    makeDBforPrimary zone mn3p doSign (rrs ++ [dnskeyrr])
+    let keyConf = keyConf0{keyConfTTL = ttl}
+    (keyInfo, dnskeyrr, _dsrr) <- generateKeyInfo keyConf
+    saveKSKInfo keyInfo
+    signer <- makeSigner keyConf keyInfo
+    makeDBforPrimary zone mn3p signer (rrs ++ [dnskeyrr])
 
 -- | This function throws 'AuthException'.
 loadSource :: Env -> Domain -> Serial -> Source -> IO [ResourceRecord]
@@ -209,29 +205,3 @@ toZoneAlist zones = do
     return $ zip names refs
   where
     names = map zoneName zones
-
-----------------------------------------------------------------
-
-{- FOURMOLU_DISABLE -}
-saveKSKFile :: Domain -> PubKey -> C8.ByteString -> ResourceRecord -> IO ()
-saveKSKFile zone pub pri dsrr = do
-    let zoneDir = init $ toRepresentation zone
-    createDirectoryIfMissing True zoneDir
-    case fromRData $ rdata dsrr of
-        Nothing -> return ()
-        Just RD_DS{..} -> do
-            let statusBS =
-                    "Zone:       " <> toRepresentation zone <> "\n" <>
-                    "KeyTag:     " <> toB ds_key_tag <> "\n" <>
-                    "Algorithm:  " <> toB (fromPubAlg ds_pubalg)  <> " # " <> toB ds_pubalg <> "\n" <>
-                    "DigestAlgo: " <> toB (fromDigestAlg ds_digestalg) <> " # " <> toB ds_digestalg <> "\n" <>
-                    "Digest:     " <> Opaque.toBase16 ds_digest <> "\n" <>
-                    "PublicKey:  " <> Opaque.toBase16 (fromPubKey pub) <> "\n" <>
-                    "PrivateKey: " <> B16.encode pri <> "\n"
-            t <- getUnixTime
-            fn <- C8.unpack <$> formatUnixTime "%Y-%m-%d-%H:%M:%S.ksk" t
-            C8.writeFile (zoneDir </> fn) statusBS
-  where
-    toB :: Show a => a -> C8.ByteString
-    toB = C8.pack . show
-{- FOURMOLU_ENABLE -}

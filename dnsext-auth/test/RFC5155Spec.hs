@@ -23,12 +23,12 @@ spec = describe "authoritative algorithm" $ do
         rrs <- loadZoneFile zone "test/rfc5155.zone"
         (_pub, _pri, dnskey, _ds, doSign) <-
             prepareDNSSEC $
-                DNSSECinfo
-                    { dnssecInfoZone = zone
-                    , dnssecInfoPubAlg = ED25519
-                    , dnssecInfoDigestAlg = SHA256
-                    , dnssecInfoTTL = 3600
-                    , dnssecInfoDuration = 86400
+                KeyConfig
+                    { keyConfZone = zone
+                    , keyConfPubAlg = ED25519
+                    , keyConfDigestAlg = SHA256
+                    , keyConfTTL = 3600
+                    , keyConfDuration = 86400
                     }
         let salt = fromRight (error "fromBase16") $ Opaque.fromBase16 "aabbccdd"
             n3p = RD_NSEC3PARAM Hash_SHA1 0 12 salt
