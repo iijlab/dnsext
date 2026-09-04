@@ -17,6 +17,7 @@ import Data.IP.RouteTable
 import Data.List
 import Data.Maybe
 import GHC.Event
+import System.Directory (createDirectoryIfMissing)
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -132,12 +133,12 @@ loadSourceWithSigning
     -> IO DB
 loadSourceWithSigning env zone serial source Nothing =
     loadSource env zone serial source >>= makeDBforSecondary zone
-loadSourceWithSigning env zone serial source (Just (Signing keyConf0 mn3p)) = do
+loadSourceWithSigning env zone serial source (Just (Signing keyConf mn3p)) = do
     rrs <- loadSource env zone serial source
     ttl <- extractTTL rrs
-    let keyConf = keyConf0{keyConfTTL = ttl}
-    (keyInfo, dnskeyrr, _dsrr) <- generateKeyInfo keyConf
-    saveKSKInfo keyInfo
+    let zoneDir = init $ toRepresentation zone
+    createDirectoryIfMissing True zoneDir
+    (keyInfo, dnskeyrr, _dsrr) <- loadKSKInfo zoneDir keyConf ttl
     signer <- makeSigner keyConf keyInfo
     makeDBforPrimary zone mn3p signer (rrs ++ [dnskeyrr])
 
