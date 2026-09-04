@@ -6,6 +6,7 @@ module KeyFile where
 
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
+import Data.List (isSuffixOf, sortBy)
 import Data.UnixTime
 import System.Directory
 import System.FilePath
@@ -20,26 +21,44 @@ import qualified DNS.Types.Opaque as Opaque
 ----------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
-saveKSKInfo :: KeyInfo -> IO ()
-saveKSKInfo KeyInfo{..} = do
-    let zoneDir = init $ toRepresentation keyInfoZone
-    createDirectoryIfMissing True zoneDir
-    let statusBS =
-            "Zone:       " <> toRepresentation keyInfoZone <> "\n" <>
-            "KeyTag:     " <> toB keyInfoTag <> "\n" <>
-            "Algorithm:  " <> toB (fromPubAlg keyInfoAlgorithm)  <> " # " <> toB keyInfoAlgorithm <> "\n" <>
-            "DigestAlgo: " <> toB (fromDigestAlg keyInfoDigestAlgo) <> " # " <> toB keyInfoDigestAlgo <> "\n" <>
-            "Digest:     " <> Opaque.toBase16 keyInfoDigest <> "\n" <>
-            "PublicKey:  " <> Opaque.toBase16 (fromPubKey keyInfoPubKey) <> "\n" <>
-            "PrivateKey: " <> B16.encode keyInfoPriKey <> "\n" <>
-            "Flag:       " <> toB keyInfoFlag <> "\n"
+saveKSKInfo :: FilePath -> KeyInfo -> IO ()
+saveKSKInfo zoneDir KeyInfo{..} = do
     t <- getUnixTime
     fn <- C8.unpack <$> formatUnixTime "%Y-%m-%d-%H:%M:%S.ksk" t
     C8.writeFile (zoneDir </> fn) statusBS
   where
+    statusBS =
+        "Zone:       " <> toRepresentation keyInfoZone <> "\n" <>
+        "KeyTag:     " <> toB keyInfoTag <> "\n" <>
+        "Algorithm:  " <> toB (fromPubAlg keyInfoAlgorithm)  <> " # " <> toB keyInfoAlgorithm <> "\n" <>
+        "DigestAlgo: " <> toB (fromDigestAlg keyInfoDigestAlgo) <> " # " <> toB keyInfoDigestAlgo <> "\n" <>
+        "Digest:     " <> Opaque.toBase16 keyInfoDigest <> "\n" <>
+        "PublicKey:  " <> Opaque.toBase16 (fromPubKey keyInfoPubKey) <> "\n" <>
+        "PrivateKey: " <> B16.encode keyInfoPriKey <> "\n" <>
+        "Flag:       " <> toB keyInfoFlag <> "\n"
     toB :: Show a => a -> C8.ByteString
     toB = C8.pack . show
 {- FOURMOLU_ENABLE -}
+
+----------------------------------------------------------------
+
+loadKSKInfo
+    :: FilePath
+    -> KeyConfig
+    -> TTL
+    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+loadKSKInfo zoneDir keyConf0 ttl = do
+    ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
+    case sortBy (flip compare) ksks of -- decreasing order
+        [] -> do
+            let keyConf = keyConf0{keyConfTTL = ttl}
+            ret@(keyInfo, _, _) <- generateKeyInfo keyConf
+            saveKSKInfo zoneDir keyInfo
+            return ret
+        fn : _ -> do
+            ki <- loadKeyInfo (zoneDir </> fn)
+            let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
+            return (ki, dnskeyrr, dsrr)
 
 ----------------------------------------------------------------
 
@@ -106,8 +125,8 @@ makeKeyInfoConf def conf = do
         either left pure et
 {- FOURMOLU_ENABLE -}
 
-loadKSKInfo :: FilePath -> IO KeyInfo
-loadKSKInfo fn = do
+loadKeyInfo :: FilePath -> IO KeyInfo
+loadKeyInfo fn = do
     cnf <- loadFile fn
     kic <- makeKeyInfoConf defaultKeyInfoConf cnf
     return $ fromKeyInfoConf kic
