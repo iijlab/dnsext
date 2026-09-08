@@ -16,7 +16,7 @@ type PriKey = ByteString
 data RRSIGImpl
     = forall prikey pubkey sig.
     RRSIGImpl
-    { rrsigIGenKeyPair      :: IO (pubkey, prikey)
+    { rrsigIGenKeyPair      :: Int -> IO (pubkey, prikey)
     , rrsigIEncodePriKey    :: prikey -> PriKey
     , rrsigIDecodePriKey    :: PriKey -> Either String prikey
     , rrsigIEncodePubKey    :: pubkey -> PubKey

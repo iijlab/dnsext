@@ -65,7 +65,7 @@ eddsaHelper
     -> RRSIGImpl
 eddsaHelper algName toPri toPub toSig signImpl verifyImpl gen fromPri =
     RRSIGImpl
-        { rrsigIGenKeyPair = eddsaGenKeyPair gen fromPri
+        { rrsigIGenKeyPair = \_ -> eddsaGenKeyPair gen fromPri
         , rrsigIEncodePriKey = eddsaEncodePrikey
         , rrsigIDecodePriKey = eddsaDecodePriKey toPri
         , rrsigIEncodePubKey = eddsaEncodePubKey

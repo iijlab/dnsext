@@ -39,7 +39,7 @@ ecdsaP384SHA = ecdsaHelper ECC.SEC_p384r1 SHA384 48
 ecdsaHelper :: HashAlgorithm hash => CurveName -> hash -> Int -> RRSIGImpl
 ecdsaHelper cn hash len =
     RRSIGImpl
-        { rrsigIGenKeyPair = ecdsaGenKeyPair curve
+        { rrsigIGenKeyPair = \_ -> ecdsaGenKeyPair curve
         , rrsigIEncodePriKey = ecdsaEncodePriKey
         , rrsigIDecodePriKey = ecdsaDecodePriKey curve
         , rrsigIEncodePubKey = ecdsaEncodePubKey

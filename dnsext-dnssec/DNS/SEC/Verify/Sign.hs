@@ -50,6 +50,8 @@ data KeyConfig = KeyConfig
     -- ^ Duration of RRSIG. This value is added to inception to
     -- calculate expiration.
     , keyConfType :: KeyType
+    , keyConfSize :: Int
+    -- ^ Key size used only for RSA
     }
     deriving (Eq, Show)
 
@@ -115,11 +117,11 @@ doSign RRSIGImpl{..} pri rrs rrsig = do
 
 ----------------------------------------------------------------
 
-genKeyPair :: PubAlg -> IO (Maybe (PubKey, PriKey))
-genKeyPair alg = case getRRSIGImpl alg of
+genKeyPair :: PubAlg -> Int -> IO (Maybe (PubKey, PriKey))
+genKeyPair alg keySiz = case getRRSIGImpl alg of
     Nothing -> return Nothing
     Just RRSIGImpl{..} -> do
-        (pub, pri) <- rrsigIGenKeyPair
+        (pub, pri) <- rrsigIGenKeyPair keySiz
         let pubkey = rrsigIEncodePubKey pub
             prikey = rrsigIEncodePriKey pri
         return $ Just (pubkey, prikey)
@@ -161,7 +163,7 @@ generateKeyInfo
         , ResourceRecord -- DS
         )
 generateKeyInfo KeyConfig{..} = do
-    mp <- genKeyPair keyConfPubAlg
+    mp <- genKeyPair keyConfPubAlg keyConfSize
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
@@ -232,7 +234,7 @@ prepareDNSSEC
         , Signer
         )
 prepareDNSSEC conf@KeyConfig{..} = do
-    mp <- genKeyPair keyConfPubAlg
+    mp <- genKeyPair keyConfPubAlg keyConfSize
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do

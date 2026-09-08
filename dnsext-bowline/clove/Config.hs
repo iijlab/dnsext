@@ -51,7 +51,9 @@ data ZoneConf = ZoneConf
     , cnf_signing              :: Bool
     , cnf_nsec3                :: Bool
     , cnf_ksk_algo             :: String
+    , cnf_ksk_size             :: Int
     , cnf_zsk_algo             :: String
+    , cnf_zsk_size             :: Int
     , cnf_ds_digest            :: String
     , cnf_nsec3_hash           :: String
     }
@@ -71,7 +73,9 @@ defaultZoneConf =
         , cnf_source               = "example.zone"
         , cnf_nsec3                = True
         , cnf_ksk_algo             = "ED25519"
+        , cnf_ksk_size             = 0
         , cnf_zsk_algo             = "ED25519"
+        , cnf_zsk_size             = 0
         , cnf_ds_digest            = "SHA-256"
         , cnf_nsec3_hash           = "SHA-1"
         }
@@ -112,7 +116,9 @@ makeZoneConf def conf = do
     cnf_signing              <- get "signing"              cnf_signing
     cnf_nsec3                <- get "nsec3"                cnf_nsec3
     cnf_zsk_algo             <- get "zsk-algo"             cnf_zsk_algo
+    cnf_zsk_size             <- get "zsk-size"             cnf_zsk_size
     cnf_ksk_algo             <- get "ksk-algo"             cnf_ksk_algo
+    cnf_ksk_size             <- get "ksk-size"             cnf_ksk_size
     cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
     cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
     pure ZoneConf{..}
