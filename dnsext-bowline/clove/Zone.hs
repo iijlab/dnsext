@@ -192,6 +192,7 @@ readSigning dom ZoneConf{..}
                     , keyConfTTL = 3600 -- overridden by SOA
                     , keyConfDuration = 86400 -- fixme
                     , keyConfType = KSK
+                    , keyConfSize = cnf_ksk_size
                     }
         let keyConfZSK =
                 KeyConfig
@@ -201,6 +202,7 @@ readSigning dom ZoneConf{..}
                     , keyConfTTL = 3600 -- overridden by SOA
                     , keyConfDuration = 86400 -- fixme
                     , keyConfType = ZSK
+                    , keyConfSize = cnf_zsk_size
                     }
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0
