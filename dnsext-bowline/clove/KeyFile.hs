@@ -50,30 +50,34 @@ loadKSKInfo
 loadKSKInfo zoneDir keyConf0 ttl = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> do
-            let keyConf = keyConf0{keyConfTTL = ttl}
-            ret@(keyInfo, _, _) <- generateKeyInfo keyConf
-            saveKSKInfo zoneDir keyInfo
-            return ret
+        [] -> generate
         fn : _ -> do
-            ki <- loadKeyInfo (zoneDir </> fn)
-            let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
-            return (ki, dnskeyrr, dsrr)
+            mki <- loadKeyInfo (zoneDir </> fn)
+            case mki of
+                Nothing -> generate
+                Just ki -> do
+                    let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
+                    return (ki, dnskeyrr, dsrr)
+  where
+    generate = do
+        let keyConf = keyConf0{keyConfTTL = ttl}
+        ret@(keyInfo, _, _) <- generateKeyInfo keyConf
+        saveKSKInfo zoneDir keyInfo
+        return ret
 
 ----------------------------------------------------------------
 
-fromKeyInfoConf :: KeyInfoConf -> KeyInfo
-fromKeyInfoConf KeyInfoConf{..} =
-    KeyInfo
-        { keyInfoZone = fromRepresentation kic_zone
-        , keyInfoAlgorithm = toPubAlg $ fromIntegral kic_algorithm
-        , keyInfoDigestAlgo = toDigestAlg $ fromIntegral kic_digest_alg
-        , keyInfoTag = fromIntegral kic_keytag
-        , keyInfoDigest = either (const "") id $ Opaque.fromBase16 $ C8.pack kic_digest
-        , keyInfoPubKey = either (const $ toPubKey "") toPubKey $ Opaque.fromBase16 $ C8.pack kic_public_key
-        , keyInfoPriKey = B16.decodeLenient $ C8.pack kic_private_key
-        , keyInfoFlag = fromIntegral kic_flag
-        }
+fromKeyInfoConf :: KeyInfoConf -> Either String KeyInfo
+fromKeyInfoConf KeyInfoConf{..} = do
+    let keyInfoZone = fromRepresentation kic_zone
+        keyInfoAlgorithm = toPubAlg $ fromIntegral kic_algorithm
+        keyInfoDigestAlgo = toDigestAlg $ fromIntegral kic_digest_alg
+        keyInfoTag = fromIntegral kic_keytag
+    keyInfoDigest <- Opaque.fromBase16 $ C8.pack kic_digest
+    keyInfoPubKey <- toPubKey <$> Opaque.fromBase16 (C8.pack kic_public_key)
+    let keyInfoPriKey = B16.decodeLenient $ C8.pack kic_private_key
+        keyInfoFlag = fromIntegral kic_flag
+    return $ KeyInfo{..}
 
 {- FOURMOLU_DISABLE -}
 data KeyInfoConf = KeyInfoConf
@@ -125,8 +129,8 @@ makeKeyInfoConf def conf = do
         either left pure et
 {- FOURMOLU_ENABLE -}
 
-loadKeyInfo :: FilePath -> IO KeyInfo
+loadKeyInfo :: FilePath -> IO (Maybe KeyInfo)
 loadKeyInfo fn = do
     cnf <- loadFile fn
     kic <- makeKeyInfoConf defaultKeyInfoConf cnf
-    return $ fromKeyInfoConf kic
+    return $ either (const Nothing) Just $ fromKeyInfoConf kic
