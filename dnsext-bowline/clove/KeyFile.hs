@@ -22,9 +22,15 @@ import qualified DNS.Types.Opaque as Opaque
 
 {- FOURMOLU_DISABLE -}
 saveKSKInfo :: FilePath -> KeyInfo -> IO ()
-saveKSKInfo zoneDir KeyInfo{..} = do
+saveKSKInfo zoneDir ki = save zoneDir ".ksk" ki
+
+saveZSKInfo :: FilePath -> KeyInfo -> IO ()
+saveZSKInfo zoneDir ki = save zoneDir ".zsk" ki
+
+save :: FilePath -> String -> KeyInfo -> IO ()
+save zoneDir suffix KeyInfo{..} = do
     t <- getUnixTime
-    fn <- C8.unpack <$> formatUnixTime "%Y-%m-%d-%H:%M:%S.ksk" t
+    fn <- C8.unpack <$> formatUnixTime ("%Y-%m-%d-%H:%M:%S" <> C8.pack suffix) t
     C8.writeFile (zoneDir </> fn) statusBS
   where
     statusBS =
@@ -50,20 +56,57 @@ loadKSKInfo
 loadKSKInfo zoneDir keyConf0 ttl = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> generate
-        fn : _ -> do
-            mki <- loadKeyInfo (zoneDir </> fn)
-            case mki of
-                Nothing -> generate
-                Just ki -> do
-                    let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
-                    return (ki, dnskeyrr, dsrr)
-  where
-    generate = do
-        let keyConf = keyConf0{keyConfTTL = ttl}
-        ret@(keyInfo, _, _) <- generateKeyInfo keyConf
-        saveKSKInfo zoneDir keyInfo
-        return ret
+        [] -> generateKey zoneDir keyConf0 ttl
+        fn : _ -> loadOrGenerateKey zoneDir keyConf0 ttl fn
+
+loadZSKInfo
+    :: FilePath
+    -> KeyConfig
+    -> TTL
+    -> IO
+        ( (KeyInfo, ResourceRecord, ResourceRecord) -- current
+        , (KeyInfo, ResourceRecord, ResourceRecord) -- next
+        )
+loadZSKInfo zoneDir keyConf0 ttl = do
+    ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
+    case sortBy (flip compare) ksks of -- decreasing order
+        fn1 : fn0 : _ -> do
+            ki0 <- loadOrGenerateKey zoneDir keyConf0 ttl fn0
+            ki1 <- loadOrGenerateKey zoneDir keyConf0 ttl fn1
+            return (ki0, ki1)
+        fn0 : [] -> do
+            ki0 <- loadOrGenerateKey zoneDir keyConf0 ttl fn0
+            ki1 <- generateKey zoneDir keyConf0 ttl
+            return (ki0, ki1)
+        [] -> do
+            ki0 <- generateKey zoneDir keyConf0 ttl
+            ki1 <- generateKey zoneDir keyConf0 ttl
+            return (ki0, ki1)
+
+loadOrGenerateKey
+    :: FilePath
+    -> KeyConfig
+    -> TTL
+    -> FilePath
+    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+loadOrGenerateKey zoneDir keyConf0 ttl fn = do
+    mki <- loadKeyInfo (zoneDir </> fn)
+    case mki of
+        Nothing -> generateKey zoneDir keyConf0 ttl
+        Just ki -> do
+            let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
+            return (ki, dnskeyrr, dsrr)
+
+generateKey
+    :: FilePath
+    -> KeyConfig
+    -> TTL
+    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+generateKey zoneDir keyConf0 ttl = do
+    let keyConf = keyConf0{keyConfTTL = ttl}
+    ret@(keyInfo, _, _) <- generateKeyInfo keyConf
+    saveKSKInfo zoneDir keyInfo
+    return ret
 
 ----------------------------------------------------------------
 

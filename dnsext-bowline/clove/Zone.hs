@@ -186,6 +186,7 @@ readSigning dom ZoneConf{..}
                     , keyConfDigestAlg = dd
                     , keyConfTTL = 3600 -- overridden by SOA
                     , keyConfDuration = 86400 -- fixme
+                    , keyConfType = KSK -- fixme
                     }
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0

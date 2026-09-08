@@ -150,17 +150,17 @@ makeDBforPrimary
 makeDBforPrimary _ _ _ [] = E.throwIO $ AuthException "No resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforPrimary zone mn3p doSign (soarr : rrs)
+makeDBforPrimary zone mn3p signZone (soarr : rrs)
     | rrtype soarr /= SOA = E.throwIO $ AuthException "SOA does not exist"
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> E.throwIO $ AuthException "SOA is broken"
         Just soa -> do
             let ttl = soa_minimum soa
             let (is, ns, ks, ds, gs, _os) = divide zone rrs
-            ssSigned <- doSign True [soarr]
-            isSigned <- doSign True is
-            ksSigned <- doSign True ks
-            dsSigned <- doSign True ds
+            ssSigned <- signZone True [soarr]
+            isSigned <- signZone True is
+            ksSigned <- signZone True ks
+            dsSigned <- signZone True ds
             n3pSigned <- case mn3p of
                 Nothing -> return []
                 Just n3p -> do
@@ -172,16 +172,16 @@ makeDBforPrimary zone mn3p doSign (soarr : rrs)
                                 , rrclass = IN
                                 , rrttl = ttl -- fixme
                                 }
-                    doSign True [n3prr]
+                    signZone True [n3prr]
             -- In-domain NS/DS should have NSEC.
             node <- makeNode zone (ssSigned ++ n3pSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
             (nsecSigned, nsecdb, mconv) <- case mn3p of
                 Nothing -> do
-                    xs <- makeNSECforPrimary ttl doSign node
+                    xs <- makeNSECforPrimary ttl signZone node
                     let ndb = makeNSECDB xs
                     return (xs, ndb, Nothing)
                 Just n3p -> do
-                    xs <- makeNSEC3forPrimary ttl zone doSign n3p node
+                    xs <- makeNSEC3forPrimary ttl zone signZone n3p node
                     let ndb = makeNSEC3DB zone xs
                         conv = hashedDomain zone n3p
                     return (xs, ndb, Just conv)
@@ -373,7 +373,7 @@ makeNSECforPrimary
     -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
     -> Node
     -> IO [RRSetSig]
-makeNSECforPrimary ttl doSign root = doSign False $ map pack zipped
+makeNSECforPrimary ttl signZone root = signZone False $ map pack zipped
   where
     packedNameTypes :: [(Domain, [TYPE])]
     packedNameTypes = foldNode skipENTandUnderDelegated root
@@ -423,7 +423,7 @@ makeNSEC3forPrimary
     -> RD_NSEC3PARAM
     -> Node
     -> IO [RRSetSig]
-makeNSEC3forPrimary ttl zone doSign n3p@RD_NSEC3PARAM{..} root = doSign False $ map pack zipped
+makeNSEC3forPrimary ttl zone signZone n3p@RD_NSEC3PARAM{..} root = signZone False $ map pack zipped
   where
     packedNameTypes :: [(Domain, [TYPE])]
     packedNameTypes = foldNode skipUnderDelegated root
