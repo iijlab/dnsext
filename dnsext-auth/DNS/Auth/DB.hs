@@ -156,9 +156,10 @@ makeDBforPrimary zone mn3p doSign (soarr : rrs)
         Nothing -> E.throwIO $ AuthException "SOA is broken"
         Just soa -> do
             let ttl = soa_minimum soa
-            let (is, ns, ds, gs, _os) = divide zone rrs
+            let (is, ns, ks, ds, gs, _os) = divide zone rrs
             ssSigned <- doSign True [soarr]
             isSigned <- doSign True is
+            ksSigned <- doSign True ks
             dsSigned <- doSign True ds
             n3pSigned <- case mn3p of
                 Nothing -> return []
@@ -173,7 +174,7 @@ makeDBforPrimary zone mn3p doSign (soarr : rrs)
                                 }
                     doSign True [n3prr]
             -- In-domain NS/DS should have NSEC.
-            node <- makeNode zone (ssSigned ++ n3pSigned ++ isSigned ++ unsign ns ++ dsSigned ++ unsign gs)
+            node <- makeNode zone (ssSigned ++ n3pSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
             (nsecSigned, nsecdb, mconv) <- case mn3p of
                 Nothing -> do
                     xs <- makeNSECforPrimary ttl doSign node
@@ -189,6 +190,7 @@ makeDBforPrimary zone mn3p doSign (soarr : rrs)
                         ++ concatMap (getRRs True) isSigned
                         ++ concatMap (getRRs True) n3pSigned
                         ++ ns
+                        ++ concatMap (getRRs True) ksSigned
                         ++ concatMap (getRRs True) dsSigned
                         ++ concatMap (getRRs True) nsecSigned
                         ++ gs
@@ -212,12 +214,13 @@ makeDBforSecondary zone (soarr : rrs0)
                 (nsec, rrs)
                     | null nsec3params = partition (\r -> rrtype r == NSEC) rrs1
                     | otherwise = partition (\r -> rrtype r == NSEC3) rrs1
-            let (is, ns, ds, gs, _os) = divide zone rrs
+            let (is, ns, ks, ds, gs, _os) = divide zone rrs
                 sigDB = M.fromList $ catMaybes $ map rrsigKV sigs
                 ssSigned = groupAndSig sigDB [soarr]
                 isSigned = groupAndSig sigDB is
+                ksSigned = groupAndSig sigDB ks
                 dsSigned = groupAndSig sigDB ds
-            node <- makeNode zone (ssSigned ++ isSigned ++ unsign ns ++ dsSigned ++ unsign gs)
+            node <- makeNode zone (ssSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
             let nsecSigned = makeNSECforSecondary sigDB nsec
                 nsecdb
                     | null nsec3params = makeNSECDB nsecSigned
@@ -303,40 +306,43 @@ unsign rrs0 = map addNothing $ groupRRset rrs0
 --
 -- is: in-domain
 -- ns: NS except this domain
+-- ks: DNSKEY
 -- ds: DS
 -- gs: glue (in delegated domain)
 -- _os: unrelated, ignored
 divide
     :: Domain
     -> [ResourceRecord]
-    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
-divide zone rrs = (is, ns, ds, gs, _os)
+    -> ([ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord], [ResourceRecord])
+divide zone rrs = (is, ns, ks, ds, gs, _os)
   where
     -- ps: possible in-domain
-    (ps, ns, ds, _os) = divide4 zone rrs
+    (ps, ns, ks, ds, _os) = divide5 zone rrs
     isDelegated = makeIsDelegated ns
     (gs, is) = partition (\r -> isDelegated (rrname r)) ps
 
 {- FOURMOLU_DISABLE -}
-divide4
+divide5
     :: Domain
     -> [ResourceRecord]
     -> ( [ResourceRecord] -- Possible in-domain
        , [ResourceRecord] -- NS except this domain
+       , [ResourceRecord] -- DNSKEY
        , [ResourceRecord] -- DS
        , [ResourceRecord] -- Unrelated, ignored
        )
-divide4 dom rrs0 = loop rrs0 [] [] [] []
+divide5 dom rrs0 = loop rrs0 [] [] [] [] []
   where
-    loop [] as ns ds os               = (as, ns, ds, os)
-    loop (r : rs) as ns ds os
+    loop [] as ns ks ds os            = (as, ns, ks, ds, os)
+    loop (r : rs) as ns ks ds os
         | rrname r `isSubDomainOf` dom =
             if
                 | rrtype r == NS
-                  && rrname r /= dom -> loop rs as (r : ns) ds os
-                | rrtype r == DS     -> loop rs as ns (r : ds) os
-                | otherwise          -> loop rs (r : as) ns ds os
-        | otherwise                   = loop rs as ns ds (r : os)
+                  && rrname r /= dom -> loop rs as (r : ns) ks ds os
+                | rrtype r == DNSKEY -> loop rs as ns (r : ks) ds os
+                | rrtype r == DS     -> loop rs as ns ks (r : ds) os
+                | otherwise          -> loop rs (r : as) ns ks ds os
+        | otherwise                   = loop rs as ns ks ds (r : os)
 {- FOURMOLU_ENABLE -}
 
 makeIsDelegated
