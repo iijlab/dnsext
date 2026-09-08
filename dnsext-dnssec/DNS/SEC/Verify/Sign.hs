@@ -10,6 +10,7 @@ module DNS.SEC.Verify.Sign (
     makeDS,
     KeyConfig (..),
     KeyInfo (..),
+    KeyType (..),
     generateKeyInfo,
     toKeyInfo,
     fromKeyInfo,
@@ -47,6 +48,7 @@ data KeyConfig = KeyConfig
     , keyConfDuration :: DNSTime
     -- ^ Duration of RRSIG. This value is added to inception to
     -- calculate expiration.
+    , keyConfType :: KeyType
     }
     deriving (Eq, Show)
 
@@ -121,10 +123,16 @@ genKeyPair alg = case getRRSIGImpl alg of
             prikey = rrsigIEncodePriKey pri
         return $ Just (pubkey, prikey)
 
-makeDNSKEY :: PubAlg -> PubKey -> Bool -> RD_DNSKEY
-makeDNSKEY alg pub ksk =
+data KeyType = ZSK | KSK deriving (Eq, Show)
+
+fromKeyType :: KeyType -> [DNSKEY_Flag]
+fromKeyType ZSK = [ZONE]
+fromKeyType KSK = [ZONE, SecureEntryPoint]
+
+makeDNSKEY :: PubAlg -> PubKey -> [DNSKEY_Flag] -> RD_DNSKEY
+makeDNSKEY alg pub flags =
     RD_DNSKEY
-        { dnskey_flags = [ZONE] ++ if ksk then [SecureEntryPoint] else []
+        { dnskey_flags = flags
         , dnskey_protocol = 3
         , dnskey_pubalg = alg
         , dnskey_public_key = pub
@@ -156,7 +164,7 @@ generateKeyInfo KeyConfig{..} = do
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY keyConfPubAlg pubkey True -- fixme
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
                 ds = makeDS keyConfZone keyConfDigestAlg dnskey
                 keyInfo = toKeyInfo keyConfZone prikey dnskey ds
                 (rrdnskey, rrds) = toRRs keyConfZone keyConfTTL dnskey ds
@@ -198,7 +206,7 @@ toKeyInfo zone prikey RD_DNSKEY{..} RD_DS{..} =
 fromKeyInfo :: KeyInfo -> TTL -> (RD_DNSKEY, RD_DS, ResourceRecord, ResourceRecord)
 fromKeyInfo KeyInfo{..} ttl = (dnskey, ds, rrdnskey, rrds)
   where
-    dnskey = makeDNSKEY keyInfoAlgorithm keyInfoPubKey True -- fixme
+    dnskey = makeDNSKEY keyInfoAlgorithm keyInfoPubKey $ toDNSKEYflags keyInfoFlag
     ds = makeDS keyInfoZone keyInfoDigestAlgo dnskey
     (rrdnskey, rrds) = toRRs keyInfoZone ttl dnskey ds
 
@@ -222,7 +230,7 @@ prepareDNSSEC conf@KeyConfig{..} = do
     case mp of
         Nothing -> E.throwIO SignFailure
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY keyConfPubAlg pubkey True -- fixme
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
                 ds = makeDS keyConfZone keyConfDigestAlg dnskey
                 tag = ds_key_tag ds
                 rrdnskey =
