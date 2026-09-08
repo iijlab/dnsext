@@ -145,12 +145,13 @@ makeDBforPrimary
     :: Domain
     -> (Maybe RD_NSEC3PARAM)
     -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
     -> [ResourceRecord]
     -> IO DB
-makeDBforPrimary _ _ _ [] = E.throwIO $ AuthException "No resource records"
+makeDBforPrimary _ _ _ _ [] = E.throwIO $ AuthException "No resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforPrimary zone mn3p signZone (soarr : rrs)
+makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
     | rrtype soarr /= SOA = E.throwIO $ AuthException "SOA does not exist"
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> E.throwIO $ AuthException "SOA is broken"
@@ -159,7 +160,7 @@ makeDBforPrimary zone mn3p signZone (soarr : rrs)
             let (is, ns, ks, ds, gs, _os) = divide zone rrs
             ssSigned <- signZone True [soarr]
             isSigned <- signZone True is
-            ksSigned <- signZone True ks
+            ksSigned <- signKey True ks
             dsSigned <- signZone True ds
             n3pSigned <- case mn3p of
                 Nothing -> return []

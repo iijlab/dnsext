@@ -52,7 +52,7 @@ loadKSKInfo
     :: FilePath
     -> KeyConfig
     -> TTL
-    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+    -> IO (KeyInfo, ResourceRecord)
 loadKSKInfo zoneDir keyConf0 ttl = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
@@ -64,8 +64,8 @@ loadZSKInfo
     -> KeyConfig
     -> TTL
     -> IO
-        ( (KeyInfo, ResourceRecord, ResourceRecord) -- current
-        , (KeyInfo, ResourceRecord, ResourceRecord) -- next
+        ( (KeyInfo, ResourceRecord) -- current
+        , (KeyInfo, ResourceRecord) -- next
         )
 loadZSKInfo zoneDir keyConf0 ttl = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
@@ -88,25 +88,25 @@ loadOrGenerateKey
     -> KeyConfig
     -> TTL
     -> FilePath
-    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+    -> IO (KeyInfo, ResourceRecord)
 loadOrGenerateKey zoneDir keyConf0 ttl fn = do
     mki <- loadKeyInfo (zoneDir </> fn)
     case mki of
         Nothing -> generateKey zoneDir keyConf0 ttl
         Just ki -> do
-            let (_, _, dnskeyrr, dsrr) = fromKeyInfo ki ttl
-            return (ki, dnskeyrr, dsrr)
+            let (_, _, dnskeyrr, _) = fromKeyInfo ki ttl
+            return (ki, dnskeyrr)
 
 generateKey
     :: FilePath
     -> KeyConfig
     -> TTL
-    -> IO (KeyInfo, ResourceRecord, ResourceRecord)
+    -> IO (KeyInfo, ResourceRecord) -- DNSKEY
 generateKey zoneDir keyConf0 ttl = do
     let keyConf = keyConf0{keyConfTTL = ttl}
-    ret@(keyInfo, _, _) <- generateKeyInfo keyConf
+    ret@(keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
     saveKSKInfo zoneDir keyInfo
-    return ret
+    return (keyInfo, dnskeyrr)
 
 ----------------------------------------------------------------
 
