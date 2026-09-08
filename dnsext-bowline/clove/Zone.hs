@@ -173,9 +173,9 @@ readSigning :: Domain -> ZoneConf -> IO (Maybe Signing)
 readSigning dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
-        pa <- case toPubAlgo cnf_pub_algo of
+        pa <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
-            Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_pub_algo ++ " is unknown"
+            Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.throwIO $ AuthException $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
