@@ -29,9 +29,8 @@ saveZSKInfo zoneDir ki = save zoneDir ".zsk" ki
 
 save :: FilePath -> String -> KeyInfo -> IO ()
 save zoneDir suffix KeyInfo{..} = do
-    t <- getUnixTime
-    fn <- C8.unpack <$> formatUnixTime ("%Y-%m-%d-%H:%M:%S" <> C8.pack suffix) t
-    C8.writeFile (zoneDir </> fn) statusBS
+    fn <- getUnixTime >>= findNonExistingFile zoneDir suffix
+    C8.writeFile fn statusBS
   where
     statusBS =
         "Zone:       " <> toRepresentation keyInfoZone <> "\n" <>
@@ -44,6 +43,16 @@ save zoneDir suffix KeyInfo{..} = do
         "Flag:       " <> toB keyInfoFlag <> "\n"
     toB :: Show a => a -> C8.ByteString
     toB = C8.pack . show
+
+findNonExistingFile :: FilePath -> String -> UnixTime -> IO FilePath
+findNonExistingFile zoneDir suffix ut0 = loop ut0
+  where
+    loop ut = do
+        fn <- C8.unpack <$> formatUnixTime ("%Y-%m-%d-%H:%M:%S" <> C8.pack suffix) ut
+        let afn = zoneDir </> fn
+        exist <- doesFileExist afn
+        if exist then loop ut {utSeconds = utSeconds ut + 1}
+            else return afn
 {- FOURMOLU_ENABLE -}
 
 ----------------------------------------------------------------
@@ -105,7 +114,9 @@ generateKey
 generateKey zoneDir keyConf0 ttl = do
     let keyConf = keyConf0{keyConfTTL = ttl}
     (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
-    saveKSKInfo zoneDir keyInfo
+    case keyConfType keyConf of
+        KSK -> saveKSKInfo zoneDir keyInfo
+        ZSK -> saveZSKInfo zoneDir keyInfo
     return (keyInfo, dnskeyrr)
 
 ----------------------------------------------------------------
