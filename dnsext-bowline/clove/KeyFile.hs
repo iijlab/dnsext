@@ -104,7 +104,7 @@ generateKey
     -> IO (KeyInfo, ResourceRecord) -- DNSKEY
 generateKey zoneDir keyConf0 ttl = do
     let keyConf = keyConf0{keyConfTTL = ttl}
-    ret@(keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
+    (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
     saveKSKInfo zoneDir keyInfo
     return (keyInfo, dnskeyrr)
 

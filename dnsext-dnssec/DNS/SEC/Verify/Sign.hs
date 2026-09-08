@@ -11,6 +11,7 @@ module DNS.SEC.Verify.Sign (
     KeyConfig (..),
     KeyInfo (..),
     KeyType (..),
+    Signer,
     generateKeyInfo,
     toKeyInfo,
     fromKeyInfo,
@@ -210,7 +211,12 @@ fromKeyInfo KeyInfo{..} ttl = (dnskey, ds, rrdnskey, rrds)
     ds = makeDS keyInfoZone keyInfoDigestAlgo dnskey
     (rrdnskey, rrds) = toRRs keyInfoZone ttl dnskey ds
 
-makeSigner :: KeyConfig -> KeyInfo -> IO (Bool -> [ResourceRecord] -> IO [RRSetSig])
+type Signer =
+    Bool -- grouping up RRs if True
+    -> [ResourceRecord]
+    -> IO [RRSetSig]
+
+makeSigner :: KeyConfig -> KeyInfo -> IO Signer
 makeSigner conf KeyInfo{..} = do
     rrsigTemp <- makeRRSIGtemplate conf keyInfoTag
     let signer = signZone keyInfoPriKey rrsigTemp
@@ -223,7 +229,7 @@ prepareDNSSEC
         , PriKey
         , ResourceRecord -- DNSKEY
         , ResourceRecord -- DS
-        , Bool -> [ResourceRecord] -> IO [RRSetSig]
+        , Signer
         )
 prepareDNSSEC conf@KeyConfig{..} = do
     mp <- genKeyPair keyConfPubAlg

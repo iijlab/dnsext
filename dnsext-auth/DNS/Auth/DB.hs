@@ -144,8 +144,8 @@ loadZoneFile zone file = catMaybes . map fromResource <$> ZF.parseFile file zone
 makeDBforPrimary
     :: Domain
     -> (Maybe RD_NSEC3PARAM)
-    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
-    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> Signer
+    -> Signer
     -> [ResourceRecord]
     -> IO DB
 makeDBforPrimary _ _ _ _ [] = E.throwIO $ AuthException "No resource records"
@@ -371,7 +371,7 @@ fromResource _ = Nothing
 
 makeNSECforPrimary
     :: TTL
-    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> Signer
     -> Node
     -> IO [RRSetSig]
 makeNSECforPrimary ttl signZone root = signZone False $ map pack zipped
@@ -420,7 +420,7 @@ expandHashedLabel l zone = encB32 l `consDomain` zone
 makeNSEC3forPrimary
     :: TTL
     -> Domain
-    -> (Bool -> [ResourceRecord] -> IO [RRSetSig])
+    -> Signer
     -> RD_NSEC3PARAM
     -> Node
     -> IO [RRSetSig]
