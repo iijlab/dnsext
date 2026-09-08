@@ -317,6 +317,7 @@ divide zone rrs = (is, ns, ds, gs, _os)
     isDelegated = makeIsDelegated ns
     (gs, is) = partition (\r -> isDelegated (rrname r)) ps
 
+{- FOURMOLU_DISABLE -}
 divide4
     :: Domain
     -> [ResourceRecord]
@@ -327,15 +328,16 @@ divide4
        )
 divide4 dom rrs0 = loop rrs0 [] [] [] []
   where
-    loop [] as ns ds os = (as, ns, ds, os)
+    loop [] as ns ds os               = (as, ns, ds, os)
     loop (r : rs) as ns ds os
         | rrname r `isSubDomainOf` dom =
             if
-                | rrtype r == NS && rrname r /= dom ->
-                    loop rs as (r : ns) ds os
-                | rrtype r == DS -> loop rs as ns (r : ds) os
-                | otherwise -> loop rs (r : as) ns ds os
-        | otherwise = loop rs as ns ds (r : os)
+                | rrtype r == NS
+                  && rrname r /= dom -> loop rs as (r : ns) ds os
+                | rrtype r == DS     -> loop rs as ns (r : ds) os
+                | otherwise          -> loop rs (r : as) ns ds os
+        | otherwise                   = loop rs as ns ds (r : os)
+{- FOURMOLU_ENABLE -}
 
 makeIsDelegated
     :: [ResourceRecord]
