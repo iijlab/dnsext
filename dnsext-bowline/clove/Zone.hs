@@ -133,14 +133,16 @@ loadSourceWithSigning
     -> IO DB
 loadSourceWithSigning env zone serial source Nothing =
     loadSource env zone serial source >>= makeDBforSecondary zone
-loadSourceWithSigning env zone serial source (Just (Signing keyConf mn3p)) = do
+loadSourceWithSigning env zone serial source (Just Signing{..}) = do
     rrs <- loadSource env zone serial source
     ttl <- extractTTL rrs
     let zoneDir = init $ toRepresentation zone
     createDirectoryIfMissing True zoneDir
-    (keyInfo, dnskeyrr, _dsrr) <- loadKSKInfo zoneDir keyConf ttl
-    signer <- makeSigner keyConf keyInfo
-    makeDBforPrimary zone mn3p signer (rrs ++ [dnskeyrr])
+    (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir signingKSK ttl
+    signKey <- makeSigner signingKSK keyInfoKSK
+    ((keyInfoZSK0, dnskeyrr0), (_keyInfoZSK1, dnskeyrr1)) <- loadZSKInfo zoneDir signingZSK ttl
+    signZone <- makeSigner signingZSK keyInfoZSK0
+    makeDBforPrimary zone signingN3P signKey signZone (rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1])
 
 -- | This function throws 'AuthException'.
 loadSource :: Env -> Domain -> Serial -> Source -> IO [ResourceRecord]
@@ -173,20 +175,32 @@ readSigning :: Domain -> ZoneConf -> IO (Maybe Signing)
 readSigning dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
-        pa <- case toPubAlgo cnf_ksk_algo of
+        kskAlgo <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
             Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
+        zskAlgo <- case toPubAlgo cnf_zsk_algo of
+            Just pa0 -> return pa0
+            Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.throwIO $ AuthException $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
-        let keyConf =
+        let keyConfKSK =
                 KeyConfig
                     { keyConfZone = dom
-                    , keyConfPubAlg = pa
+                    , keyConfPubAlg = kskAlgo
                     , keyConfDigestAlg = dd
                     , keyConfTTL = 3600 -- overridden by SOA
                     , keyConfDuration = 86400 -- fixme
-                    , keyConfType = KSK -- fixme
+                    , keyConfType = KSK
+                    }
+        let keyConfZSK =
+                KeyConfig
+                    { keyConfZone = dom
+                    , keyConfPubAlg = zskAlgo
+                    , keyConfDigestAlg = dd
+                    , keyConfTTL = 3600 -- overridden by SOA
+                    , keyConfDuration = 86400 -- fixme
+                    , keyConfType = ZSK
                     }
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0
@@ -194,7 +208,13 @@ readSigning dom ZoneConf{..}
         let mn3p
                 | cnf_nsec3 = Just $ defaultNSEC3PARAM{nsec3param_hashalg = h}
                 | otherwise = Nothing
-        return $ Just $ Signing keyConf mn3p
+        return $
+            Just $
+                Signing
+                    { signingKSK = keyConfKSK
+                    , signingZSK = keyConfZSK
+                    , signingN3P = mn3p
+                    }
 
 ----------------------------------------------------------------
 
