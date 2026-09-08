@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -329,12 +330,11 @@ divide4 dom rrs0 = loop rrs0 [] [] [] []
     loop [] as ns ds os = (as, ns, ds, os)
     loop (r : rs) as ns ds os
         | rrname r `isSubDomainOf` dom =
-            if rrtype r == NS && rrname r /= dom
-                then loop rs as (r : ns) ds os
-                else
-                    if rrtype r == DS
-                        then loop rs as ns (r : ds) os
-                        else loop rs (r : as) ns ds os
+            if
+                | rrtype r == NS && rrname r /= dom ->
+                    loop rs as (r : ns) ds os
+                | rrtype r == DS -> loop rs as ns (r : ds) os
+                | otherwise -> loop rs (r : as) ns ds os
         | otherwise = loop rs as ns ds (r : os)
 
 makeIsDelegated
