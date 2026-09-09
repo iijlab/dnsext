@@ -48,8 +48,8 @@ data KeyConfig = KeyConfig
     , keyConfDigestAlg :: DigestAlg
     , keyConfTTL       :: TTL
     -- ^ TTL for DNSKEY and DS
-    , keyConfDuration  :: DNSTime
-    -- ^ Duration of RRSIG. This value is added to inception to
+    , keyConfLifetime  :: DNSTime
+    -- ^ Lifetime of RRSIG. This value is added to inception to
     -- calculate expiration.
     , keyConfType      :: KeyType
     , keyConfSize      :: Int
@@ -64,7 +64,7 @@ defaultKeyConfig =
         , keyConfPubAlg    = ED25519
         , keyConfDigestAlg = SHA256
         , keyConfTTL       = 3600
-        , keyConfDuration  = 86400
+        , keyConfLifetime  = 86400
         , keyConfType      = ZSK
         , keyConfSize      = 0
         }
@@ -279,7 +279,7 @@ prepareDNSSEC conf@KeyConfig{..} = do
 makeRRSIGtemplate :: KeyConfig -> KeyTag -> IO RD_RRSIG
 makeRRSIGtemplate KeyConfig{..} tag = do
     inception <- toDNSTime <$> getCurrentTime
-    let expiration = inception + keyConfDuration
+    let expiration = inception + keyConfLifetime
     return $
         RD_RRSIG
             { rrsig_type = A -- overridden
