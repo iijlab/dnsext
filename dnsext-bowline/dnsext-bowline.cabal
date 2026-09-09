@@ -156,6 +156,7 @@ executable clove
                       KeyFile
                       Net
                       Notify
+                      Serial
                       Types
                       Zone
 
