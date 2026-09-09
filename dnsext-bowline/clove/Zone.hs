@@ -140,9 +140,9 @@ loadSourceWithSigning env zone serial source (Just Signing{..}) = do
     createDirectoryIfMissing True zoneDir
     (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir signingKSK ttl
     signKey <- makeSigner signingKSK keyInfoKSK
-    ((keyInfoZSK0, dnskeyrr0), (_keyInfoZSK1, dnskeyrr1)) <- loadZSKInfo zoneDir signingZSK ttl
-    signZone <- makeSigner signingZSK keyInfoZSK0
-    makeDBforPrimary zone signingN3P signKey signZone (rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1])
+    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir signingZSK ttl
+    signZone <- makeSigner signingZSK keyInfoZSK1
+    makeDBforPrimary zone signingN3P signKey signZone (rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
 
 -- | This function throws 'AuthException'.
 loadSource :: Env -> Domain -> Serial -> Source -> IO [ResourceRecord]
