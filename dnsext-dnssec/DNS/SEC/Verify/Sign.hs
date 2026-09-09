@@ -9,6 +9,7 @@ module DNS.SEC.Verify.Sign (
     makeDNSKEY,
     makeDS,
     KeyConfig (..),
+    defaultKeyConfig,
     KeyInfo (..),
     KeyType (..),
     Signer,
@@ -55,6 +56,18 @@ data KeyConfig = KeyConfig
     -- ^ Key size used only for RSA
     }
     deriving (Eq, Show)
+
+defaultKeyConfig :: KeyConfig
+defaultKeyConfig =
+    KeyConfig
+        { keyConfZone      = "."
+        , keyConfPubAlg    = ED25519
+        , keyConfDigestAlg = SHA256
+        , keyConfTTL       = 3600
+        , keyConfDuration  = 86400
+        , keyConfType      = ZSK
+        , keyConfSize      = 0
+        }
 
 data KeyInfo = KeyInfo
     { keyInfoZone       :: Domain
