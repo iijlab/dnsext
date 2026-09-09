@@ -56,6 +56,7 @@ data ZoneConf = ZoneConf
     , cnf_zsk_size             :: Int
     , cnf_ds_digest            :: String
     , cnf_nsec3_hash           :: String
+    , cnf_rrsig_lifetime       :: Int
     }
     deriving (Show)
 
@@ -78,6 +79,7 @@ defaultZoneConf =
         , cnf_zsk_size             = 0
         , cnf_ds_digest            = "SHA-256"
         , cnf_nsec3_hash           = "SHA-1"
+        , cnf_rrsig_lifetime       = 604800 -- one week
         }
 
 ----------------------------------------------------------------
@@ -121,6 +123,7 @@ makeZoneConf def conf = do
     cnf_ksk_size             <- get "ksk-size"             cnf_ksk_size
     cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
     cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
+    cnf_rrsig_lifetime       <- get "rrsig_lifetime"       cnf_rrsig_lifetime
     pure ZoneConf{..}
   where
     get k func = do

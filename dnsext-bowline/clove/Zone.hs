@@ -190,7 +190,7 @@ readSigning dom ZoneConf{..}
                     , keyConfPubAlg = kskAlgo
                     , keyConfDigestAlg = dd
                     , keyConfTTL = 3600 -- overridden by SOA
-                    , keyConfDuration = 86400 -- fixme
+                    , keyConfDuration = toDNSTime $ fromIntegral cnf_rrsig_lifetime
                     , keyConfType = KSK
                     , keyConfSize = cnf_ksk_size
                     }
@@ -200,7 +200,7 @@ readSigning dom ZoneConf{..}
                     , keyConfPubAlg = zskAlgo
                     , keyConfDigestAlg = dd
                     , keyConfTTL = 3600 -- overridden by SOA
-                    , keyConfDuration = 86400 -- fixme
+                    , keyConfDuration = toDNSTime $ fromIntegral cnf_rrsig_lifetime
                     , keyConfType = ZSK
                     , keyConfSize = cnf_zsk_size
                     }
