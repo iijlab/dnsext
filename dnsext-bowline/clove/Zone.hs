@@ -31,6 +31,7 @@ import Algo
 import qualified Axfr
 import Config
 import KeyFile
+import Serial
 import Types
 
 ----------------------------------------------------------------
@@ -43,7 +44,7 @@ newZones env zcs = mapM (newZone env) zcs
 newZone :: Env -> ZoneConf -> IO Zone
 newZone env zoneconf@ZoneConf{..} = do
     msigning <- readSigning zone zoneconf
-    edb <- E.try $ loadSourceWithSigning env zone (Serial 0) source msigning
+    edb <- E.try $ loadSourceWithSigning env zone source msigning
     (db, ready) <- case edb of
         Left (AuthException msg) -> do
             envPutLines env WARNING Nothing [msg]
@@ -101,8 +102,7 @@ initSync = do
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = do
     Zone{..} <- readIORef zoneref
-    let serial = soa_serial $ dbRD_SOA zoneDB
-    edb <- E.try $ loadSourceWithSigning env zoneName serial zoneSource zoneSigning
+    edb <- E.try $ loadSourceWithSigning env zoneName zoneSource zoneSigning
     case edb of
         Left (AuthException msg) -> envPutLines env WARNING Nothing [msg]
         Right db -> atomicModifyIORef' zoneref $ modify db
@@ -117,26 +117,31 @@ updateZone env zoneref = do
 
 ----------------------------------------------------------------
 
-extractTTL :: [ResourceRecord] -> IO Seconds
-extractTTL [] = E.throwIO $ AuthException "No RRs"
-extractTTL (soarr : _rest) = case fromRData $ rdata soarr of
-    Nothing -> E.throwIO $ AuthException "SOA does not exist"
-    Just soa -> return $ soa_minimum soa
-
 -- | This function throws 'AuthException'.
 loadSourceWithSigning
     :: Env
     -> Domain
-    -> Serial
     -> Source
     -> Maybe Signing
     -> IO DB
-loadSourceWithSigning env zone serial source Nothing =
-    loadSource env zone serial source >>= makeDBforSecondary zone
-loadSourceWithSigning env zone serial source (Just Signing{..}) = do
-    rrs <- loadSource env zone serial source
-    ttl <- extractTTL rrs
+loadSourceWithSigning env zone source Nothing = do
     let zoneDir = init $ toRepresentation zone
+    mserial <- loadSerial zoneDir
+    db <- loadSource env zone mserial source >>= makeDBforSecondary zone
+    saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
+    return db
+loadSourceWithSigning env zone source (Just Signing{..}) = do
+    let zoneDir = init $ toRepresentation zone
+    mserial <- loadSerial zoneDir
+    (soa0, soarr0, rrs) <- loadSource env zone mserial source >>= checkRRs
+    let ttl = soa_minimum soa0
+        soa
+            | byMySelf source = case mserial of
+                Nothing -> soa0 -- No serial file, serial from zone file
+                Just s -> soa0{soa_serial = s <> Serial 1}
+            | otherwise = soa0
+        soarr = soarr0{rdata = toRData soa}
+    saveSerial zoneDir $ soa_serial soa
     createDirectoryIfMissing True zoneDir
     let kskKeyConfig = signingKSKConfig{keyConfTTL = ttl}
     (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
@@ -144,14 +149,24 @@ loadSourceWithSigning env zone serial source (Just Signing{..}) = do
     let zskKeyConfig = signingZSKConfig{keyConfTTL = ttl}
     ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir zskKeyConfig
     signZone <- makeSigner zskKeyConfig keyInfoZSK1
-    makeDBforPrimary zone signingN3P signKey signZone (rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
+    makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
+
+byMySelf :: Source -> Bool
+byMySelf (FromFile _) = True
+byMySelf _ = False
 
 -- | This function throws 'AuthException'.
-loadSource :: Env -> Domain -> Serial -> Source -> IO [ResourceRecord]
-loadSource env zone serial source = case source of
-    FromUpstream4 ip4 -> Axfr.client env serial (IPv4 ip4) zone
-    FromUpstream6 ip6 -> Axfr.client env serial (IPv6 ip6) zone
+loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO [ResourceRecord]
+loadSource env zone mserial source = case source of
+    FromUpstream4 ip4 -> Axfr.client env mserial (IPv4 ip4) zone
+    FromUpstream6 ip6 -> Axfr.client env mserial (IPv6 ip6) zone
     FromFile fn -> loadZoneFile zone fn
+
+checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])
+checkRRs [] = E.throwIO $ AuthException "No RRs"
+checkRRs (soarr : rrs) = case fromRData $ rdata soarr of
+    Nothing -> E.throwIO $ AuthException "SOA does not exist"
+    Just soa -> return (soa, soarr, rrs)
 
 ----------------------------------------------------------------
 

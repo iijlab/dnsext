@@ -54,8 +54,9 @@ transfer Env{..} Proto{..} zone sa query = do
 
 ----------------------------------------------------------------
 
-client :: Env -> Serial -> IP -> Domain -> IO [ResourceRecord]
-client env serial0 ip dom = do
+client :: Env -> Maybe Serial -> IP -> Domain -> IO [ResourceRecord]
+client env Nothing ip dom = axfrQuery env ip dom
+client env (Just serial0) ip dom = do
     mserial <- serialQuery env ip dom
     case mserial of
         Nothing -> return []
