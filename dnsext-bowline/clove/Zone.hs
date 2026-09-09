@@ -138,10 +138,12 @@ loadSourceWithSigning env zone serial source (Just Signing{..}) = do
     ttl <- extractTTL rrs
     let zoneDir = init $ toRepresentation zone
     createDirectoryIfMissing True zoneDir
-    (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir signingKSK ttl
-    signKey <- makeSigner signingKSK keyInfoKSK
-    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir signingZSK ttl
-    signZone <- makeSigner signingZSK keyInfoZSK1
+    let kskKeyConfig = signingKSKConfig{keyConfTTL = ttl}
+    (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
+    signKey <- makeSigner kskKeyConfig keyInfoKSK
+    let zskKeyConfig = signingZSKConfig{keyConfTTL = ttl}
+    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir zskKeyConfig
+    signZone <- makeSigner zskKeyConfig keyInfoZSK1
     makeDBforPrimary zone signingN3P signKey signZone (rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
 
 -- | This function throws 'AuthException'.
@@ -213,8 +215,8 @@ readSigning dom ZoneConf{..}
         return $
             Just $
                 Signing
-                    { signingKSK = keyConfKSK
-                    , signingZSK = keyConfZSK
+                    { signingKSKConfig = keyConfKSK
+                    , signingZSKConfig = keyConfZSK
                     , signingN3P = mn3p
                     }
 

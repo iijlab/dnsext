@@ -60,58 +60,53 @@ findNonExistingFile zoneDir suffix ut0 = loop ut0
 loadKSKInfo
     :: FilePath
     -> KeyConfig
-    -> TTL
     -> IO (KeyInfo, ResourceRecord)
-loadKSKInfo zoneDir keyConf0 ttl = do
+loadKSKInfo zoneDir keyConf = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> generateKey zoneDir keyConf0 ttl
-        fn : _ -> loadOrGenerateKey zoneDir keyConf0 ttl fn
+        [] -> generateKey zoneDir keyConf
+        fn : _ -> loadOrGenerateKey zoneDir keyConf fn
 
 loadZSKInfo
     :: FilePath
     -> KeyConfig
-    -> TTL
     -> IO
         ( (KeyInfo, ResourceRecord) -- previous
         , (KeyInfo, ResourceRecord) -- current
         , (KeyInfo, ResourceRecord) -- next
         )
-loadZSKInfo zoneDir keyConf0 ttl = do
+loadZSKInfo zoneDir keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         fn2 : fn1 : fn0 : _ -> do
-            ki0 <- loadOrGenerateKey zoneDir keyConf0 ttl fn0
-            ki1 <- loadOrGenerateKey zoneDir keyConf0 ttl fn1
-            ki2 <- loadOrGenerateKey zoneDir keyConf0 ttl fn2
+            ki0 <- loadOrGenerateKey zoneDir keyConf fn0
+            ki1 <- loadOrGenerateKey zoneDir keyConf fn1
+            ki2 <- loadOrGenerateKey zoneDir keyConf fn2
             return (ki0, ki1, ki2)
         _ -> do
-            ki0 <- generateKey zoneDir keyConf0 ttl
-            ki1 <- generateKey zoneDir keyConf0 ttl
-            ki2 <- generateKey zoneDir keyConf0 ttl
+            ki0 <- generateKey zoneDir keyConf
+            ki1 <- generateKey zoneDir keyConf
+            ki2 <- generateKey zoneDir keyConf
             return (ki0, ki1, ki2)
 
 loadOrGenerateKey
     :: FilePath
     -> KeyConfig
-    -> TTL
     -> FilePath
     -> IO (KeyInfo, ResourceRecord)
-loadOrGenerateKey zoneDir keyConf0 ttl fn = do
+loadOrGenerateKey zoneDir keyConf fn = do
     mki <- loadKeyInfo (zoneDir </> fn)
     case mki of
-        Nothing -> generateKey zoneDir keyConf0 ttl
+        Nothing -> generateKey zoneDir keyConf
         Just ki -> do
-            let (_, _, dnskeyrr, _) = fromKeyInfo ki ttl
+            let (_, _, dnskeyrr, _) = fromKeyInfo ki $ keyConfTTL keyConf
             return (ki, dnskeyrr)
 
 generateKey
     :: FilePath
     -> KeyConfig
-    -> TTL
     -> IO (KeyInfo, ResourceRecord) -- DNSKEY
-generateKey zoneDir keyConf0 ttl = do
-    let keyConf = keyConf0{keyConfTTL = ttl}
+generateKey zoneDir keyConf = do
     (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
     case keyConfType keyConf of
         KSK -> saveKSKInfo zoneDir keyInfo

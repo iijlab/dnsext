@@ -21,8 +21,8 @@ data Source
     deriving (Eq, Show)
 
 data Signing = Signing
-    { signingKSK :: KeyConfig
-    , signingZSK :: KeyConfig
+    { signingKSKConfig :: KeyConfig
+    , signingZSKConfig :: KeyConfig
     , signingN3P :: Maybe RD_NSEC3PARAM -- Nothing for NSEC
     }
     deriving (Eq, Show)
