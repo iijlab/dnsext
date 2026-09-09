@@ -73,24 +73,23 @@ loadZSKInfo
     -> KeyConfig
     -> TTL
     -> IO
-        ( (KeyInfo, ResourceRecord) -- current
+        ( (KeyInfo, ResourceRecord) -- previous
+        , (KeyInfo, ResourceRecord) -- current
         , (KeyInfo, ResourceRecord) -- next
         )
 loadZSKInfo zoneDir keyConf0 ttl = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        fn1 : fn0 : _ -> do
+        fn2 : fn1 : fn0 : _ -> do
             ki0 <- loadOrGenerateKey zoneDir keyConf0 ttl fn0
             ki1 <- loadOrGenerateKey zoneDir keyConf0 ttl fn1
-            return (ki0, ki1)
-        fn0 : [] -> do
-            ki0 <- loadOrGenerateKey zoneDir keyConf0 ttl fn0
-            ki1 <- generateKey zoneDir keyConf0 ttl
-            return (ki0, ki1)
-        [] -> do
+            ki2 <- loadOrGenerateKey zoneDir keyConf0 ttl fn2
+            return (ki0, ki1, ki2)
+        _ -> do
             ki0 <- generateKey zoneDir keyConf0 ttl
             ki1 <- generateKey zoneDir keyConf0 ttl
-            return (ki0, ki1)
+            ki2 <- generateKey zoneDir keyConf0 ttl
+            return (ki0, ki1, ki2)
 
 loadOrGenerateKey
     :: FilePath
