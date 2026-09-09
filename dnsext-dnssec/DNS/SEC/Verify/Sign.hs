@@ -40,40 +40,42 @@ import Data.Word
 
 ----------------------------------------------------------------
 
+{- FOURMOLU_DISABLE -}
 data KeyConfig = KeyConfig
-    { keyConfZone :: Domain
-    , keyConfPubAlg :: PubAlg
+    { keyConfZone      :: Domain
+    , keyConfPubAlg    :: PubAlg
     , keyConfDigestAlg :: DigestAlg
-    , keyConfTTL :: TTL
+    , keyConfTTL       :: TTL
     -- ^ TTL for DNSKEY and DS
-    , keyConfDuration :: DNSTime
+    , keyConfDuration  :: DNSTime
     -- ^ Duration of RRSIG. This value is added to inception to
     -- calculate expiration.
-    , keyConfType :: KeyType
-    , keyConfSize :: Int
+    , keyConfType      :: KeyType
+    , keyConfSize      :: Int
     -- ^ Key size used only for RSA
     }
     deriving (Eq, Show)
 
 data KeyInfo = KeyInfo
-    { keyInfoZone :: Domain
-    , keyInfoAlgorithm :: PubAlg
+    { keyInfoZone       :: Domain
+    , keyInfoAlgorithm  :: PubAlg
     , keyInfoDigestAlgo :: DigestAlg
-    , keyInfoTag :: KeyTag
-    , keyInfoDigest :: Opaque
-    , keyInfoPubKey :: PubKey
-    , keyInfoPriKey :: PriKey
-    , keyInfoFlag :: Word16
+    , keyInfoTag        :: KeyTag
+    , keyInfoDigest     :: Opaque
+    , keyInfoPubKey     :: PubKey
+    , keyInfoPriKey     :: PriKey
+    , keyInfoFlag       :: Word16
     }
     deriving (Eq, Show)
 
 data RRSetSig = RRSetSig
     { rrsetsigName :: Domain
     , rrsetsigType :: TYPE
-    , rrsetsigRRs :: [ResourceRecord]
-    , rrsetsigSig :: Maybe ResourceRecord
+    , rrsetsigRRs  :: [ResourceRecord]
+    , rrsetsigSig  :: Maybe ResourceRecord
     }
     deriving (Show, Eq, Ord)
+{- FOURMOLU_ENABLE -}
 
 ----------------------------------------------------------------
 
