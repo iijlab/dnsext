@@ -60,7 +60,7 @@ newZone env zoneconf@ZoneConf{..} = do
         Zone
             { zoneDB = db
             , zoneReady = ready
-            , zoneShouldRefresh = shouldReload source
+            , zoneFromFile = fromFile source
             , zoneNotifyAddrs = notify_addrs
             , zoneAllowNotifyAddrs = allow_notify_addrs
             , zoneAllowTransfer4 = t4
@@ -69,28 +69,28 @@ newZone env zoneconf@ZoneConf{..} = do
             , zoneSource = source
             , zoneSigning = msigning
             , zoneWakeUp = wakeup
-            , zoneWait = wait
+            , zoneTimeoutWait = wait
             }
   where
     zone = fromRepresentation cnf_zone
     source = readSource zoneconf
 
-shouldReload :: Source -> Bool
-shouldReload (FromFile _) = False
-shouldReload _ = True
+fromFile :: Source -> Bool
+fromFile (FromFile _) = True
+fromFile _ = False
 
-initSync :: IO (WakeUp, Wait)
+initSync :: IO (WakeUp, TimeoutWait)
 initSync = do
     var <- newTVarIO False
     tmgr <- getSystemTimerManager
     return (wakeup var, wait var tmgr)
   where
     wakeup var = atomically $ writeTVar var True
-    wait var tmgr tout
-        | tout == 0 = waitBody var
-        | otherwise = E.bracket register cancel $ \_ -> waitBody var
+    wait var tmgr mtout = case mtout of
+        Nothing -> waitBody var
+        Just tout -> E.bracket (register tout) cancel $ \_ -> waitBody var
       where
-        register = registerTimeout tmgr (tout * 1000000) $ wakeup var
+        register tout = registerTimeout tmgr (tout * 1000000) $ wakeup var
         cancel = unregisterTimeout tmgr
     waitBody var = atomically $ do
         v <- readTVar var
