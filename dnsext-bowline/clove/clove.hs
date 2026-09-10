@@ -106,11 +106,13 @@ syncZone env zoneref = loop
   where
     loop = do
         Zone{..} <- readIORef zoneref
-        let tm
-                | not zoneShouldRefresh = 0
-                | not zoneReady = 10 -- retry
-                | otherwise = fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
-        zoneWait tm
+        let mtm
+                -- Source is from file. No timeout.
+                | zoneFromFile = Nothing
+                | not zoneReady = Just 10 -- retry
+                | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
+        -- A signal or timeout breaks this wait.
+        zoneTimeoutWait mtm
         -- reading zone source
         updateZone env zoneref
         -- notify

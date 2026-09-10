@@ -30,7 +30,7 @@ data Signing = Signing
 ----------------------------------------------------------------
 
 type WakeUp = IO ()
-type Wait = Int -> IO ()
+type TimeoutWait = Maybe Int -> IO () -- Nothing waits without timeout
 
 data Zone = Zone
     { zoneName :: Domain
@@ -38,13 +38,13 @@ data Zone = Zone
     , zoneSigning :: Maybe Signing
     , zoneDB :: DB
     , zoneReady :: Bool
-    , zoneShouldRefresh :: Bool
+    , zoneFromFile :: Bool
     , zoneNotifyAddrs :: [IP]
     , zoneAllowNotifyAddrs :: [IP]
     , zoneAllowTransfer4 :: IPRTable IPv4 Bool
     , zoneAllowTransfer6 :: IPRTable IPv6 Bool
-    , zoneWait :: Int -> IO ()
-    , zoneWakeUp :: IO ()
+    , zoneTimeoutWait :: TimeoutWait
+    , zoneWakeUp :: WakeUp
     }
 
 type ZoneAlist = [(Domain, IORef Zone)]
