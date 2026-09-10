@@ -4,13 +4,16 @@
 
 module KeyFile where
 
+import Control.Monad
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
 import Data.List (isSuffixOf, sortBy)
 import Data.UnixTime
+import Foreign.C.Types
 import System.Directory
 import System.FilePath
 import System.IO.Error (ioeGetErrorString, ioeSetErrorString, tryIOError)
+import System.Posix.Files
 
 import DNS.Config
 import DNS.SEC
@@ -112,6 +115,21 @@ generateKey zoneDir keyConf = do
         KSK -> saveKSKInfo zoneDir keyInfo
         ZSK -> saveZSKInfo zoneDir keyInfo
     return (keyInfo, dnskeyrr)
+
+----------------------------------------------------------------
+
+rolloverZSK :: FilePath -> KeyConfig -> IO ()
+rolloverZSK zoneDir keyConf = do
+    ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
+    case sortBy (flip compare) ksks of -- decreasing order
+        [] -> error "rolloverZSK" -- fixme
+        fn : _ -> do
+            ut0 <- fromEpochTime . modificationTime <$> getFileStatus (zoneDir </> fn)
+            ut1 <- getUnixTime
+            let CTime diff = udtSeconds (ut1 `diffUnixTime` ut0)
+            when (diff + 300 > fromDNSTime (keyConfLifetime keyConf)) $ do
+                -- fixme: 5min good enough?
+                void $ generateKey zoneDir keyConf
 
 ----------------------------------------------------------------
 

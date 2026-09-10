@@ -17,6 +17,7 @@ import System.Posix (Handler (Catch), installHandler, sigHUP)
 import DNS.Auth.Algorithm
 import DNS.Log
 import qualified DNS.SEC as DNS
+import DNS.SEC.Verify
 import qualified DNS.SVCB as DNS
 import DNS.Types
 import qualified DNS.Types as DNS
@@ -24,6 +25,7 @@ import Data.IORef
 
 import qualified Auth
 import Config
+import KeyFile
 import Net
 import Notify
 import Types
@@ -107,12 +109,19 @@ syncZone env zoneref = loop
     loop = do
         Zone{..} <- readIORef zoneref
         let mtm
+                -- Key rollover
+                | Just signing <- zoneSigning = Just $ fromIntegral $ DNS.fromDNSTime $ keyConfLifetime $ signingZSKConfig signing
                 -- Source is from file. No timeout.
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
                 | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
         -- A signal or timeout breaks this wait.
         zoneTimeoutWait mtm
+        case zoneSigning of
+            Nothing -> return ()
+            Just Signing{..} -> do
+                let zoneDir = init $ toRepresentation zoneName
+                rolloverZSK zoneDir signingZSKConfig
         -- reading zone source
         updateZone env zoneref
         -- notify
