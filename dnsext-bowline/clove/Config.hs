@@ -123,7 +123,7 @@ makeZoneConf def conf = do
     cnf_ksk_size             <- get "ksk-size"             cnf_ksk_size
     cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
     cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
-    cnf_rrsig_lifetime       <- get "rrsig_lifetime"       cnf_rrsig_lifetime
+    cnf_rrsig_lifetime       <- get "rrsig-lifetime"       cnf_rrsig_lifetime
     pure ZoneConf{..}
   where
     get k func = do
