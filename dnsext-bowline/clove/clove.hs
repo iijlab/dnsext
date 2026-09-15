@@ -12,6 +12,7 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Directory
 import System.Environment (getArgs)
+import qualified System.IO.Error as E
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 
 import DNS.Auth.Algorithm
@@ -106,7 +107,11 @@ tcpServer env zoneAlist port addr =
 syncZone :: Env -> IORef Zone -> IO ()
 syncZone env zoneref = loop
   where
+    logErr ie = envPutLines env WARNING Nothing [show ie]
     loop = do
+        go `E.catchIOError` logErr
+        loop
+    go = do
         Zone{..} <- readIORef zoneref
         let mtm
                 -- Key rollover

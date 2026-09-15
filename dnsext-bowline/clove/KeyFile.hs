@@ -12,7 +12,7 @@ import Data.UnixTime
 import Foreign.C.Types
 import System.Directory
 import System.FilePath
-import System.IO.Error (ioeGetErrorString, ioeSetErrorString, tryIOError)
+import qualified System.IO.Error as E
 import System.Posix.Files
 
 import DNS.Config
@@ -188,10 +188,10 @@ makeKeyInfoConf def conf = do
     pure KeyInfoConf{..}
   where
     get k func = do
-        et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
+        et <- E.tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
         let left e = do
-                let e' = ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
-                ioError e'
+                let e' = E.ioeSetErrorString e (k ++ ": " ++ E.ioeGetErrorString e)
+                E.ioError e'
         either left pure et
 {- FOURMOLU_ENABLE -}
 
