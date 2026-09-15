@@ -22,15 +22,9 @@ import Zone
 server :: Env -> Proto -> ZoneAlist -> IO ()
 server env@Env{..} proto@Proto{..} zoneAlist = loop
   where
+    logErr ie = envPutLines DEBUG Nothing [show ie]
     loop = do
-        ex <- E.tryIOError go
-        case ex of
-            Right () -> return ()
-            Left ie ->
-                envPutLines
-                    DEBUG
-                    Nothing
-                    [E.ioeGetErrorString ie]
+        go `E.catchIOError` logErr
         loop
     go = do
         (bs, sa) <- recvQuery
