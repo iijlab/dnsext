@@ -1,9 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Types where
 
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.IP
-import Data.IP.RouteTable
+import Data.IP.RouteTable as IPRT
 import Network.Socket
 
 import DNS.Auth.Algorithm

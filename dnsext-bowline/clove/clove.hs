@@ -12,7 +12,6 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Directory
 import System.Environment (getArgs)
-import qualified System.IO.Error as E
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 
 import DNS.Auth.Algorithm
@@ -26,6 +25,7 @@ import Data.IORef
 
 import qualified Auth
 import Config
+import Exception
 import KeyFile
 import Net
 import Notify
@@ -105,12 +105,8 @@ tcpServer env zoneAlist port addr =
 ----------------------------------------------------------------
 
 syncZone :: Env -> IORef Zone -> IO ()
-syncZone env zoneref = loop
+syncZone env zoneref = loopLogErr env WARNING go
   where
-    logErr ie = envPutLines env WARNING Nothing [show ie]
-    loop = do
-        go `E.catchIOError` logErr
-        loop
     go = do
         Zone{..} <- readIORef zoneref
         let mtm
@@ -131,7 +127,6 @@ syncZone env zoneref = loop
         updateZone env zoneref
         -- notify
         notifyWithZone env zoneref
-        loop
 
 notifyWithZone :: Env -> IORef Zone -> IO ()
 notifyWithZone env zoneref = do

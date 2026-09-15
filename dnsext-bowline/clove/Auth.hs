@@ -13,19 +13,15 @@ import Data.IORef
 import Data.IP
 import Data.Maybe
 import Network.Socket
-import qualified System.IO.Error as E
 
 import Axfr
+import Exception
 import Types
 import Zone
 
 server :: Env -> Proto -> ZoneAlist -> IO ()
-server env@Env{..} proto@Proto{..} zoneAlist = loop
+server env@Env{..} proto@Proto{..} zoneAlist = loopLogErr env DEBUG go
   where
-    logErr ie = envPutLines DEBUG Nothing [show ie]
-    loop = do
-        go `E.catchIOError` logErr
-        loop
     go = do
         (bs, sa) <- recvQuery
         case decode bs of

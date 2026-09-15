@@ -18,6 +18,7 @@ import Data.List
 import Data.Maybe
 import GHC.Event
 import System.Directory (createDirectoryIfMissing)
+import qualified System.IO.Error as E
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -30,6 +31,7 @@ import DNS.Types
 import Algo
 import qualified Axfr
 import Config
+import Exception
 import KeyFile
 import Serial
 import Types
@@ -43,13 +45,10 @@ newZones env zcs = mapM (newZone env) zcs
 
 newZone :: Env -> ZoneConf -> IO Zone
 newZone env zoneconf@ZoneConf{..} = do
-    msigning <- readSigning zone zoneconf
-    edb <- E.try $ loadSourceWithSigning env zone source msigning
-    (db, ready) <- case edb of
-        Left (AuthException msg) -> do
-            envPutLines env WARNING Nothing [msg]
-            return (emptyDB, False)
-        Right db' -> return (db', True)
+    (db, ready, msigning) <- handleLogErr env WARNING (emptyDB, False, Nothing) $ do
+        msigning' <- readSigning zone zoneconf
+        db' <- loadSourceWithSigning env zone source msigning'
+        return (db', True, msigning')
     let (a4, a6) = readIPRange cnf_allow_transfer_addrs
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
@@ -100,12 +99,10 @@ initSync = do
 ----------------------------------------------------------------
 
 updateZone :: Env -> IORef Zone -> IO ()
-updateZone env zoneref = do
+updateZone env zoneref = handleLogErr env WARNING () $ do
     Zone{..} <- readIORef zoneref
-    edb <- E.try $ loadSourceWithSigning env zoneName zoneSource zoneSigning
-    case edb of
-        Left (AuthException msg) -> envPutLines env WARNING Nothing [msg]
-        Right db -> atomicModifyIORef' zoneref $ modify db
+    db <- loadSourceWithSigning env zoneName zoneSource zoneSigning
+    atomicModifyIORef' zoneref $ modify db
   where
     modify db zone = (zone', ())
       where
@@ -163,9 +160,9 @@ loadSource env zone mserial source = case source of
     FromFile fn -> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])
-checkRRs [] = E.throwIO $ AuthException "No RRs"
+checkRRs [] = E.ioError $ E.userError "No RRs"
 checkRRs (soarr : rrs) = case fromRData $ rdata soarr of
-    Nothing -> E.throwIO $ AuthException "SOA does not exist"
+    Nothing -> E.ioError $ E.userError "SOA does not exist"
     Just soa -> return (soa, soarr, rrs)
 
 ----------------------------------------------------------------
@@ -194,13 +191,13 @@ readSigning dom ZoneConf{..}
     | otherwise = do
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
-            Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
+            Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
         zskAlgo <- case toPubAlgo cnf_zsk_algo of
             Just pa0 -> return pa0
-            Nothing -> E.throwIO $ AuthException $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
+            Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
-            Nothing -> E.throwIO $ AuthException $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
+            Nothing -> E.ioError $ E.userError $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
         let keyConfKSK =
                 KeyConfig
                     { keyConfZone = dom
@@ -223,7 +220,7 @@ readSigning dom ZoneConf{..}
                     }
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0
-            Nothing -> E.throwIO $ AuthException $ "NSEC3 Hash: " ++ cnf_nsec3_hash ++ " is unknown"
+            Nothing -> E.ioError $ E.userError $ "NSEC3 Hash: " ++ cnf_nsec3_hash ++ " is unknown"
         let mn3p
                 | cnf_nsec3 = Just $ defaultNSEC3PARAM{nsec3param_hashalg = h}
                 | otherwise = Nothing
