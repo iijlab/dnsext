@@ -122,7 +122,7 @@ rolloverZSK :: FilePath -> KeyConfig -> IO ()
 rolloverZSK zoneDir keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> error "rolloverZSK" -- fixme
+        [] -> E.ioError $ E.userError "no ZSK files are found"
         fn : _ -> do
             ut0 <- fromEpochTime . modificationTime <$> getFileStatus (zoneDir </> fn)
             ut1 <- getUnixTime
