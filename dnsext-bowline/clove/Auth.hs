@@ -2,17 +2,18 @@
 
 module Auth (server, tcpAllowAXFR) where
 
-import Data.ByteString (ByteString)
-import Data.IORef
-import Data.IP
-import Data.Maybe
-import Network.Socket
-
 import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
+
+import Data.ByteString (ByteString)
+import Data.IORef
+import Data.IP
+import Data.Maybe
+import Network.Socket
+import qualified System.IO.Error as E
 
 import Axfr
 import Types
@@ -22,6 +23,16 @@ server :: Env -> Proto -> ZoneAlist -> IO ()
 server env@Env{..} proto@Proto{..} zoneAlist = loop
   where
     loop = do
+        ex <- E.tryIOError go
+        case ex of
+            Right () -> return ()
+            Left ie ->
+                envPutLines
+                    DEBUG
+                    Nothing
+                    [E.ioeGetErrorString ie]
+        loop
+    go = do
         (bs, sa) <- recvQuery
         case decode bs of
             -- fixme: which RFC?
@@ -53,7 +64,6 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop
                         else
                             response proto zoneAlist sa query dom
                 _ -> sendReply sa $ replyRefused query
-        loop
 
 response :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
 response Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
