@@ -46,10 +46,15 @@ newZones env zcs = mapM (newZone env) zcs
 
 newZone :: Env -> ZoneConf -> IO Zone
 newZone env zoneconf@ZoneConf{..} = do
-    (db, ready, msigning) <- handleLogErr env WARNING (emptyDB, False, Nothing) $ do
-        msigning' <- readSigning zone zoneconf
-        db' <- loadSourceWithSigning env zone source msigning'
-        return (db', True, msigning')
+    -- Whether the zone is signed is decided by the configuration alone.
+    -- It must not depend on whether the initial load happens to succeed,
+    -- otherwise a transient failure would silently turn the zone into an
+    -- unsigned one for the whole life time of the process.  A bad signing
+    -- configuration is fatal instead of being degraded into "unsigned".
+    msigning <- withZoneName $ readSigning zone zoneconf
+    (db, ready) <- handleLogErr env WARNING (emptyDB, False) $ do
+        db' <- loadSourceWithSigning env zone source msigning
+        return (db', True)
     let (a4, a6) = readIPRange cnf_allow_transfer_addrs
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
@@ -74,6 +79,8 @@ newZone env zoneconf@ZoneConf{..} = do
   where
     zone = fromRepresentation cnf_zone
     source = readSource zoneconf
+    withZoneName action = action `E.catchIOError` \e ->
+        E.ioError $ E.ioeSetErrorString e (cnf_zone ++ ": " ++ E.ioeGetErrorString e)
 
 fromFile :: Source -> Bool
 fromFile (FromFile _) = True
