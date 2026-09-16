@@ -7,6 +7,7 @@ module Zone (
     updateZone,
     findZoneAlist,
     toZoneAlist,
+    zoneDirectory,
 ) where
 
 import Control.Concurrent.STM
@@ -114,6 +115,13 @@ updateZone env zoneref = handleLogErr env WARNING () $ do
 
 ----------------------------------------------------------------
 
+-- | Directory holding the per-zone state, that is the serial file and
+--   the key files.  It must exist before anything is stored into it.
+zoneDirectory :: Domain -> FilePath
+zoneDirectory zone = case toRepresentation zone of
+    "." -> "root"
+    rep -> init rep -- dropping the trailing dot
+
 -- | This function throws 'AuthException'.
 loadSourceWithSigning
     :: Env
@@ -122,13 +130,15 @@ loadSourceWithSigning
     -> Maybe Signing
     -> IO DB
 loadSourceWithSigning env zone source Nothing = do
-    let zoneDir = init $ toRepresentation zone
+    let zoneDir = zoneDirectory zone
+    createDirectoryIfMissing True zoneDir
     mserial <- loadSerial zoneDir
     db <- loadSource env zone mserial source >>= makeDBforSecondary zone
     saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
     return db
 loadSourceWithSigning env zone source (Just Signing{..}) = do
-    let zoneDir = init $ toRepresentation zone
+    let zoneDir = zoneDirectory zone
+    createDirectoryIfMissing True zoneDir
     mserial <- loadSerial zoneDir
     (soa0, soarr0, rrs) <- loadSource env zone mserial source >>= checkRRs
     let ttl = soa_minimum soa0
@@ -138,15 +148,17 @@ loadSourceWithSigning env zone source (Just Signing{..}) = do
                 Just s -> soa0{soa_serial = s <> Serial 1}
             | otherwise = soa0
         soarr = soarr0{rdata = toRData soa}
-    saveSerial zoneDir $ soa_serial soa
-    createDirectoryIfMissing True zoneDir
     let kskKeyConfig = signingKSKConfig{keyConfTTL = ttl}
     (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
     signKey <- makeSigner kskKeyConfig keyInfoKSK
     let zskKeyConfig = signingZSKConfig{keyConfTTL = ttl}
     ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir zskKeyConfig
     signZone <- makeSigner zskKeyConfig keyInfoZSK1
-    makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
+    db <- makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
+    -- Stored only after the zone has been built successfully so that a
+    -- failure does not inflate the serial.
+    saveSerial zoneDir $ soa_serial soa
+    return db
 
 byMySelf :: Source -> Bool
 byMySelf (FromFile _) = True

@@ -121,8 +121,7 @@ syncZone env zoneref = loopLogErr env WARNING go
         case zoneSigning of
             Nothing -> return ()
             Just Signing{..} -> do
-                let zoneDir = init $ toRepresentation zoneName
-                rolloverZSK zoneDir signingZSKConfig
+                rolloverZSK (zoneDirectory zoneName) signingZSKConfig
         -- reading zone source
         updateZone env zoneref
         -- notify
