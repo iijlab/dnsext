@@ -174,7 +174,7 @@ executable clove
         dnsext-types,
         dnsext-utils,
         iproute,
-        network-run,
+        network-run >= 0.6.0 && < 0.7,
         stm,
         unix
 
