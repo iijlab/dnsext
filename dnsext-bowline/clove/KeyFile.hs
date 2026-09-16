@@ -68,7 +68,7 @@ loadKSKInfo zoneDir keyConf = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         [] -> generateKey zoneDir keyConf
-        fn : _ -> loadOrGenerateKey zoneDir keyConf fn
+        fn : _ -> loadKey zoneDir keyConf fn
 
 loadZSKInfo
     :: FilePath
@@ -82,9 +82,9 @@ loadZSKInfo zoneDir keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         fn2 : fn1 : fn0 : _ -> do
-            ki0 <- loadOrGenerateKey zoneDir keyConf fn0
-            ki1 <- loadOrGenerateKey zoneDir keyConf fn1
-            ki2 <- loadOrGenerateKey zoneDir keyConf fn2
+            ki0 <- loadKey zoneDir keyConf fn0
+            ki1 <- loadKey zoneDir keyConf fn1
+            ki2 <- loadKey zoneDir keyConf fn2
             return (ki0, ki1, ki2)
         _ -> do
             ki0 <- generateKey zoneDir keyConf
@@ -92,18 +92,18 @@ loadZSKInfo zoneDir keyConf = do
             ki2 <- generateKey zoneDir keyConf
             return (ki0, ki1, ki2)
 
-loadOrGenerateKey
+-- | Loading an existing key.  A key file which cannot be read is an
+--   error: generating a new key instead would silently roll the key over
+--   and, for a KSK, break the chain of trust at the parent.
+loadKey
     :: FilePath
     -> KeyConfig
     -> FilePath
     -> IO (KeyInfo, ResourceRecord)
-loadOrGenerateKey zoneDir keyConf fn = do
-    mki <- loadKeyInfo (zoneDir </> fn)
-    case mki of
-        Nothing -> generateKey zoneDir keyConf
-        Just ki -> do
-            let (_, _, dnskeyrr, _) = fromKeyInfo ki $ keyConfTTL keyConf
-            return (ki, dnskeyrr)
+loadKey zoneDir keyConf fn = do
+    ki <- loadKeyInfo (zoneDir </> fn)
+    let (_, _, dnskeyrr, _) = fromKeyInfo ki $ keyConfTTL keyConf
+    return (ki, dnskeyrr)
 
 generateKey
     :: FilePath
@@ -141,11 +141,15 @@ fromKeyInfoConf KeyInfoConf{..} = do
         keyInfoTag = fromIntegral kic_keytag
     keyInfoDigest <- Opaque.fromBase16 $ C8.pack kic_digest
     keyInfoPubKey <- toPubKey <$> Opaque.fromBase16 (C8.pack kic_public_key)
-    let keyInfoPriKey = B16.decodeLenient $ C8.pack kic_private_key
-        keyInfoFlag = fromIntegral kic_flag
+    -- Not decodeLenient: a garbled private key must not be accepted.
+    keyInfoPriKey <- B16.decode $ C8.pack kic_private_key
+    let keyInfoFlag = fromIntegral kic_flag
     return $ KeyInfo{..}
 
 {- FOURMOLU_DISABLE -}
+-- | Every field is mandatory.  There is no sensible default for any of
+--   them: an absent field used to become algorithm 0 or an empty private
+--   key, which produced a 'KeyInfo' that signed nothing.
 data KeyInfoConf = KeyInfoConf
     { kic_zone        :: String
     , kic_keytag      :: Int
@@ -158,45 +162,37 @@ data KeyInfoConf = KeyInfoConf
     }
     deriving (Show)
 
-defaultKeyInfoConf :: KeyInfoConf
-defaultKeyInfoConf =
-    KeyInfoConf
-        { kic_zone        = ""
-        , kic_keytag      = 0
-        , kic_algorithm   = 0
-        , kic_digest_alg  = 0
-        , kic_digest      = ""
-        , kic_public_key  = ""
-        , kic_private_key = ""
-        , kic_flag        = 0
-        }
 {- FOURMOLU_ENABLE -}
 
 ----------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
-makeKeyInfoConf :: KeyInfoConf -> [Conf] -> IO KeyInfoConf
-makeKeyInfoConf def conf = do
-    kic_zone        <- get "Zone"       kic_zone
-    kic_keytag      <- get "KeyTag"     kic_keytag
-    kic_algorithm   <- get "Algorithm"  kic_algorithm
-    kic_digest_alg  <- get "DigestAlgo" kic_digest_alg
-    kic_digest      <- get "Digest"     kic_digest
-    kic_public_key  <- get "PublicKey"  kic_public_key
-    kic_private_key <- get "PrivateKey" kic_private_key
-    kic_flag        <- get "Flag"       kic_flag
+makeKeyInfoConf :: [Conf] -> IO KeyInfoConf
+makeKeyInfoConf conf = do
+    kic_zone        <- get "Zone"
+    kic_keytag      <- get "KeyTag"
+    kic_algorithm   <- get "Algorithm"
+    kic_digest_alg  <- get "DigestAlgo"
+    kic_digest      <- get "Digest"
+    kic_public_key  <- get "PublicKey"
+    kic_private_key <- get "PrivateKey"
+    kic_flag        <- get "Flag"
     pure KeyInfoConf{..}
   where
-    get k func = do
-        et <- E.tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
-        let left e = do
-                let e' = E.ioeSetErrorString e (k ++ ": " ++ E.ioeGetErrorString e)
-                E.ioError e'
-        either left pure et
+    get k = case lookup k conf of
+        Nothing -> E.ioError $ E.userError $ k ++ ": missing"
+        Just v  -> do
+            et <- E.tryIOError $ fromConf v
+            let left e = do
+                    let e' = E.ioeSetErrorString e (k ++ ": " ++ E.ioeGetErrorString e)
+                    E.ioError e'
+            either left pure et
 {- FOURMOLU_ENABLE -}
 
-loadKeyInfo :: FilePath -> IO (Maybe KeyInfo)
+loadKeyInfo :: FilePath -> IO KeyInfo
 loadKeyInfo fn = do
     cnf <- loadFile fn
-    kic <- makeKeyInfoConf defaultKeyInfoConf cnf
-    return $ either (const Nothing) Just $ fromKeyInfoConf kic
+    kic <- makeKeyInfoConf cnf
+    case fromKeyInfoConf kic of
+        Left e -> E.ioError $ E.userError $ fn ++ ": " ++ e
+        Right ki -> return ki

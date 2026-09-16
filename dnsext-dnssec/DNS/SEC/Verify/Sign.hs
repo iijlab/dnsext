@@ -92,14 +92,16 @@ data RRSetSig = RRSetSig
 
 ----------------------------------------------------------------
 
-data SignFailure = SignFailure deriving (Show)
+-- | Reason why a zone could not be signed.  This must never be turned
+--   into an empty result: an unsigned answer is worse than no answer.
+newtype SignFailure = SignFailure String deriving (Show)
 
 instance Exception SignFailure
 
 ----------------------------------------------------------------
 
 sign :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO ResourceRecord
-sign _ _ [] = E.throwIO SignFailure
+sign _ _ [] = E.throwIO $ SignFailure "empty RRset"
 sign pri rrsig rrs@(rr : _) = do
     rrsig' <- sign' pri rrsig rrs
     let rd = toRData rrsig'
@@ -107,7 +109,7 @@ sign pri rrsig rrs@(rr : _) = do
 
 sign' :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO RD_RRSIG
 sign' pri rrsig rrs = case getRRSIGImpl alg of
-    Nothing -> E.throwIO SignFailure
+    Nothing -> E.throwIO $ SignFailure $ "unsupported algorithm: " ++ show alg
     Just impl -> do
         sig <- doSign impl pri rrs rrsig
         return rrsig{rrsig_signature = sig}
@@ -122,10 +124,10 @@ doSign
     -> IO Opaque
 doSign RRSIGImpl{..} pri rrs rrsig = do
     case rrsigIDecodePriKey pri of
-        Left _ -> E.throwIO SignFailure
+        Left e -> E.throwIO $ SignFailure $ "broken private key: " ++ e
         Right priK -> do
             let (sortedRDatas, sortedRRs) = unzip $ sortRDataCanonical rrs
-            canonicalRRsetSorted sortedRRs (\_ -> E.throwIO SignFailure) $
+            canonicalRRsetSorted sortedRRs (E.throwIO . SignFailure) $
                 \rrset_dom typ cls _ttl _rds -> do
                     let str = encodeRRset rrsig rrset_dom typ cls sortedRDatas
                     rrsigIEncodeSignature <$> rrsigISign priK str
@@ -180,7 +182,7 @@ generateKeyInfo
 generateKeyInfo KeyConfig{..} = do
     mp <- genKeyPair keyConfPubAlg keyConfSize
     case mp of
-        Nothing -> E.throwIO SignFailure
+        Nothing -> E.throwIO $ SignFailure $ "cannot generate a key pair for " ++ show keyConfPubAlg
         Just (pubkey, prikey) -> do
             let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
                 ds = makeDS keyConfZone keyConfDigestAlg dnskey
@@ -251,7 +253,7 @@ prepareDNSSEC
 prepareDNSSEC conf@KeyConfig{..} = do
     mp <- genKeyPair keyConfPubAlg keyConfSize
     case mp of
-        Nothing -> E.throwIO SignFailure
+        Nothing -> E.throwIO $ SignFailure $ "cannot generate a key pair for " ++ show keyConfPubAlg
         Just (pubkey, prikey) -> do
             let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
                 ds = makeDS keyConfZone keyConfDigestAlg dnskey
@@ -310,13 +312,12 @@ signZone
     -> Bool
     -> [ResourceRecord]
     -> IO [RRSetSig]
-signZone prikey rrsigTemp0 groupup rrs0 = E.handle handler $ mapM f rrss
+signZone prikey rrsigTemp0 groupup rrs0 = mapM f rrss
   where
-    handler SignFailure = return []
     rrss
         | groupup = groupRRset rrs0
         | otherwise = map (: []) rrs0
-    f [] = E.throwIO SignFailure
+    f [] = E.throwIO $ SignFailure "empty RRset"
     f rrs@(ResourceRecord{..} : _) = do
         sig <- sign prikey rrsigTemp rrs
         return $
