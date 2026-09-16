@@ -45,11 +45,11 @@ transfer :: Env -> Proto -> Zone -> SockAddr -> DNSMessage -> IO ()
 transfer Env{..} Proto{..} zone sa query = do
     let db = zoneDB zone
         reply = (fromQuery query){answer = dbAll db}
-        (ip, port) = fromJust $ fromSockAddr sa
+        peer = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
     envPutLines
         NOTICE
         Nothing
-        ["    axfr @" ++ show ip ++ "#" ++ show port ++ "/TCP \"" ++ toRepresentation (zoneName zone) ++ "\""]
+        ["    axfr @" ++ peer ++ "/TCP \"" ++ toRepresentation (zoneName zone) ++ "\""]
     sendReply sa $ encode reply
 
 ----------------------------------------------------------------

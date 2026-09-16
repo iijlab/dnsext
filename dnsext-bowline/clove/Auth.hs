@@ -11,7 +11,6 @@ import DNS.Types.Encode
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.IP
-import Data.Maybe
 import Network.Socket
 
 import Axfr
@@ -20,10 +19,21 @@ import Types
 import Zone
 
 server :: Env -> Proto -> ZoneAlist -> IO ()
-server env@Env{..} proto@Proto{..} zoneAlist = loopLogErr env DEBUG go
+server env@Env{..} proto@Proto{..} zoneAlist = loop
   where
-    go = do
-        (bs, sa) <- recvQuery
+    -- Failing to receive means the socket is gone, or, over TCP, that
+    -- the peer has closed the connection.  Leave the loop; retrying
+    -- would spin for ever on a dead descriptor.
+    loop = do
+        er <- trySync recvQuery
+        case er of
+            Left se -> logSomeErr env DEBUG se
+            Right query -> do
+                -- Failing to answer one query, on the other hand, must
+                -- never take the server down.
+                handleLogErr env WARNING () $ go query
+                loop
+    go (bs, sa) =
         case decode bs of
             -- fixme: which RFC?
             Left _e -> return ()
@@ -33,11 +43,11 @@ server env@Env{..} proto@Proto{..} zoneAlist = loopLogErr env DEBUG go
                     let q = question query
                         dom = qname q
                         typ = qtype q
-                        (ip, _port) = fromJust $ fromSockAddr sa
+                        peer = maybe (show sa) (show . fst) $ fromSockAddr sa
                     envPutLines
                         DEBUG
                         Nothing
-                        ["\"" ++ toRepresentation dom ++ "\" " ++ show typ ++ " from " ++ show ip ++ "/" ++ protoName]
+                        ["\"" ++ toRepresentation dom ++ "\" " ++ show typ ++ " from " ++ peer ++ "/" ++ protoName]
                     if typ == AXFR || typ == IXFR
                         then do
                             -- RFC 1995 Sec 4
