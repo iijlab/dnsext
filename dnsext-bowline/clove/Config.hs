@@ -43,23 +43,23 @@ defaultConfig =
 ----------------------------------------------------------------
 
 data ZoneConf = ZoneConf
-    { cnf_zone                 :: String
-    , cnf_notify               :: Bool
-    , cnf_notify_addrs         :: [String]
-    , cnf_allow_notify         :: Bool
-    , cnf_allow_notify_addrs   :: [String]
-    , cnf_allow_transfer       :: Bool
-    , cnf_allow_transfer_addrs :: [String]
-    , cnf_source               :: String
-    , cnf_signing              :: Bool
-    , cnf_nsec3                :: Bool
-    , cnf_ksk_algo             :: String
-    , cnf_ksk_size             :: Int
-    , cnf_zsk_algo             :: String
-    , cnf_zsk_size             :: Int
-    , cnf_ds_digest            :: String
-    , cnf_nsec3_hash           :: String
-    , cnf_rrsig_lifetime       :: Int
+    { cnf_zone                  :: String
+    , cnf_notify                :: Bool
+    , cnf_notify_addrs          :: [String]
+    , cnf_allow_notify          :: Bool
+    , cnf_allow_notify_addrs    :: [String]
+    , cnf_allow_transfer        :: Bool
+    , cnf_allow_transfer_addrs  :: [String]
+    , cnf_source                :: String
+    , cnf_signing               :: Bool
+    , cnf_nsec3                 :: Bool
+    , cnf_ksk_algo              :: String
+    , cnf_ksk_size              :: Int
+    , cnf_zsk_algo              :: String
+    , cnf_zsk_size              :: Int
+    , cnf_ds_digest             :: String
+    , cnf_nsec3_hash            :: String
+    , cnf_rrsig_lifetime        :: Int
     , cnf_zsk_rollover_duration :: Int
     }
     deriving (Show)
@@ -67,23 +67,23 @@ data ZoneConf = ZoneConf
 defaultZoneConf :: ZoneConf
 defaultZoneConf =
     ZoneConf
-        { cnf_zone                 = "example.org"
-        , cnf_notify               = False
-        , cnf_notify_addrs         = []
-        , cnf_allow_notify         = False
-        , cnf_allow_notify_addrs   = []
-        , cnf_allow_transfer       = False
-        , cnf_allow_transfer_addrs = []
-        , cnf_signing              = True
-        , cnf_source               = "example.zone"
-        , cnf_nsec3                = True
-        , cnf_ksk_algo             = "ED25519"
-        , cnf_ksk_size             = 0
-        , cnf_zsk_algo             = "ED25519"
-        , cnf_zsk_size             = 0
-        , cnf_ds_digest            = "SHA-256"
-        , cnf_nsec3_hash           = "SHA-1"
-        , cnf_rrsig_lifetime       = 864000 -- 10 days
+        { cnf_zone                  = "example.org"
+        , cnf_notify                = False
+        , cnf_notify_addrs          = []
+        , cnf_allow_notify          = False
+        , cnf_allow_notify_addrs    = []
+        , cnf_allow_transfer        = False
+        , cnf_allow_transfer_addrs  = []
+        , cnf_signing               = True
+        , cnf_source                = "example.zone"
+        , cnf_nsec3                 = True
+        , cnf_ksk_algo              = "ED25519"
+        , cnf_ksk_size              = 0
+        , cnf_zsk_algo              = "ED25519"
+        , cnf_zsk_size              = 0
+        , cnf_ds_digest             = "SHA-256"
+        , cnf_nsec3_hash            = "SHA-1"
+        , cnf_rrsig_lifetime        = 864000 -- 10 days
         , cnf_zsk_rollover_duration = 604800 -- 7 days
         }
 
@@ -115,23 +115,23 @@ makeZoneConf def conf = do
     ref <- newIORef []
     let get :: FromConf a => String -> (ZoneConf -> a) -> IO a
         get k func = getting ref conf k func def
-    cnf_zone                 <- get "zone"                 cnf_zone
-    cnf_notify               <- get "notify"               cnf_notify
-    cnf_notify_addrs         <- get "notify-addrs"         cnf_notify_addrs
-    cnf_allow_notify         <- get "allow-notify"         cnf_allow_notify
-    cnf_allow_notify_addrs   <- get "allow-notify-addrs"   cnf_allow_notify_addrs
-    cnf_allow_transfer       <- get "allow-transfer"       cnf_allow_transfer
-    cnf_allow_transfer_addrs <- get "allow-transfer-addrs" cnf_allow_transfer_addrs
-    cnf_source               <- get "source"               cnf_source
-    cnf_signing              <- get "signing"              cnf_signing
-    cnf_nsec3                <- get "nsec3"                cnf_nsec3
-    cnf_zsk_algo             <- get "zsk-algo"             cnf_zsk_algo
-    cnf_zsk_size             <- get "zsk-size"             cnf_zsk_size
-    cnf_ksk_algo             <- get "ksk-algo"             cnf_ksk_algo
-    cnf_ksk_size             <- get "ksk-size"             cnf_ksk_size
-    cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
-    cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
-    cnf_rrsig_lifetime       <- get "rrsig-lifetime"       cnf_rrsig_lifetime
+    cnf_zone                  <- get "zone"                  cnf_zone
+    cnf_notify                <- get "notify"                cnf_notify
+    cnf_notify_addrs          <- get "notify-addrs"          cnf_notify_addrs
+    cnf_allow_notify          <- get "allow-notify"          cnf_allow_notify
+    cnf_allow_notify_addrs    <- get "allow-notify-addrs"    cnf_allow_notify_addrs
+    cnf_allow_transfer        <- get "allow-transfer"        cnf_allow_transfer
+    cnf_allow_transfer_addrs  <- get "allow-transfer-addrs"  cnf_allow_transfer_addrs
+    cnf_source                <- get "source"                cnf_source
+    cnf_signing               <- get "signing"               cnf_signing
+    cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
+    cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo
+    cnf_zsk_size              <- get "zsk-size"              cnf_zsk_size
+    cnf_ksk_algo              <- get "ksk-algo"              cnf_ksk_algo
+    cnf_ksk_size              <- get "ksk-size"              cnf_ksk_size
+    cnf_ds_digest             <- get "ds-digest"             cnf_ds_digest
+    cnf_nsec3_hash            <- get "nsec3-hash"            cnf_nsec3_hash
+    cnf_rrsig_lifetime        <- get "rrsig-lifetime"        cnf_rrsig_lifetime
     cnf_zsk_rollover_duration <- get "zsk-rollover-duration" cnf_zsk_rollover_duration
     checkUnknown (cnf_zone ++ ": ") ref conf
     pure ZoneConf{..}
