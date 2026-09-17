@@ -4,6 +4,11 @@ module Config (
     Config (..),
     loadConfig,
     ZoneConf (..),
+
+    -- * Reading a file in the same shape
+    getting,
+    checkUnknown,
+    splitConf,
 ) where
 
 import DNS.Config
@@ -25,6 +30,7 @@ data Config = Config
     , cnf_log_file  :: Maybe FilePath
     , cnf_log_level :: Level
     , cnf_clove_dir :: FilePath
+    , cnf_tsig_file  :: FilePath
     } deriving (Show)
 
 defaultConfig :: Config
@@ -38,6 +44,7 @@ defaultConfig =
         , cnf_log_file  = Nothing
         , cnf_log_level = WARNING
         , cnf_clove_dir = "/var/clove/"
+        , cnf_tsig_file  = "tsig.conf"
         }
 
 ----------------------------------------------------------------
@@ -110,11 +117,12 @@ makeConfig def conf0 = do
     cnf_log_file  <- get "log-file"  cnf_log_file
     cnf_log_level <- get "log-level" cnf_log_level
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
+    cnf_tsig_file <- get "tsig-file" cnf_tsig_file
     checkUnknown "" ref conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
-    (conf, zones) = splitConfig conf0
+    (conf, zones) = splitConf "zone" conf0
 
 makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
 makeZoneConf def conf = do
@@ -171,10 +179,14 @@ checkUnknown label ref conf = do
 loadConfig :: FilePath -> IO (Config, [ZoneConf])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
 
-splitConfig :: [Conf] -> ([Conf], [[Conf]])
-splitConfig xs0 = (gs, zss)
+-- | Splitting a configuration into what comes before the first section
+--   and the sections themselves, a section beginning at each occurrence
+--   of the given setting.  Which is why every global setting has to be
+--   written above the first zone.
+splitConf :: String -> [Conf] -> ([Conf], [[Conf]])
+splitConf key xs0 = (gs, zss)
   where
-    p (k, _) = k == "zone"
+    p (k, _) = k == key
     (gs, os) = break p xs0
     zss = loop os
     loop [] = []

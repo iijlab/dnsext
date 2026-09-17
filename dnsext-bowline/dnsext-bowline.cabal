@@ -159,6 +159,7 @@ executable clove
                       Net
                       Notify
                       Serial
+                      TSIGKeys
                       Types
                       Zone
 
@@ -169,7 +170,9 @@ executable clove
         base,
         async,
         base16-bytestring,
+        base64-bytestring,
         bytestring,
+        containers,
         directory,
         filepath,
         network,
