@@ -8,6 +8,7 @@ module Zone (
     findZoneAlist,
     toZoneAlist,
     zoneDirectory,
+    zoneLabel,
 ) where
 
 import Control.Concurrent.STM
@@ -109,7 +110,7 @@ newZone env zoneconf@ZoneConf{..} = do
     source = readSource zoneconf
     withZoneName action =
         action `E.catchIOError` \e ->
-            E.ioError $ E.ioeSetErrorString e (cnf_zone ++ ": " ++ E.ioeGetErrorString e)
+            E.ioError $ E.ioeSetErrorString e (zoneLabel zone ++ E.ioeGetErrorString e)
 
 fromFile :: Source -> Bool
 fromFile (FromFile _) = True
@@ -136,10 +137,11 @@ initSync = do
 ----------------------------------------------------------------
 
 updateZone :: Env -> IORef Zone -> IO ()
-updateZone env zoneref = handleLogErr env WARNING () $ do
+updateZone env zoneref = do
     Zone{..} <- readIORef zoneref
-    (db, rrs) <- loadSourceWithSigning env zoneName zoneSource zoneSigning zoneRRs
-    atomicModifyIORef' zoneref $ modify db rrs
+    handleLogErrIn env WARNING (zoneLabel zoneName) () $ do
+        (db, rrs) <- loadSourceWithSigning env zoneName zoneSource zoneSigning zoneRRs
+        atomicModifyIORef' zoneref $ modify db rrs
   where
     modify db rrs zone = (zone', ())
       where
@@ -151,6 +153,12 @@ updateZone env zoneref = handleLogErr env WARNING () $ do
                 }
 
 ----------------------------------------------------------------
+
+-- | What a failure was about, for the log to carry: a server holding
+--   several zones says little by reporting that some file or other
+--   could not be read.
+zoneLabel :: Domain -> String
+zoneLabel zone = toRepresentation zone ++ ": "
 
 -- | Directory holding the per-zone state, that is the serial file and
 --   the key files.  It must exist before anything is stored into it.
@@ -194,7 +202,7 @@ loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
     mserial <- loadSerial zoneDir
     rrs0 <- reloadSource env zone mserial source oldRRs
     (soa0, soarr0, rrs) <- checkRRs rrs0
-    checkUnsigned zone rrs
+    checkUnsigned rrs
     let soa
             | byMySelf source = case mserial of
                 Nothing -> soa0 -- No serial file, serial from zone file
@@ -231,13 +239,12 @@ loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
 --
 --   The zone is left as it was, which for a zone already serving means
 --   it goes on serving what it had.
-checkUnsigned :: Domain -> [ResourceRecord] -> IO ()
-checkUnsigned zone rrs
+checkUnsigned :: [ResourceRecord] -> IO ()
+checkUnsigned rrs
     | any ((== RRSIG) . rrtype) rrs =
         E.ioError $
             E.userError $
-                toRepresentation zone
-                    ++ ": the source is signed already, so it is not signed again."
+                "the source is signed already, so it is not signed again."
                     ++ "  Set signing to no to serve it as it comes, or take the"
                     ++ " signatures out of the source."
     | otherwise = return ()

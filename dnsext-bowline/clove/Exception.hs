@@ -1,7 +1,9 @@
 module Exception (
     trySync,
     loopLogErr,
+    loopLogErrIn,
     handleLogErr,
+    handleLogErrIn,
     logSomeErr,
 ) where
 
@@ -33,7 +35,13 @@ trySync action = do
         Nothing -> False
 
 logSomeErr :: Env -> Level -> E.SomeException -> IO ()
-logSomeErr env lvl se = envPutLines env lvl Nothing [describe se]
+logSomeErr env lvl = logSomeErrIn env lvl ""
+
+-- | Logging a failure with a note of what it was about in front of it.
+--   A server holding several zones says little by reporting that some
+--   file or other could not be read.
+logSomeErrIn :: Env -> Level -> String -> E.SomeException -> IO ()
+logSomeErrIn env lvl about se = envPutLines env lvl Nothing [about ++ describe se]
   where
     describe e
         | Just (AuthException str) <- E.fromException e = str
@@ -45,13 +53,17 @@ logSomeErr env lvl se = envPutLines env lvl Nothing [describe se]
 --   'E.ErrorCall' from a partial function would escape and take the
 --   whole server down with it.
 loopLogErr :: Env -> Level -> IO () -> IO ()
-loopLogErr env lvl action = loop
+loopLogErr env lvl = loopLogErrIn env lvl ""
+
+-- | 'loopLogErr' saying what the failures are about.
+loopLogErrIn :: Env -> Level -> String -> IO () -> IO ()
+loopLogErrIn env lvl about action = loop
   where
     loop = do
         ea <- trySync action
         case ea of
             Right () -> return ()
-            Left se -> logSomeErr env lvl se >> threadDelay retryDelay
+            Left se -> logSomeErrIn env lvl about se >> threadDelay retryDelay
         loop
 
 -- | Running an action, logging any synchronous exception and returning
@@ -62,8 +74,18 @@ handleLogErr
     -> a
     -> IO a
     -> IO a
-handleLogErr env lvl def body = do
+handleLogErr env lvl = handleLogErrIn env lvl ""
+
+-- | 'handleLogErr' saying what the failure was about.
+handleLogErrIn
+    :: Env
+    -> Level
+    -> String
+    -> a
+    -> IO a
+    -> IO a
+handleLogErrIn env lvl about def body = do
     ea <- trySync body
     case ea of
         Right a -> return a
-        Left se -> logSomeErr env lvl se >> return def
+        Left se -> logSomeErrIn env lvl about se >> return def

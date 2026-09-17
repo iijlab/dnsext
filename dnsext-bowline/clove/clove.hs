@@ -177,10 +177,13 @@ tcpServer env zoneAlist port addr =
 
 syncZone :: Env -> IORef Zone -> IO ()
 syncZone env zoneref = do
+    -- The name never changes, so the label for the log can be taken
+    -- once rather than on every pass.
+    label <- zoneLabel . zoneName <$> readIORef zoneref
     -- The zone is loaded before the first wait rather than in newZone,
     -- so that the servers can start listening straight away.
     load
-    loopLogErr env WARNING go
+    loopLogErrIn env WARNING label go
   where
     load = do
         updateZone env zoneref
@@ -209,7 +212,7 @@ syncZone env zoneref = do
         case zoneSigning of
             Nothing -> return ()
             Just Signing{..} ->
-                handleLogErr env WARNING () $
+                handleLogErrIn env WARNING (zoneLabel zoneName) () $
                     rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
         -- reading zone source, and telling the secondaries about it
         load
