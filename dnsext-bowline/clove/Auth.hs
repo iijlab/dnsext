@@ -21,6 +21,7 @@ import Axfr
 import DNS.TSIG
 import DNS.Types.Time (EpochTime)
 import Exception
+import TSIGKeys
 import Types
 import Zone
 
@@ -39,8 +40,8 @@ currentTime = fromIntegral . fromEnum <$> epochTime
 peerOf :: SockAddr -> String
 peerOf sa = maybe (show sa) (show . fst) $ fromSockAddr sa
 
-server :: Env -> Proto -> ZoneAlist -> IO ()
-server env@Env{..} proto@Proto{..} zoneAlist = loop 0
+server :: Env -> TSIGKeys -> Proto -> ZoneAlist -> IO ()
+server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
   where
     loop nerr = do
         er <- trySync recvQuery
@@ -120,13 +121,21 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                                         ]
                                     now <- currentTime
                                     sendReply sa $ replyNotAuth proto query fault now
-                        else
-                            response proto zoneAlist sa query dom
+                        else do
+                            -- RFC 8945 Sec 5.2: a query which carries a
+                            -- TSIG is checked before it is answered, and
+                            -- Sec 5.3 has the answer to it carry one in
+                            -- turn.  A query without one is answered as
+                            -- it always was.
+                            esealed <- sealFor env keys proto bs query
+                            case esealed of
+                                Left refusal -> sendReply sa refusal
+                                Right seal -> response proto seal zoneAlist sa query dom
                 _ -> sendReply sa $ replyRefused proto query
 
-response :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
-response proto@Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
-    Nothing -> sendReply sa $ replyRefused proto query
+response :: Proto -> Seal -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
+response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
+    Nothing -> sendReply sa $ seal $ refusal query
     Just (_, zoneref) -> do
         zone <- readIORef zoneref
         -- A zone whose source could not be loaded holds the empty
@@ -136,8 +145,8 @@ response proto@Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAli
         -- names we simply know nothing about, and downstream caches
         -- would keep the denial.
         if zoneReady zone
-            then sendReply sa $ replyQuery proto query $ zoneDB zone
-            else sendReply sa $ replyServFail proto query
+            then sendReply sa $ seal $ getAnswer (zoneDB zone) query
+            else sendReply sa $ seal $ serverFailure query
 
 handleNotify :: Env -> Proto -> ZoneAlist -> SockAddr -> ByteString -> DNSMessage -> IO ()
 handleNotify env proto@Proto{..} zoneAlist sa whole query = case lookup dom zoneAlist of -- exact match
@@ -187,11 +196,12 @@ replySigned proto query key now requestMAC = encodeReply proto query signedReply
     (rr, _) = signTSIG key now defaultFudge (Just requestMAC) (encode reply)
     signedReply = reply{additional = [rr]}
 
-replyQuery :: Proto -> DNSMessage -> DB -> ByteString
-replyQuery proto query db = encodeReply proto query $ getAnswer db query
-
 replyRefused :: Proto -> DNSMessage -> ByteString
-replyRefused proto query = encodeReply proto query $ (fromQuery query){rcode = Refused}
+replyRefused proto query = encodeReply proto query $ refusal query
+
+-- | We will not answer this one.
+refusal :: DNSMessage -> DNSMessage
+refusal query = (fromQuery query){rcode = Refused}
 
 -- | The TSIG on the request was not good (RFC 8945 Sec 5.2).  The
 --   answer carries a TSIG of its own saying which of the checks failed,
@@ -211,35 +221,104 @@ replyNotAuth proto query fault now = encodeReply proto query reply{additional = 
 
 -- | We are configured for this zone but have nothing to say about it.
 --   Not authoritative: there is no data to be authoritative about.
-replyServFail :: Proto -> DNSMessage -> ByteString
-replyServFail proto query = encodeReply proto query reply{rcode = ServFail, flags = flgs}
+serverFailure :: DNSMessage -> DNSMessage
+serverFailure query = reply{rcode = ServFail, flags = flgs}
   where
     reply = fromQuery query
     flgs = (flags reply){authAnswer = False}
+
+-- | The message is not one we can make sense of far enough to answer it
+--   properly (RFC 8945 Sec 5.2: a TSIG anywhere but last is one of
+--   those).
+replyFormErr :: Proto -> DNSMessage -> ByteString
+replyFormErr proto query = encodeReply proto query $ (fromQuery query){rcode = FormatErr}
+
+----------------------------------------------------------------
+
+-- | Closing off an answer: encoding it for the transport it goes over,
+--   and signing it where the query it answers was signed.
+type Seal = DNSMessage -> ByteString
+
+-- | Looking at the TSIG on a query, where it has one (RFC 8945 Sec
+--   5.2).  What comes back either closes off the answer -- signed with
+--   the key the query came with, which Sec 5.3 requires of us -- or is
+--   the whole of the answer, because the query carried a TSIG we would
+--   not take.
+--
+--   The keys are the ones clove holds, all of them: a TSIG on an
+--   ordinary query says who is asking, and answering is not a
+--   permission that any of them grants.  What the key grants is said
+--   elsewhere -- allow-transfer-key for a transfer, allow-notify-key
+--   for a notify.
+sealFor
+    :: Env
+    -> TSIGKeys
+    -> Proto
+    -> ByteString
+    -> DNSMessage
+    -> IO (Either ByteString Seal)
+sealFor Env{..} keys proto whole query
+    | not carried = return $ Right plain
+    | otherwise = do
+        now <- currentTime
+        case verifyTSIG held now Nothing whole query of
+            TSIGOk mac -> return $ case keyOf query of
+                Just key -> Right $ sealWith proto query key now mac
+                -- Unreachable: the check just found that key.
+                Nothing -> Right plain
+            -- Sec 5.2: exactly one record, and last.  Anything else is
+            -- a message to answer FORMERR and no more.
+            TSIGMissing -> return $ Left $ replyFormErr proto query
+            TSIGFailed fault -> do
+                envPutLines
+                    WARNING
+                    Nothing
+                    ["    query \"" ++ toRepresentation (qname $ question query) ++ "\": " ++ show fault]
+                return $ Left $ replyNotAuth proto query fault now
+  where
+    carried = any ((== TSIG) . rrtype) $ additional query
+    held n = lookupTSIGKey n keys
+    keyOf msg = lastTSIG msg >>= \(name, _) -> held name
+    plain = encodeReply proto query
+
+-- | The answer, signed with the key its query came with and bound to it
+--   (RFC 8945 Sec 5.3).
+--
+--   Room for the record is taken out of what the transport allows
+--   before the answer is made to fit, so that the signature is never
+--   what pushes the answer over, and is never one of the things dropped
+--   to bring it back under.  An answer which had to be truncated is
+--   still signed: the far end is to be able to tell that the truncation
+--   is ours.
+sealWith :: Proto -> DNSMessage -> TSIGKey -> EpochTime -> Opaque -> Seal
+sealWith Proto{..} query key now requestMAC reply = encode signedReply
+  where
+    fitted = fitting (subtract (tsigRoom key) <$> replyLimit query) reply
+    (rr, _) = signTSIG key now defaultFudge (Just requestMAC) $ encode fitted
+    signedReply = fitted{additional = additional fitted ++ [rr]}
 
 ----------------------------------------------------------------
 
 -- | Encoding a reply for the transport it is going to be sent over.
 encodeReply :: Proto -> DNSMessage -> DNSMessage -> ByteString
-encodeReply Proto{..} query reply = case replyLimit query of
-    Nothing -> encode reply
-    Just lim -> fitIn lim reply
+encodeReply Proto{..} query reply = encode $ fitting (replyLimit query) reply
 
--- | Making a reply fit into the space the transport allows.
+-- | The reply as much of it as the transport leaves room for.
 --
 --   RFC 2181 Sec 9: the TC bit should not be set merely because some
 --   additional data did not fit, so that section goes first and the
 --   answer is still sent as a complete one.  Only when the answer
 --   itself does not fit is TC set, with the sections emptied, so that
 --   the client asks again over TCP.
-fitIn :: Int -> DNSMessage -> ByteString
-fitIn lim reply
-    | BS.length whole <= lim = whole
-    | BS.length noAdditional <= lim = noAdditional
-    | otherwise = encode truncated
+fitting :: Maybe Int -> DNSMessage -> DNSMessage
+fitting Nothing reply = reply
+fitting (Just lim) reply
+    | size reply <= lim = reply
+    | size noAdditional <= lim = noAdditional
+    | otherwise = truncated
   where
-    whole = encode reply
-    noAdditional = encode reply{additional = []}
+    size = BS.length . encode
+    noAdditional = reply{additional = []}
     truncated =
         reply
             { flags = (flags reply){trunCation = True}

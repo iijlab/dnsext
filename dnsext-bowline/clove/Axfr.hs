@@ -30,7 +30,6 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 import qualified DNS.Types.Opaque as Opaque
-import DNS.Types.TSIG (unsignedTSIG)
 import DNS.Types.Time (EpochTime)
 
 import Exception
@@ -132,23 +131,9 @@ transfer Env{..} Proto{..} zone mrequestMAC sa query = do
   where
     asSent batch = case mkey of
         Nothing -> withAnswer batch
-        Just key -> (withAnswer batch){additional = [placeholder key]}
-    -- Of the size and the names the real record will have, which is all
-    -- the measuring needs of it.
-    placeholder key =
-        ResourceRecord
-            { rrname = tsigKeyName key
-            , rrtype = TSIG
-            , rrclass = CL_ANY
-            , rrttl = 0
-            , rdata =
-                toRData $
-                    (unsignedTSIG (algorithmName $ tsigKeyAlgorithm key) 0 defaultFudge 0)
-                        { tsig_mac =
-                            Opaque.fromByteString $
-                                BS.replicate (macLength $ tsigKeyAlgorithm key) 0
-                        }
-            }
+        -- Of the size and the names the real record will have,
+        -- which is all the measuring needs of it.
+        Just key -> (withAnswer batch){additional = [tsigPlaceholder key]}
     reply = fromQuery query
     mkey = zoneTransferKey zone
     client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa

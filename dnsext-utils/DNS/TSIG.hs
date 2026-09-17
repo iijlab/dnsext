@@ -24,6 +24,8 @@ module DNS.TSIG (
     defaultFudge,
     signTSIG,
     signTSIGCont,
+    tsigPlaceholder,
+    tsigRoom,
 
     -- * Checking
     TSIGError (..),
@@ -33,6 +35,7 @@ module DNS.TSIG (
     TSIGResult (..),
     verifyTSIG,
     verifyTSIGCont,
+    lastTSIG,
     checkMAC,
     checkTime,
 
@@ -50,6 +53,7 @@ import qualified Data.ByteString as BS
 import Data.Word (Word16, Word64)
 
 import DNS.Types
+import DNS.Types.Encode (encodeResourceRecord)
 import qualified DNS.Types.Opaque as Opaque
 import DNS.Types.TSIG
 import DNS.Types.Time (EpochTime)
@@ -278,6 +282,29 @@ lastOr _ xs = last xs
 
 ----------------------------------------------------------------
 
+-- | A record of the size and the shape a real one will have, with a
+--   full length MAC of nothing in particular in it.  For measuring a
+--   message before there is a signature to put on it: signing adds a
+--   record, and a name, to whatever was measured without one.
+tsigPlaceholder :: TSIGKey -> ResourceRecord
+tsigPlaceholder key = record (tsigKeyName key) rd
+  where
+    alg = tsigKeyAlgorithm key
+    rd =
+        (unsignedTSIG (algorithmName alg) 0 defaultFudge 0)
+            { tsig_mac = Opaque.fromByteString $ BS.replicate (macLength alg) 0
+            }
+
+-- | Octets a signature with this key takes up in a message, for leaving
+--   room for one in a message which has to fit.  Measured with both
+--   names written out in full, which is as much room as it can ever
+--   take: in a message the owner name is usually a pointer into the
+--   question instead.
+tsigRoom :: TSIGKey -> Int
+tsigRoom = BS.length . encodeResourceRecord . tsigPlaceholder
+
+----------------------------------------------------------------
+
 -- | What came of looking at the TSIG on a message.
 data TSIGResult
     = -- | It is good.  The MAC, which whatever follows will need.
@@ -367,7 +394,10 @@ withTSIG keys whole msg k = case (lastTSIG msg, stripTSIG whole) of
             | otherwise -> k key name rd body
     _ -> TSIGMissing
 
--- | The TSIG at the end of a message, if that is what is there.
+-- | The TSIG at the end of a message, if that is what is there.  The
+--   name is the name of the key, which is what says which key to look
+--   for -- 'verifyTSIG' finds it for itself, and this is for whoever
+--   has to sign the answer with the same one.
 lastTSIG :: DNSMessage -> Maybe (Domain, RD_TSIG)
 lastTSIG msg = case reverse $ additional msg of
     rr : _ | rrtype rr == TSIG -> (,) (rrname rr) <$> fromRData (rdata rr)
