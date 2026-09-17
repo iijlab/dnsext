@@ -14,6 +14,7 @@ import Data.List as List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
+import qualified System.IO.Error as E
 
 import DNS.Auth.Algorithm
 import DNS.Do53.Client
@@ -22,7 +23,32 @@ import DNS.Log
 import DNS.Types
 import DNS.Types.Encode
 
+import Exception
 import Types
+
+-- | Saying which zone and which upstream a failure belongs to.  Without
+--   it the operator is told only that some socket somewhere would not
+--   connect.
+withUpstream :: IP -> Domain -> String -> IO a -> IO a
+withUpstream ip dom what action = do
+    er <- trySync action
+    case er of
+        Right a -> return a
+        Left se ->
+            E.ioError $
+                E.userError $
+                    what ++ " @" ++ show ip ++ " \"" ++ toRepresentation dom ++ "\": " ++ show se
+
+-- | Saying that we asked and did not get a usable answer.  'Nothing'
+--   rather than an error: failing to reach the upstream this once is
+--   something to carry on from, not to stop for.
+unanswered :: Env -> IP -> Domain -> String -> String -> IO (Maybe a)
+unanswered Env{..} ip dom what why = do
+    envPutLines
+        WARNING
+        Nothing
+        ["    " ++ what ++ " @" ++ show ip ++ " \"" ++ toRepresentation dom ++ "\": " ++ why]
+    return Nothing
 
 tcpAllowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
 tcpAllowAXFR sa dom zoneAlist = case List.lookup dom zoneAlist of -- exact match
@@ -67,14 +93,14 @@ client env (Just serial0) ip dom = do
             | otherwise -> return []
 
 serialQuery :: Env -> IP -> Domain -> IO (Maybe Serial)
-serialQuery Env{..} ip dom = do
+serialQuery env@Env{..} ip dom = withUpstream ip dom "SOA" $ do
     emsg <- fmap replyDNSMessage <$> resolve renv q qctl
     case emsg of
-        Left _ -> return Nothing
+        Left e -> unanswered env ip dom "SOA" $ show e
         Right msg -> case answer msg of
-            [] -> return Nothing
+            [] -> unanswered env ip dom "SOA" "no SOA in the answer"
             soa : _ -> case fromRData $ rdata soa of
-                Nothing -> return Nothing
+                Nothing -> unanswered env ip dom "SOA" "broken SOA"
                 Just s -> return $ Just $ soa_serial s
   where
     riActions =
@@ -101,7 +127,7 @@ serialQuery Env{..} ip dom = do
     qctl = rdFlag FlagClear <> doFlag FlagClear
 
 axfrQuery :: Env -> IP -> Domain -> IO [ResourceRecord]
-axfrQuery Env{..} ip dom = do
+axfrQuery Env{..} ip dom = withUpstream ip dom "AXFR" $ do
     emsg <- fmap replyDNSMessage <$> resolve renv q qctl
     case emsg of
         Left _ -> return []
