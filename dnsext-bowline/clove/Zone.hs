@@ -282,6 +282,7 @@ readSigning dom ZoneConf{..}
         zskAlgo <- case toPubAlgo cnf_zsk_algo of
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
+        checkAlgorithms kskAlgo zskAlgo
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.ioError $ E.userError $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
@@ -366,6 +367,31 @@ checkDurations lifetime rollover
   where
     needed = (4 * rollover + 2) `div` 3
     failWith = E.ioError . E.userError
+
+-- | Refusing a KSK and a ZSK of different algorithms.
+--
+--   RFC 4035 Sec 2.2 asks for an RRSIG on every RRset by at least one
+--   key of every algorithm in the apex DNSKEY RRset.  clove signs the
+--   DNSKEY RRset with the KSK and everything else with the ZSK, one
+--   algorithm each, so a zone whose two keys differ would advertise two
+--   algorithms while signing nothing with both.  A validator which
+--   implements only one of them could then follow no path through the
+--   zone at all.
+--
+--   Signing with two algorithms at once is what an algorithm rollover
+--   needs, and clove cannot express it: one KSK and one line of ZSKs is
+--   all it keeps.  Better to say so than to produce a zone that looks
+--   signed and is not usable.
+checkAlgorithms :: PubAlg -> PubAlg -> IO ()
+checkAlgorithms ksk zsk
+    | ksk == zsk = return ()
+    | otherwise =
+        E.ioError $
+            E.userError $
+                "ksk-algo and zsk-algo must name the same algorithm, but are "
+                    ++ show ksk
+                    ++ " and "
+                    ++ show zsk
 
 -- | Fewest ZSKs which may be kept.  Three of them are published at any
 --   time -- the previous key, the one signing and the next one -- so
