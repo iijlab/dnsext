@@ -6,6 +6,7 @@ module KeyFile where
 
 import qualified Control.Exception as E
 import Control.Monad
+import Data.Bits (shiftR)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
 import Data.List (isSuffixOf, sortBy)
@@ -140,12 +141,12 @@ generateKey zoneDir keyConf = do
 
 -- | How early a rollover may happen, so that waking a moment before the
 --   key is due does not put the rollover off for another whole
---   duration.  A sixteenth of the duration: a margin of a fixed number
---   of seconds is either nothing at all next to a long duration, or the
---   whole of a short one -- at which point every wake up generates a
---   key.
+--   duration.  A sixty-fourth of the duration: a margin of a fixed
+--   number of seconds is either nothing at all next to a long duration,
+--   or the whole of a short one -- at which point every wake up
+--   generates a key.
 rolloverMargin :: Int -> Int
-rolloverMargin duration = duration `div` 16
+rolloverMargin duration = duration `shiftR` 6
 
 -- | Generating the next ZSK once the newest one has been in use for
 --   the rollover duration.  That duration is how long a key is used,
