@@ -1,4 +1,6 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Assembling the octets a TSIG MAC is computed over (RFC 8945).
 --
@@ -11,6 +13,7 @@ module DNS.Types.TSIG (
     tsigMacField,
     tsigVariables,
     tsigTimers,
+    stripTSIG,
 ) where
 
 import qualified Data.ByteString as BS
@@ -21,6 +24,7 @@ import DNS.Types.Message
 import DNS.Types.Opaque.Internal (Opaque, putOpaque)
 import qualified DNS.Types.Opaque.Internal as Opaque
 import DNS.Types.RData
+import DNS.Types.Type
 import DNS.Wire
 
 ----------------------------------------------------------------
@@ -103,3 +107,77 @@ tsigTimers :: RD_TSIG -> ByteString
 tsigTimers RD_TSIG{..} = runBuilder 8 $ \wbuf _ -> do
     put48 wbuf tsig_time_signed
     put16 wbuf tsig_fudge
+
+----------------------------------------------------------------
+
+-- | The octets of a received message up to its TSIG record, with
+--   ARCOUNT put back to what it was before the record was added -- in
+--   other words, what 'tsigDigest' wants for the message.
+--
+--   Cut out of the message as it arrived rather than got by encoding a
+--   decoded one again.  A MAC covers the octets, and an encoder is free
+--   to compress names as it likes, so a message which went out one way
+--   can come back from the decoder and go out another, with the same
+--   DNS content and a different MAC.
+--
+--   'Nothing' unless the message really does end in a TSIG record, as
+--   RFC 8945 Sec 5.1 requires of one, and unless every name and length
+--   on the way to it stays inside the message.  The contents of the
+--   record come from the decoder as usual; only the octets are wanted
+--   here.
+stripTSIG :: ByteString -> Maybe ByteString
+stripTSIG bs = do
+    guard $ BS.length bs >= 12
+    qd <- word16At 4
+    an <- word16At 6
+    ns <- word16At 8
+    ar <- word16At 10
+    guard $ ar >= 1
+    afterQs <- foldM (\i _ -> skipQuestion i) 12 [1 .. qd]
+    -- Every record but the last one, which is the one we are after.
+    at <- foldM (\i _ -> skipRecord i) afterQs [1 .. an + ns + ar - 1]
+    typeAt <- skipName at
+    typ <- word16At typeAt
+    guard $ typ == fromIntegral (fromTYPE TSIG)
+    -- Sec 5.1: the TSIG is the last record there is.
+    end <- skipRecord at
+    guard $ end == BS.length bs
+    return $ setARCOUNT (ar - 1) $ BS.take at bs
+  where
+    len = BS.length bs
+    octet :: Int -> Maybe Word8
+    octet i = if 0 <= i && i < len then Just (BS.index bs i) else Nothing
+    word16At :: Int -> Maybe Int
+    word16At i = do
+        hi <- octet i
+        lo <- octet (i + 1)
+        return $ fromIntegral hi * 256 + fromIntegral lo
+    -- A name is labels until a zero octet, or a pointer, which ends it.
+    skipName :: Int -> Maybe Int
+    skipName = go
+      where
+        go i = do
+            w <- octet i
+            if
+                | w == 0 -> Just (i + 1)
+                | w >= 0xc0 -> fitting (i + 2)
+                | w < 0x40 -> go (i + 1 + fromIntegral w)
+                -- 0x40 to 0xbf is not ours to guess at
+                | otherwise -> Nothing
+    skipQuestion :: Int -> Maybe Int
+    skipQuestion i = skipName i >>= \j -> fitting (j + 4)
+    skipRecord :: Int -> Maybe Int
+    skipRecord i = do
+        j <- skipName i
+        -- type, class, TTL, then the length of what follows
+        rdlen <- word16At (j + 8)
+        fitting (j + 10 + rdlen)
+    fitting :: Int -> Maybe Int
+    fitting i = if i <= len then Just i else Nothing
+    setARCOUNT :: Int -> ByteString -> ByteString
+    setARCOUNT n b =
+        BS.concat
+            [ BS.take 10 b
+            , BS.pack [fromIntegral (n `div` 256), fromIntegral (n `mod` 256)]
+            , BS.drop 12 b
+            ]

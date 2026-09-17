@@ -82,7 +82,72 @@ spec = do
             tsigDigestCont mac [body, body] rd
                 `shouldBe` tsigMacField mac <> body <> body <> tsigTimers rd
 
+    -- RFC 8945 Sec 4.3.2: what is signed is the message before the
+    -- TSIG record was added to it and before ARCOUNT counted it.  A
+    -- verifier has to cut that out of what arrived, since encoding a
+    -- decoded message again may compress names differently and give a
+    -- different MAC over the same DNS content.
+    describe "cutting the TSIG record off a message" $ do
+        it "gives back the message that was signed" $
+            stripTSIG (encode $ withTSIG plain) `shouldBe` Just (encode plain)
+
+        it "does so even where names were compressed before it" $
+            -- Owner names repeat here, so the encoder has pointers to
+            -- put in and the walk has to step over them.
+            stripTSIG (encode $ withTSIG repetitive) `shouldBe` Just (encode repetitive)
+
+        it "refuses a message with no TSIG" $
+            stripTSIG (encode plain) `shouldBe` Nothing
+
+        it "refuses one whose last record is something else" $
+            let m = withTSIG plain
+                m' = m{additional = additional m ++ [aRR "last.example.jp."]}
+             in stripTSIG (encode m') `shouldBe` Nothing
+
+        it "refuses anything too short to be a message" $
+            mapM_ (\n -> stripTSIG (BS.take n whole) `shouldBe` Nothing) [0 .. 11]
+
+        it "refuses a message cut off part way" $
+            mapM_
+                (\n -> stripTSIG (BS.take n whole) `shouldBe` Nothing)
+                [12 .. BS.length whole - 1]
+
 ----------------------------------------------------------------
+
+whole :: BS.ByteString
+whole = encode $ withTSIG plain
+
+-- | A message with a few records and a repeated owner name.
+plain :: DNSMessage
+plain =
+    defaultQuery
+        { question = Question "example.jp." A IN
+        , answer = [aRR "www.example.jp."]
+        , authority = [aRR "ns1.example.jp."]
+        , additional = [aRR "ns1.example.jp."]
+        }
+
+repetitive :: DNSMessage
+repetitive = plain{answer = map aRR $ replicate 8 "www.example.jp."}
+
+aRR :: Domain -> ResourceRecord
+aRR d = ResourceRecord d A IN 3600 $ rd_a "192.0.2.1"
+
+-- | The same message with a TSIG at the end of it, as it would be sent.
+withTSIG :: DNSMessage -> DNSMessage
+withTSIG m =
+    m
+        { additional =
+            additional m
+                ++ [ ResourceRecord
+                        { rrname = "key.example.jp."
+                        , rrtype = TSIG
+                        , rrclass = CL_ANY
+                        , rrttl = 0
+                        , rdata = sample
+                        }
+                   ]
+        }
 
 rd :: RD_TSIG
 rd = case fromRData sample of
