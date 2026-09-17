@@ -64,4 +64,8 @@ data Proto = Proto
     , sendReply :: SockAddr -> ByteString -> IO ()
     , allowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
     , protoName :: String
+    , recvErrorFatal :: Bool
+    -- ^ Whether a failing 'recvQuery' means that nothing more can ever
+    --   be received.  True for a connection, False for a datagram
+    --   socket, which stays usable after an error.
     }

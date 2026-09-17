@@ -8,6 +8,7 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 
+import Control.Concurrent (threadDelay)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.IP
@@ -18,21 +19,44 @@ import Exception
 import Types
 import Zone
 
+-- | How many receive errors in a row are tolerated before the server
+--   starts to back off.
+recvErrorBurst :: Int
+recvErrorBurst = 10
+
+-- | How long to pause once a socket keeps failing.
+recvRetryDelay :: Int
+recvRetryDelay = 1000000
+
 server :: Env -> Proto -> ZoneAlist -> IO ()
-server env@Env{..} proto@Proto{..} zoneAlist = loop
+server env@Env{..} proto@Proto{..} zoneAlist = loop 0
   where
-    -- Failing to receive means the socket is gone, or, over TCP, that
-    -- the peer has closed the connection.  Leave the loop; retrying
-    -- would spin for ever on a dead descriptor.
-    loop = do
+    loop nerr = do
         er <- trySync recvQuery
         case er of
-            Left se -> logSomeErr env DEBUG se
+            Left se
+                -- Over a connection this means the peer is gone.  Leave
+                -- the loop; retrying would spin on a dead descriptor.
+                | recvErrorFatal -> logSomeErr env DEBUG se
+                -- A datagram socket, on the other hand, survives an
+                -- error.  Linux even reports an asynchronous error for
+                -- an earlier reply of ours through a later receive
+                -- (udp(7)), which any client can provoke by closing its
+                -- socket, so a single error must not stop the server.
+                -- Only a socket which keeps failing without delivering
+                -- anything is worth a warning and a pause.
+                | nerr < recvErrorBurst -> do
+                    logSomeErr env DEBUG se
+                    loop (nerr + 1)
+                | otherwise -> do
+                    logSomeErr env WARNING se
+                    threadDelay recvRetryDelay
+                    loop (nerr + 1)
             Right query -> do
-                -- Failing to answer one query, on the other hand, must
-                -- never take the server down.
+                -- Failing to answer one query must never take the
+                -- server down either.
                 handleLogErr env WARNING () $ go query
-                loop
+                loop 0
     go (bs, sa) =
         case decode bs of
             -- fixme: which RFC?

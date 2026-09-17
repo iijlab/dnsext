@@ -77,6 +77,7 @@ udpServer env zoneAlist s = Auth.server env proto zoneAlist
             , sendReply = \sa bs -> void $ NSB.sendTo s bs sa
             , allowAXFR = \_ _ _ -> return Nothing
             , protoName = "UDP"
+            , recvErrorFatal = False
             }
 
 ----------------------------------------------------------------
@@ -99,6 +100,7 @@ tcpServer env zoneAlist port addr =
                         , sendReply = \_sa bs -> sendVC (sendTCP s) bs
                         , allowAXFR = Auth.tcpAllowAXFR
                         , protoName = "TCP"
+                        , recvErrorFatal = True
                         }
             Auth.server env proto zoneAlist
 
