@@ -117,7 +117,7 @@ nameError n ioe = ioError $ ioeSetErrorString ioe n
 logLevel :: String -> IO Log.Level
 logLevel s = case lvs of
     lv : _ -> pure lv
-    [] -> fail $ "fromConf unknwon log-level " ++ s
+    [] -> fail $ "fromConf unknown log-level " ++ s
   where
     lvs = [lv | (lv, "") <- reads u]
     u = map toUpper s
