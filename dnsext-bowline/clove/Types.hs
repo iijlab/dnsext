@@ -25,6 +25,9 @@ data Source
 data Signing = Signing
     { signingKSKConfig :: KeyConfig
     , signingZSKConfig :: KeyConfig
+    , signingZSKRollover :: Int
+    -- ^ How long, in seconds, a ZSK is used before the next one is
+    --   generated.  Not the same thing as the life time of an RRSIG.
     , signingN3P :: Maybe RD_NSEC3PARAM -- Nothing for NSEC
     }
     deriving (Eq, Show)

@@ -21,7 +21,6 @@ import System.Posix (Handler (Catch), installHandler, sigHUP)
 import DNS.Auth.Algorithm
 import DNS.Log
 import qualified DNS.SEC as DNS
-import DNS.SEC.Verify
 import qualified DNS.SVCB as DNS
 import DNS.Types
 import qualified DNS.Types as DNS
@@ -185,7 +184,7 @@ syncZone env zoneref = loopLogErr env WARNING go
         Zone{..} <- readIORef zoneref
         let mtm
                 -- Key rollover
-                | Just signing <- zoneSigning = Just $ fromIntegral $ DNS.fromDNSTime $ keyConfLifetime $ signingZSKConfig signing
+                | Just signing <- zoneSigning = Just $ signingZSKRollover signing
                 -- Source is from file. No timeout.
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
@@ -195,7 +194,7 @@ syncZone env zoneref = loopLogErr env WARNING go
         case zoneSigning of
             Nothing -> return ()
             Just Signing{..} -> do
-                rolloverZSK (zoneDirectory zoneName) signingZSKConfig
+                rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKConfig
         -- reading zone source
         updateZone env zoneref
         -- notify

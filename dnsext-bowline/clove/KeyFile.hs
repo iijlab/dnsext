@@ -138,8 +138,11 @@ generateKey zoneDir keyConf = do
 
 ----------------------------------------------------------------
 
-rolloverZSK :: FilePath -> KeyConfig -> IO ()
-rolloverZSK zoneDir keyConf = do
+-- | Generating the next ZSK once the newest one has been in use for
+--   the rollover duration.  That duration is how long a key is used,
+--   which is a different thing from how long an RRSIG stays valid.
+rolloverZSK :: FilePath -> Int -> KeyConfig -> IO ()
+rolloverZSK zoneDir duration keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         [] -> E.ioError $ E.userError "no ZSK files are found"
@@ -147,7 +150,7 @@ rolloverZSK zoneDir keyConf = do
             ut0 <- fromEpochTime . modificationTime <$> getFileStatus (zoneDir </> fn)
             ut1 <- getUnixTime
             let CTime diff = udtSeconds (ut1 `diffUnixTime` ut0)
-            when (diff + 300 > fromDNSTime (keyConfLifetime keyConf)) $ do
+            when (diff + 300 > fromIntegral duration) $ do
                 -- fixme: 5min good enough?
                 void $ generateKey zoneDir keyConf
 

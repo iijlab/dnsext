@@ -281,6 +281,7 @@ readSigning dom ZoneConf{..}
                 Signing
                     { signingKSKConfig = keyConfKSK
                     , signingZSKConfig = keyConfZSK
+                    , signingZSKRollover = cnf_zsk_rollover_duration
                     , signingN3P = mn3p
                     }
 
