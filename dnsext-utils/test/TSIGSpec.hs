@@ -119,30 +119,30 @@ spec = do
             let reqMac = macOf $ signed Nothing plain
                 rsp = signed (Just reqMac) plain
                 wrong = Opaque.fromByteString $ BS.replicate 32 0
-             in verifyTSIG held now (Just wrong) rsp (decoded rsp) `shouldBe` TSIGFailed BADSIG
+             in failure (verifyTSIG held now (Just wrong) rsp (decoded rsp)) `shouldBe` Just BADSIG
 
         it "rejects a message a byte of which was changed" $
             -- A byte of the header: changing one of a name instead is
             -- also refused, but as BADKEY, since the owner name of the
             -- record is a pointer into the question and moves with it.
             let bs = flipBit 3 $ signed Nothing plain
-             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADSIG
+             in failure (verifyTSIG held now Nothing bs (decoded bs)) `shouldBe` Just BADSIG
 
         it "rejects one whose question was changed under it" $
             let bs = flipBit 20 $ signed Nothing plain
-             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADKEY
+             in failure (verifyTSIG held now Nothing bs (decoded bs)) `shouldBe` Just BADKEY
 
         it "rejects one signed with another secret" $
             let bs = signedWith other Nothing plain
-             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADSIG
+             in failure (verifyTSIG held now Nothing bs (decoded bs)) `shouldBe` Just BADSIG
 
         it "says BADKEY for a key it does not hold" $
             let bs = signedWith stranger Nothing plain
-             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADKEY
+             in failure (verifyTSIG held now Nothing bs (decoded bs)) `shouldBe` Just BADKEY
 
         it "says BADTIME when the clocks are too far apart" $
             let bs = signed Nothing plain
-             in verifyTSIG held (now + 301) Nothing bs (decoded bs) `shouldBe` TSIGFailed BADTIME
+             in failure (verifyTSIG held (now + 301) Nothing bs (decoded bs)) `shouldBe` Just BADTIME
 
         it "says nothing is there when nothing is" $
             verifyTSIG held now Nothing (encode plain) plain `shouldBe` TSIGMissing
@@ -178,8 +178,66 @@ spec = do
                 body = encode plain
                 (rr, _) = signTSIGCont key now defaultFudge firstMac [body, body, body]
                 third = encode $ withRR rr plain
-             in verifyTSIGCont held now firstMac [body] third (decoded third)
-                    `shouldBe` TSIGFailed BADSIG
+             in failure (verifyTSIGCont held now firstMac [body] third (decoded third))
+                    `shouldBe` Just BADSIG
+
+    -- RFC 8945 Sec 5.2 and Sec 5.3.2: the answer to a TSIG which did
+    -- not pass says which of the checks it was that did not pass.
+    describe "the answer which says a TSIG was no good" $ do
+        let strange = signedWith stranger Nothing plain
+            badkey = faultOf $ verifyTSIG held now Nothing strange (decoded strange)
+            wrongly = signedWith other Nothing plain
+            badsig = faultOf $ verifyTSIG held now Nothing wrongly (decoded wrongly)
+            -- A request from a client whose clock is five hundred
+            -- seconds behind ours.
+            late = signed Nothing plain
+            badtime = faultOf $ verifyTSIG held (now + 500) Nothing late (decoded late)
+            server = now + 500
+
+        it "names the key it was asked for, and the algorithm" $ do
+            let rr = lastRR $ refusal badkey now
+            rrname rr `shouldBe` tsigKeyName stranger
+            rrclass rr `shouldBe` CL_ANY
+            (tsig_algorithm <$> tsigOf (refusal badkey now))
+                `shouldBe` Just (algorithmName HMAC_SHA256)
+
+        it "carries no MAC when the key is not one we hold" $ do
+            faultError badkey `shouldBe` BADKEY
+            (Opaque.toByteString . tsig_mac <$> tsigOf (refusal badkey now))
+                `shouldBe` Just ""
+
+        it "carries no MAC when the MAC did not check out" $ do
+            faultError badsig `shouldBe` BADSIG
+            (Opaque.toByteString . tsig_mac <$> tsigOf (refusal badsig now))
+                `shouldBe` Just ""
+
+        it "keeps the identifier of the answer it goes on" $
+            (tsig_original_id <$> tsigOf (refusal badkey now))
+                `shouldBe` Just (identifier plain)
+
+        it "says which error it was, where the far end can read it" $ do
+            tsigReported (decoded $ refusal badkey now) `shouldBe` Just BADKEY
+            tsigReported (decoded $ refusal badsig now) `shouldBe` Just BADSIG
+            tsigReported (decoded $ refusal badtime server) `shouldBe` Just BADTIME
+
+        it "is not mistaken for one on an answer which is not a refusal" $
+            tsigReported (decoded $ signed Nothing plain) `shouldBe` Nothing
+
+        -- Sec 5.2.3: signed with the same key, at the time the client
+        -- gave, so that the client can check it without the clocks
+        -- getting in the way a second time.
+        it "signs a complaint about the clocks, as the client's clock has it" $ do
+            faultError badtime `shouldBe` BADTIME
+            let bs = refusal badtime server
+            verifyTSIG held now (Just $ macOf late) bs (decoded bs)
+                `shouldBe` TSIGOk (macOf bs)
+
+        it "gives our own time in the other data of one" $ do
+            let Just rd = tsigOf $ refusal badtime server
+            tsig_time_signed rd `shouldBe` fromIntegral now
+            tsig_fudge rd `shouldBe` defaultFudge
+            Opaque.length (tsig_other rd) `shouldBe` 6
+            sixOctetsOf (tsig_other rd) `shouldBe` toInteger server
 
 ----------------------------------------------------------------
 
@@ -228,6 +286,30 @@ tsigOf bs = case reverse $ additional $ decoded bs of
 
 macOf :: BS.ByteString -> Opaque
 macOf bs = maybe (error "no TSIG") tsig_mac $ tsigOf bs
+
+lastRR :: BS.ByteString -> ResourceRecord
+lastRR bs = case reverse $ additional $ decoded bs of
+    rr : _ -> rr
+    _ -> error "no record"
+
+-- | What was wrong, without the record and the key it was wrong on.
+failure :: TSIGResult -> Maybe TSIGError
+failure (TSIGFailed f) = Just $ faultError f
+failure _ = Nothing
+
+faultOf :: TSIGResult -> TSIGFault
+faultOf (TSIGFailed f) = f
+faultOf r = error $ "not a failure: " ++ show r
+
+-- | The refusal a server puts together out of what it found wrong.
+refusal :: TSIGFault -> EpochTime -> BS.ByteString
+refusal fault t = encode $ withRR (errorTSIG fault t $ encode notauth) notauth
+
+notauth :: DNSMessage
+notauth = plain{rcode = NotAuth}
+
+sixOctetsOf :: Opaque -> Integer
+sixOctetsOf = BS.foldl' (\a w -> a * 256 + toInteger w) 0 . Opaque.toByteString
 
 ----------------------------------------------------------------
 

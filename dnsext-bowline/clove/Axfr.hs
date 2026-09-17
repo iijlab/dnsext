@@ -304,7 +304,11 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
             Right m -> return m
         case rcode msg of
             NoErr -> return ()
-            rc -> E.ioError $ E.userError $ show rc
+            -- A refusal over the TSIG says which check went wrong, and
+            -- that is the whole of what we can be told about it.
+            rc -> E.ioError $ E.userError $ case tsigReported msg of
+                Just e -> show rc ++ ": the far end says " ++ show e
+                Nothing -> show rc
         let racc' = reverse (answer msg) ++ racc
             done = case racc' of
                 closing : _ : _ -> rrtype closing == SOA

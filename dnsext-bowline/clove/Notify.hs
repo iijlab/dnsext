@@ -80,7 +80,12 @@ notify Env{..} mkey dom ip port = withNotified $ do
         Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
             TSIGOk _ -> return $ Just msg
             TSIGMissing -> unanswered "the answer is not signed"
-            TSIGFailed e -> unanswered $ show e
+            TSIGFailed fault -> unanswered $ case tsigReported msg of
+                -- Sec 5.4: a refusal comes unsigned, so what it says is
+                -- worth more than what checking it as an answer makes of
+                -- it.
+                Just e -> "the far end says " ++ show e
+                Nothing -> show fault
 
     held key n = if n == tsigKeyName key then Just key else Nothing
 

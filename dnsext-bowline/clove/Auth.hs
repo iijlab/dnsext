@@ -107,7 +107,7 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                                     transfer env proto zone mmac sa query
                                 TransferRefused ->
                                     sendReply sa $ replyRefused proto query
-                                TransferNotAuth e -> do
+                                TransferNotAuth fault -> do
                                     envPutLines
                                         WARNING
                                         Nothing
@@ -116,9 +116,10 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                                             ++ "/TCP \""
                                             ++ toRepresentation dom
                                             ++ "\": "
-                                            ++ show e
+                                            ++ show fault
                                         ]
-                                    sendReply sa $ replyNotAuth proto query
+                                    now <- currentTime
+                                    sendReply sa $ replyNotAuth proto query fault now
                         else
                             response proto zoneAlist sa query dom
                 _ -> sendReply sa $ replyRefused proto query
@@ -154,13 +155,13 @@ handleNotify env proto@Proto{..} zoneAlist sa whole query = case lookup dom zone
                         sendReply sa $ replySigned proto query key now mac
                         zoneWakeUp
                     TSIGMissing -> refuse
-                    TSIGFailed e -> do
+                    TSIGFailed fault -> do
                         envPutLines
                             env
                             WARNING
                             Nothing
-                            ["    notify " ++ peerOf sa ++ " \"" ++ toRepresentation dom ++ "\": " ++ show e]
-                        sendReply sa $ replyNotAuth proto query
+                            ["    notify " ++ peerOf sa ++ " \"" ++ toRepresentation dom ++ "\": " ++ show fault]
+                        sendReply sa $ replyNotAuth proto query fault now
             Nothing -> case fromSockAddr sa of
                 Just (ip, _)
                     | ip `elem` zoneAllowNotifyAddrs -> do
@@ -193,11 +194,20 @@ replyRefused :: Proto -> DNSMessage -> ByteString
 replyRefused proto query = encodeReply proto query $ (fromQuery query){rcode = Refused}
 
 -- | The TSIG on the request was not good (RFC 8945 Sec 5.2).  The
---   answer ought to carry a TSIG of its own saying which of the checks
---   failed; it does not yet, so a peer is told that it was not
---   authorised without being told why.  The log says why.
-replyNotAuth :: Proto -> DNSMessage -> ByteString
-replyNotAuth proto query = encodeReply proto query $ (fromQuery query){rcode = NotAuth}
+--   answer carries a TSIG of its own saying which of the checks failed,
+--   so that the peer is told why it was not authorised rather than only
+--   that it was not.
+--
+--   Where the answer is signed at all -- which is where the clocks
+--   disagree and nowhere else -- the MAC is taken over the plain
+--   encoding rather than over whatever 'encodeReply' would make of it,
+--   as in 'replySigned'.  An answer with nothing in it but the question
+--   is nowhere near not fitting.
+replyNotAuth :: Proto -> DNSMessage -> TSIGFault -> EpochTime -> ByteString
+replyNotAuth proto query fault now = encodeReply proto query reply{additional = [rr]}
+  where
+    reply = (fromQuery query){rcode = NotAuth}
+    rr = errorTSIG fault now $ encode reply
 
 -- | We are configured for this zone but have nothing to say about it.
 --   Not authoritative: there is no data to be authoritative about.

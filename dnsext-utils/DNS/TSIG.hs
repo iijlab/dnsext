@@ -28,16 +28,23 @@ module DNS.TSIG (
     -- * Checking
     TSIGError (..),
     fromTSIGError,
+    toTSIGError,
+    TSIGFault (..),
     TSIGResult (..),
     verifyTSIG,
     verifyTSIGCont,
     checkMAC,
     checkTime,
+
+    -- * Saying what was wrong
+    errorTSIG,
+    tsigReported,
 ) where
 
+import Control.Monad (guard)
 import qualified Crypto.Hash.Algorithms as Hash
 import qualified Crypto.MAC.HMAC as HMAC
-import Data.Bits (xor, (.|.))
+import Data.Bits (shiftR, xor, (.|.))
 import Data.ByteArray (convert)
 import qualified Data.ByteString as BS
 import Data.Word (Word16, Word64)
@@ -128,7 +135,7 @@ data TSIGError
       BADTIME
     | -- | The MAC is shorter than the policy allows
       BADTRUNC
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | The number an error travels as.
 fromTSIGError :: TSIGError -> Word16
@@ -136,6 +143,10 @@ fromTSIGError BADSIG = 16
 fromTSIGError BADKEY = 17
 fromTSIGError BADTIME = 18
 fromTSIGError BADTRUNC = 22
+
+-- | The error a number stands for, for reading one which arrived.
+toTSIGError :: Word16 -> Maybe TSIGError
+toTSIGError n = lookup n [(fromTSIGError e, e) | e <- [minBound ..]]
 
 -- | Checking a MAC which arrived against the one the key gives.
 --
@@ -210,7 +221,7 @@ signTSIG
     -> BS.ByteString
     -- ^ the message, encoded, without the record
     -> (ResourceRecord, Opaque)
-signTSIG key now fudge mrequest body = record key rd mac
+signTSIG key now fudge mrequest body = (record (tsigKeyName key) rd, mac)
   where
     rd0 = emptyTSIG key now fudge body
     mac = tsigMAC key $ tsigDigest mrequest body (tsigKeyName key) rd0
@@ -227,7 +238,7 @@ signTSIGCont
     -> [BS.ByteString]
     -- ^ the messages since then, this one last
     -> (ResourceRecord, Opaque)
-signTSIGCont key now fudge prior bodies = record key rd mac
+signTSIGCont key now fudge prior bodies = (record (tsigKeyName key) rd, mac)
   where
     rd0 = emptyTSIG key now fudge $ lastOr "" bodies
     mac = tsigMAC key $ tsigDigestCont prior bodies rd0
@@ -235,17 +246,15 @@ signTSIGCont key now fudge prior bodies = record key rd mac
 
 -- | A record of the shape RFC 8945 Sec 4.2 requires: the key for a
 --   name, ANY for a class, nothing for a TTL.
-record :: TSIGKey -> RD_TSIG -> Opaque -> (ResourceRecord, Opaque)
-record key rd mac =
-    ( ResourceRecord
-        { rrname = tsigKeyName key
+record :: Domain -> RD_TSIG -> ResourceRecord
+record name rd =
+    ResourceRecord
+        { rrname = name
         , rrtype = TSIG
         , rrclass = CL_ANY
         , rrttl = 0
         , rdata = toRData rd
         }
-    , mac
-    )
 
 -- | Everything of a record but the MAC, which is not covered by itself.
 emptyTSIG :: TSIGKey -> EpochTime -> Word16 -> BS.ByteString -> RD_TSIG
@@ -276,8 +285,29 @@ data TSIGResult
     | -- | There is no TSIG on it at all
       TSIGMissing
     | -- | There is one and it is not good
-      TSIGFailed TSIGError
+      TSIGFailed TSIGFault
     deriving (Eq, Show)
+
+-- | What was wrong with a TSIG, and enough of the record it was wrong
+--   on to say so in an answer (RFC 8945 Sec 5.2).  'errorTSIG' is what
+--   turns one of these into the record which says it.
+data TSIGFault = TSIGFault
+    { faultError :: TSIGError
+    , faultKeyName :: Domain
+    -- ^ Name the message gave the key, which may be one we have not got
+    , faultRecord :: RD_TSIG
+    -- ^ The record as it arrived.  An answer gives its algorithm and its
+    --   identifier back, and a complaint about the clocks gives its time
+    --   and its fudge back as well.
+    , faultKey :: Maybe TSIGKey
+    -- ^ The key, where the trouble is not that we have not got it
+    }
+    deriving (Eq)
+
+-- | The error and the name of the key, and nothing else: a 'TSIGFault'
+--   holds a secret, and this is what goes in a log.
+instance Show TSIGFault where
+    show TSIGFault{..} = show faultError ++ " (key " ++ toRepresentation faultKeyName ++ ")"
 
 -- | Checking the TSIG at the end of a message which arrived.
 --
@@ -299,7 +329,7 @@ verifyTSIG
     -> TSIGResult
 verifyTSIG keys now mrequest whole msg =
     withTSIG keys whole msg $ \key name rd body ->
-        check key now (tsigDigest mrequest body name rd) rd
+        check key now name (tsigDigest mrequest body name rd) rd
 
 -- | The same for a message after the first one of a multi-message
 --   response.  The messages since the last record, this one last, are
@@ -316,8 +346,8 @@ verifyTSIGCont
     -> DNSMessage
     -> TSIGResult
 verifyTSIGCont keys now prior earlier whole msg =
-    withTSIG keys whole msg $ \key _ rd body ->
-        check key now (tsigDigestCont prior (earlier ++ [body]) rd) rd
+    withTSIG keys whole msg $ \key name rd body ->
+        check key now name (tsigDigestCont prior (earlier ++ [body]) rd) rd
 
 -- | Finding the record and the key it names, and handing them on.
 withTSIG
@@ -330,9 +360,10 @@ withTSIG keys whole msg k = case (lastTSIG msg, stripTSIG whole) of
     (Just (name, rd), Just body) -> case keys name of
         -- Sec 5.2.1: a key we do not know is BADKEY, and the name of a
         -- key is as much a part of it as the secret.
-        Nothing -> TSIGFailed BADKEY
+        Nothing -> failed BADKEY name rd Nothing
         Just key
-            | tsig_algorithm rd /= algorithmName (tsigKeyAlgorithm key) -> TSIGFailed BADKEY
+            | tsig_algorithm rd /= algorithmName (tsigKeyAlgorithm key) ->
+                failed BADKEY name rd Nothing
             | otherwise -> k key name rd body
     _ -> TSIGMissing
 
@@ -342,9 +373,92 @@ lastTSIG msg = case reverse $ additional msg of
     rr : _ | rrtype rr == TSIG -> (,) (rrname rr) <$> fromRData (rdata rr)
     _ -> Nothing
 
-check :: TSIGKey -> EpochTime -> BS.ByteString -> RD_TSIG -> TSIGResult
-check key now digest rd = case checkMAC key digest (tsig_mac rd) of
-    Just e -> TSIGFailed e
+check :: TSIGKey -> EpochTime -> Domain -> BS.ByteString -> RD_TSIG -> TSIGResult
+check key now name digest rd = case checkMAC key digest (tsig_mac rd) of
+    Just e -> bad e
     Nothing -> case checkTime now (tsig_time_signed rd) (tsig_fudge rd) of
-        Just e -> TSIGFailed e
+        Just e -> bad e
         Nothing -> TSIGOk $ tsig_mac rd
+  where
+    bad e = failed e name rd $ Just key
+
+failed :: TSIGError -> Domain -> RD_TSIG -> Maybe TSIGKey -> TSIGResult
+failed e name rd mkey =
+    TSIGFailed
+        TSIGFault
+            { faultError = e
+            , faultKeyName = name
+            , faultRecord = rd
+            , faultKey = mkey
+            }
+
+----------------------------------------------------------------
+
+-- | The TSIG for an answer which says the TSIG on the request was no
+--   good (RFC 8945 Sec 5.2).  The answer itself carries RCODE 9
+--   (NOTAUTH); this record is what names the check which failed, so that
+--   the far end is told why and not merely that it was turned away.
+--
+--   'BADKEY' and 'BADSIG' mean we cannot tell who sent the request, so
+--   the record carries no MAC at all: Sec 5.3.2 says such an answer MUST
+--   NOT be signed, and Sec 5.4 has whoever receives it treat it as a
+--   hint rather than as the truth.
+--
+--   'BADTIME' is not like that.  The key and the MAC were good and only
+--   the clocks disagree, so the answer is signed with that key, it
+--   carries our own time in the other data, and it gives back the time
+--   and the fudge the request came with -- which is what lets the far
+--   end check the answer without falling over the clocks a second time
+--   (Sec 5.2.3).  'BADTRUNC' is signed as well, but not bound to a
+--   request MAC we never accepted.
+--
+--   The message must be given encoded, exactly as it will be sent,
+--   before the record is added to it, as for 'signTSIG'.
+errorTSIG
+    :: TSIGFault
+    -> EpochTime
+    -- ^ now
+    -> BS.ByteString
+    -- ^ the answer, encoded, without the record
+    -> ResourceRecord
+errorTSIG TSIGFault{..} now body = record faultKeyName rd
+  where
+    req = faultRecord
+    -- Sec 5.2.3: a complaint about the clocks is signed at the time the
+    -- request gave, so that what differs is the times and not the check.
+    (time, fudge, other)
+        | faultError == BADTIME =
+            (tsig_time_signed req, tsig_fudge req, sixOctets now)
+        | otherwise = (fromIntegral now, defaultFudge, Opaque.fromByteString "")
+    rd0 =
+        (unsignedTSIG (tsig_algorithm req) time fudge (identifierOf body))
+            { tsig_error = fromTSIGError faultError
+            , tsig_other = other
+            }
+    -- Sec 5.3.2: the request MAC goes into the digest only where it was
+    -- found to be good, which is nowhere but the complaint about clocks.
+    mrequest = if faultError == BADTIME then Just (tsig_mac req) else Nothing
+    rd = case signWith of
+        Nothing -> rd0
+        Just key -> rd0{tsig_mac = tsigMAC key $ tsigDigest mrequest body faultKeyName rd0}
+    signWith = case faultError of
+        BADTIME -> faultKey
+        BADTRUNC -> faultKey
+        _ -> Nothing
+
+-- | A time as the other data of a 'BADTIME' carries it: an unsigned 48
+--   bit integer, most significant octet first (RFC 8945 Sec 5.2.3).
+sixOctets :: EpochTime -> Opaque
+sixOctets t = Opaque.fromByteString $ BS.pack [fromIntegral (n `shiftR` s) | s <- [40, 32, 24, 16, 8, 0]]
+  where
+    n = fromIntegral t :: Word64
+
+-- | What the far end says was wrong with the TSIG we sent it (RFC 8945
+--   Sec 5.4).  Such an answer usually carries an unsigned record, which
+--   checking it as though it were an ordinary answer can only call
+--   'BADTRUNC'; this reads what it says instead.
+tsigReported :: DNSMessage -> Maybe TSIGError
+tsigReported msg = do
+    guard $ rcode msg == NotAuth
+    (_, rd) <- lastTSIG msg
+    toTSIGError $ tsig_error rd

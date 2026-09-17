@@ -12,7 +12,7 @@ import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
-import DNS.TSIG (TSIGError, TSIGKey)
+import DNS.TSIG (TSIGFault, TSIGKey)
 import DNS.Types
 
 ----------------------------------------------------------------
@@ -89,7 +89,7 @@ data Transfer
     | -- | It may not, and there is nothing more to say about it
       TransferRefused
     | -- | It carried a TSIG and the TSIG was not good
-      TransferNotAuth TSIGError
+      TransferNotAuth TSIGFault
 
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
