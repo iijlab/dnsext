@@ -30,6 +30,7 @@ import DNS.Auth.DB
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
+import DNS.TSIG (TSIGKey)
 import DNS.Types
 
 import Algo
@@ -38,14 +39,15 @@ import Config
 import Exception
 import KeyFile
 import Serial
+import TSIGKeys
 import Types
 
 ----------------------------------------------------------------
 
-newZones :: Env -> [ZoneConf] -> IO [Zone]
-newZones env zcs = do
+newZones :: Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
+newZones env keys zcs = do
     checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone env) zcs
+    mapM (newZone env keys) zcs
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -60,14 +62,16 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: Env -> ZoneConf -> IO Zone
-newZone env zoneconf@ZoneConf{..} = do
+newZone :: Env -> TSIGKeys -> ZoneConf -> IO Zone
+newZone env keys zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
     msigning <- withZoneName $ readSigning env zone zoneconf
+    sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
+    transferKey <- withZoneName $ namedKey keys "allow-transfer-key" cnf_allow_transfer_key
     -- The source is not read here.  Reading it can block for as long as
     -- an unreachable upstream takes to time out, and nothing is
     -- listening yet at this point, so every other zone would be
@@ -97,6 +101,8 @@ newZone env zoneconf@ZoneConf{..} = do
             , zoneNotifyAddrs = notify_addrs
             , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
+            , zoneSourceKey = sourceKey
+            , zoneTransferKey = transferKey
             , zoneAllowTransfer4 = t4
             , zoneAllowTransfer6 = t6
             , zoneName = zone
@@ -111,6 +117,19 @@ newZone env zoneconf@ZoneConf{..} = do
     withZoneName action =
         action `E.catchIOError` \e ->
             E.ioError $ E.ioeSetErrorString e (zoneLabel zone ++ E.ioeGetErrorString e)
+
+-- | Finding the key a setting names.  Naming one which is not in the
+--   key file is a mistake worth stopping for: the alternative is a zone
+--   which quietly goes on without the TSIG somebody asked for.
+namedKey :: TSIGKeys -> String -> String -> IO (Maybe TSIGKey)
+namedKey keys setting name
+    | null name = return Nothing
+    | otherwise = case lookupTSIGKey (fromRepresentation name) keys of
+        Just k -> return $ Just k
+        Nothing ->
+            E.ioError $
+                E.userError $
+                    setting ++ ": no key named " ++ name ++ " in the key file"
 
 fromFile :: Source -> Bool
 fromFile (FromFile _) = True

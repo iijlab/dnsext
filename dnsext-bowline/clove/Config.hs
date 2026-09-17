@@ -58,8 +58,10 @@ data ZoneConf = ZoneConf
     , cnf_allow_notify_addrs    :: [String]
     , cnf_allow_transfer        :: Bool
     , cnf_allow_transfer_addrs  :: [String]
+    , cnf_allow_transfer_key     :: String
     , cnf_source                :: String
     , cnf_source_port           :: PortNumber
+    , cnf_source_key            :: String
     , cnf_signing               :: Bool
     , cnf_nsec3                 :: Bool
     , cnf_ksk_algo              :: String
@@ -85,9 +87,11 @@ defaultZoneConf =
         , cnf_allow_notify_addrs    = []
         , cnf_allow_transfer        = False
         , cnf_allow_transfer_addrs  = []
+        , cnf_allow_transfer_key     = ""
         , cnf_signing               = True
         , cnf_source                = "example.zone"
         , cnf_source_port           = 53
+        , cnf_source_key            = ""
         , cnf_nsec3                 = True
         , cnf_ksk_algo              = "ED25519"
         , cnf_ksk_size              = 0
@@ -137,8 +141,10 @@ makeZoneConf def conf = do
     cnf_allow_notify_addrs    <- get "allow-notify-addrs"    cnf_allow_notify_addrs
     cnf_allow_transfer        <- get "allow-transfer"        cnf_allow_transfer
     cnf_allow_transfer_addrs  <- get "allow-transfer-addrs"  cnf_allow_transfer_addrs
+    cnf_allow_transfer_key     <- get "allow-transfer-key"    cnf_allow_transfer_key
     cnf_source                <- get "source"                cnf_source
     cnf_source_port           <- get "source-port"           cnf_source_port
+    cnf_source_key            <- get "source-key"            cnf_source_key
     cnf_signing               <- get "signing"               cnf_signing
     cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
     cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo

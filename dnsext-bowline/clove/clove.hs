@@ -52,7 +52,7 @@ main = reportingError $ do
     withLogger Config{..} $ \env reopenLog -> do
         keys <- loadTSIGKeys env cnf_tsig_file
         envPutLines env INFO Nothing [show (length keys) ++ " TSIG key(s)"]
-        zones <- newZones env zonelist
+        zones <- newZones env keys zonelist
         zoneAlist <- toZoneAlist zones
         let (_, zonerefs) = unzip zoneAlist
         -- Zone updators.  Each loads its own zone, so a source which is

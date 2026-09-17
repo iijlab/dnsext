@@ -12,6 +12,7 @@ import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
+import DNS.TSIG (TSIGKey)
 import DNS.Types
 
 ----------------------------------------------------------------
@@ -53,6 +54,12 @@ data Zone = Zone
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
+    , zoneSourceKey :: Maybe TSIGKey
+    -- ^ Key the queries to the upstream are signed with
+    , zoneTransferKey :: Maybe TSIGKey
+    -- ^ Key a transfer must be signed with.  When there is one, the
+    --   addresses below are not consulted: holding the key is what
+    --   grants the transfer.
     , zoneAllowTransfer4 :: IPRTable IPv4 Bool
     , zoneAllowTransfer6 :: IPRTable IPv6 Bool
     , zoneTimeoutWait :: TimeoutWait
