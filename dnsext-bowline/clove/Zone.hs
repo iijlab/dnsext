@@ -241,6 +241,7 @@ readSigning :: Domain -> ZoneConf -> IO (Maybe Signing)
 readSigning dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
+        checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
@@ -292,6 +293,47 @@ readSigning dom ZoneConf{..}
 --   configured zones wins.  Taking the first match instead made
 --   \"www.sub.example.jp\" land in \"example.jp\" whenever that zone
 --   happened to be written first in the configuration file.
+-- | Shortest a duration may be, in seconds.  The rollover check
+--   tolerates its timer firing a few minutes early, so a rollover
+--   duration of that order would have every wake up generate a key; and
+--   a signature which lives less than this is of no use with any
+--   sensible TTL.
+minDuration :: Int
+minDuration = 3600
+
+-- | The zone is re-signed once per rollover duration, so a signature
+--   has to outlive that interval with room to spare -- otherwise it
+--   expires in the gap before the next one is made.  A third of the
+--   interval is the room asked for here.
+checkDurations :: Int -> Int -> IO ()
+checkDurations lifetime rollover
+    | rollover < minDuration =
+        failWith $
+            "zsk-rollover-duration must be at least "
+                ++ show minDuration
+                ++ " seconds, but is "
+                ++ show rollover
+    | lifetime < minDuration =
+        failWith $
+            "rrsig-lifetime must be at least "
+                ++ show minDuration
+                ++ " seconds, but is "
+                ++ show lifetime
+    | 3 * lifetime < 4 * rollover =
+        failWith $
+            "rrsig-lifetime must be at least "
+                ++ show needed
+                ++ " seconds, a third longer than zsk-rollover-duration ("
+                ++ show rollover
+                ++ "), but is "
+                ++ show lifetime
+    | otherwise = return ()
+  where
+    needed = (4 * rollover + 2) `div` 3
+    failWith = E.ioError . E.userError
+
+----------------------------------------------------------------
+
 findZoneAlist :: Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
 findZoneAlist dom alist = case filter (\(k, _) -> dom `isSubDomainOf` k) alist of
     [] -> Nothing
