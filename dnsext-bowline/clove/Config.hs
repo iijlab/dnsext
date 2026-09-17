@@ -7,6 +7,7 @@ module Config (
 ) where
 
 import DNS.Config
+import DNS.Log (Level (..))
 import Data.IORef
 import Data.List (nub, (\\))
 import Network.Socket (PortNumber)
@@ -22,7 +23,7 @@ data Config = Config
     , cnf_udp_port  :: PortNumber
     , cnf_log       :: Bool
     , cnf_log_file  :: Maybe FilePath
-    , cnf_log_level :: String
+    , cnf_log_level :: Level
     , cnf_clove_dir :: FilePath
     } deriving (Show)
 
@@ -35,7 +36,7 @@ defaultConfig =
         , cnf_udp_port  = 53
         , cnf_log       = True
         , cnf_log_file  = Nothing
-        , cnf_log_level = "WARNING"
+        , cnf_log_level = WARNING
         , cnf_clove_dir = "/var/clove/"
         }
 

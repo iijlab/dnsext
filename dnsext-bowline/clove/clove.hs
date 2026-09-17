@@ -10,9 +10,12 @@ import DNS.Do53.Internal
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
+import qualified Control.Exception as E
 import System.Directory
-import System.Environment (getArgs)
-import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hSetBuffering, openFile)
+import System.Environment (getArgs, getProgName)
+import System.Exit (exitFailure)
+import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hPutStrLn, hSetBuffering, openFile, stderr)
+import System.IO.Error (ioeGetErrorString, isUserError)
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 
 import DNS.Auth.Algorithm
@@ -41,8 +44,8 @@ main = do
         DNS.addResourceDataForDNSSEC
         DNS.addResourceDataForSVCB
     -- Initialization
-    [conffile] <- getArgs
-    (Config{..}, zonelist) <- loadConfig conffile
+    conffile <- getConfFile
+    (Config{..}, zonelist) <- reportingError $ loadConfig conffile
     --
     setCurrentDirectory cnf_clove_dir
     --
@@ -64,7 +67,34 @@ main = do
         ss <- mapM (serverSocket cnf_udp_port) cnf_udp_addrs
         let cs = map (udpServer env zoneAlist) ss
         -- Run servers
-        foldr1 concurrently_ $ as ++ cs
+        case as ++ cs of
+            [] -> die "no address to listen on: set tcp-addrs and/or udp-addrs"
+            servers -> foldr1 concurrently_ servers
+
+----------------------------------------------------------------
+
+getConfFile :: IO FilePath
+getConfFile = do
+    args <- getArgs
+    case args of
+        [conffile] -> return conffile
+        _ -> do
+            name <- getProgName
+            die $ "usage: " ++ name ++ " <config file>"
+
+-- | Reporting a bad configuration as one line rather than as an
+--   uncaught exception with a backtrace.
+reportingError :: IO a -> IO a
+reportingError action = action `E.catch` \e ->
+    -- Our own complaints read better without the "user error" wrapper;
+    -- a system error keeps its file name and its cause.
+    die $ if isUserError e then ioeGetErrorString e else show e
+
+die :: String -> IO a
+die msg = do
+    name <- getProgName
+    hPutStrLn stderr $ name ++ ": " ++ msg
+    exitFailure
 
 ----------------------------------------------------------------
 
@@ -79,7 +109,7 @@ withLogger Config{..} body
         Just file -> withHandleLogger name (pure id) (open file) hClose level toEnv
   where
     name = "clove logger"
-    level = read cnf_log_level
+    level = cnf_log_level
     toEnv Ops{..} = body Env{envPutLines = putLines}
     open file = do
         h <- openFile file AppendMode
