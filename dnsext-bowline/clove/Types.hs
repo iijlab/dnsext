@@ -68,4 +68,7 @@ data Proto = Proto
     -- ^ Whether a failing 'recvQuery' means that nothing more can ever
     --   be received.  True for a connection, False for a datagram
     --   socket, which stays usable after an error.
+    , replyLimit :: DNSMessage -> Maybe Int
+    -- ^ Largest reply which may be sent in answer to this query, if the
+    --   transport limits it at all.
     }

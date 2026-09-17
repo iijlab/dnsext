@@ -10,6 +10,7 @@ import DNS.Types.Encode
 
 import Control.Concurrent (threadDelay)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.IORef
 import Data.IP
 import Network.Socket
@@ -83,15 +84,15 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                             -- except the query type is IXFR.
                             mx <- allowAXFR sa dom zoneAlist
                             case mx of
-                                Nothing -> sendReply sa $ replyRefused query
+                                Nothing -> sendReply sa $ replyRefused proto query
                                 Just zone -> transfer env proto zone sa query
                         else
                             response proto zoneAlist sa query dom
-                _ -> sendReply sa $ replyRefused query
+                _ -> sendReply sa $ replyRefused proto query
 
 response :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
-response Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
-    Nothing -> sendReply sa $ replyRefused query
+response proto@Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
+    Nothing -> sendReply sa $ replyRefused proto query
     Just (_, zoneref) -> do
         zone <- readIORef zoneref
         -- A zone whose source could not be loaded holds the empty
@@ -101,37 +102,68 @@ response Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of 
         -- names we simply know nothing about, and downstream caches
         -- would keep the denial.
         if zoneReady zone
-            then sendReply sa $ replyQuery query $ zoneDB zone
-            else sendReply sa $ replyServFail query
+            then sendReply sa $ replyQuery proto query $ zoneDB zone
+            else sendReply sa $ replyServFail proto query
 
 handleNotify :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> IO ()
-handleNotify Proto{..} zoneAlist sa query = case lookup dom zoneAlist of -- exact match
-    Nothing -> sendReply sa $ replyRefused query
+handleNotify proto@Proto{..} zoneAlist sa query = case lookup dom zoneAlist of -- exact match
+    Nothing -> sendReply sa $ replyRefused proto query
     Just zoneref -> do
         Zone{..} <- readIORef zoneref
         case fromSockAddr sa of
-            Nothing -> sendReply sa $ replyRefused query
+            Nothing -> sendReply sa $ replyRefused proto query
             Just (ip, _)
                 | ip `elem` zoneAllowNotifyAddrs -> do
-                    sendReply sa $ replyNotice query
+                    sendReply sa $ replyNotice proto query
                     zoneWakeUp
-                | otherwise -> sendReply sa $ replyRefused query
+                | otherwise -> sendReply sa $ replyRefused proto query
   where
     dom = qname $ question query
 
-replyNotice :: DNSMessage -> ByteString
-replyNotice query = encode $ fromQuery query
+replyNotice :: Proto -> DNSMessage -> ByteString
+replyNotice proto query = encodeReply proto query $ fromQuery query
 
-replyQuery :: DNSMessage -> DB -> ByteString
-replyQuery query db = encode $ getAnswer db query
+replyQuery :: Proto -> DNSMessage -> DB -> ByteString
+replyQuery proto query db = encodeReply proto query $ getAnswer db query
 
-replyRefused :: DNSMessage -> ByteString
-replyRefused query = encode $ (fromQuery query){rcode = Refused}
+replyRefused :: Proto -> DNSMessage -> ByteString
+replyRefused proto query = encodeReply proto query $ (fromQuery query){rcode = Refused}
 
 -- | We are configured for this zone but have nothing to say about it.
 --   Not authoritative: there is no data to be authoritative about.
-replyServFail :: DNSMessage -> ByteString
-replyServFail query = encode reply{rcode = ServFail, flags = flgs}
+replyServFail :: Proto -> DNSMessage -> ByteString
+replyServFail proto query = encodeReply proto query reply{rcode = ServFail, flags = flgs}
   where
     reply = fromQuery query
     flgs = (flags reply){authAnswer = False}
+
+----------------------------------------------------------------
+
+-- | Encoding a reply for the transport it is going to be sent over.
+encodeReply :: Proto -> DNSMessage -> DNSMessage -> ByteString
+encodeReply Proto{..} query reply = case replyLimit query of
+    Nothing -> encode reply
+    Just lim -> fitIn lim reply
+
+-- | Making a reply fit into the space the transport allows.
+--
+--   RFC 2181 Sec 9: the TC bit should not be set merely because some
+--   additional data did not fit, so that section goes first and the
+--   answer is still sent as a complete one.  Only when the answer
+--   itself does not fit is TC set, with the sections emptied, so that
+--   the client asks again over TCP.
+fitIn :: Int -> DNSMessage -> ByteString
+fitIn lim reply
+    | BS.length whole <= lim = whole
+    | BS.length noAdditional <= lim = noAdditional
+    | otherwise = encode truncated
+  where
+    whole = encode reply
+    noAdditional = encode reply{additional = []}
+    truncated =
+        reply
+            { flags = (flags reply){trunCation = True}
+            , answer = []
+            , authority = []
+            , additional = []
+            }

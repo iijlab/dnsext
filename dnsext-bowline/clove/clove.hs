@@ -98,7 +98,16 @@ udpServer env zoneAlist s = Auth.server env proto zoneAlist
             , allowAXFR = \_ _ _ -> return Nothing
             , protoName = "UDP"
             , recvErrorFatal = False
+            , replyLimit = Just . udpReplyLimit
             }
+
+-- | RFC 1035 Sec 4.2.1 limits a UDP message to 512 bytes.  RFC 6891
+--   Sec 6.2.3 lets the requestor offer a larger buffer with EDNS0, and
+--   a responder must not send more than what was offered.
+udpReplyLimit :: DNSMessage -> Int
+udpReplyLimit query = fromIntegral $ case ednsHeader query of
+    EDNSheader edns -> maxUdpSize `min` (minUdpSize `max` ednsUdpSize edns)
+    _ -> minUdpSize
 
 ----------------------------------------------------------------
 
@@ -121,6 +130,8 @@ tcpServer env zoneAlist port addr =
                         , allowAXFR = Auth.tcpAllowAXFR
                         , protoName = "TCP"
                         , recvErrorFatal = True
+                        , -- A two byte length prefix: nothing to truncate.
+                          replyLimit = const Nothing
                         }
             Auth.server env proto zoneAlist
 
