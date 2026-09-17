@@ -49,7 +49,7 @@ main = reportingError $ do
     setCurrentDirectory cnf_clove_dir
     --
     withLogger Config{..} $ \env reopenLog -> do
-        zones <- newZones zonelist
+        zones <- newZones env zonelist
         zoneAlist <- toZoneAlist zones
         let (_, zonerefs) = unzip zoneAlist
         -- Zone updators.  Each loads its own zone, so a source which is

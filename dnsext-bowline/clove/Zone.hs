@@ -12,6 +12,7 @@ module Zone (
 
 import Control.Concurrent.STM
 import qualified Control.Exception as E
+import Control.Monad (when)
 import Data.Function (on)
 import Data.IORef
 import Data.IP
@@ -40,10 +41,10 @@ import Types
 
 ----------------------------------------------------------------
 
-newZones :: [ZoneConf] -> IO [Zone]
-newZones zcs = do
+newZones :: Env -> [ZoneConf] -> IO [Zone]
+newZones env zcs = do
     checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM newZone zcs
+    mapM (newZone env) zcs
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -58,14 +59,14 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: ZoneConf -> IO Zone
-newZone zoneconf@ZoneConf{..} = do
+newZone :: Env -> ZoneConf -> IO Zone
+newZone env zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
-    msigning <- withZoneName $ readSigning zone zoneconf
+    msigning <- withZoneName $ readSigning env zone zoneconf
     -- The source is not read here.  Reading it can block for as long as
     -- an unreachable upstream takes to time out, and nothing is
     -- listening yet at this point, so every other zone would be
@@ -270,8 +271,8 @@ readSource ZoneConf{..}
     | Just a4 <- readMaybe cnf_source = FromUpstream4 a4 cnf_source_port
     | otherwise = FromFile cnf_source
 
-readSigning :: Domain -> ZoneConf -> IO (Maybe Signing)
-readSigning dom ZoneConf{..}
+readSigning :: Env -> Domain -> ZoneConf -> IO (Maybe Signing)
+readSigning env dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
         checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
@@ -283,8 +284,8 @@ readSigning dom ZoneConf{..}
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
         checkAlgorithms kskAlgo zskAlgo
-        checkKeySize "ksk" kskAlgo cnf_ksk_size
-        checkKeySize "zsk" zskAlgo cnf_zsk_size
+        checkKeySize env "ksk" kskAlgo cnf_ksk_size
+        checkKeySize env "zsk" zskAlgo cnf_zsk_size
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.ioError $ E.userError $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
@@ -419,9 +420,18 @@ maxKeySize = 4096
 --   The size is in bits and the generator divides it by eight, so a
 --   size which is not a multiple of eight quietly yields a smaller key
 --   than was asked for.
-checkKeySize :: String -> PubAlg -> Int -> IO ()
-checkKeySize what alg size
-    | not (isRSA alg) = return ()
+checkKeySize :: Env -> String -> PubAlg -> Int -> IO ()
+checkKeySize env what alg size
+    -- Not an error: a size left over from another algorithm does no
+    -- harm.  But the operator plainly expects it to be used, so it is
+    -- worth saying that it is not.
+    | not (isRSA alg) =
+        when (size /= 0) $
+            envPutLines
+                env
+                WARNING
+                Nothing
+                [what ++ "-size is not used by " ++ show alg ++ ", but is set to " ++ show size]
     | size < minKeySize || size > maxKeySize =
         failWith $
             what
