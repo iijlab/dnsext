@@ -18,15 +18,18 @@ import Data.Maybe
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
+import System.Posix.Time (epochTime)
 import System.Timeout (timeout)
 
 import DNS.Auth.Algorithm
 import DNS.Do53.Client
 import DNS.Do53.Internal
 import DNS.Log
+import DNS.TSIG
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
+import DNS.Types.Time (EpochTime)
 
 import Exception
 import Types
@@ -145,14 +148,21 @@ axfrMessages reply = go
 --   because the upstream has not moved on, or because it could not be
 --   asked.  It does not mean the zone is empty, and it is not an error:
 --   a failing transfer throws instead.
-client :: Env -> Maybe Serial -> IP -> PortNumber -> Domain -> IO (Maybe [ResourceRecord])
-client env Nothing ip port dom = Just <$> axfrQuery env ip port dom
-client env (Just serial0) ip port dom = do
+client
+    :: Env
+    -> Maybe TSIGKey
+    -> Maybe Serial
+    -> IP
+    -> PortNumber
+    -> Domain
+    -> IO (Maybe [ResourceRecord])
+client env mkey Nothing ip port dom = Just <$> axfrQuery env mkey ip port dom
+client env mkey (Just serial0) ip port dom = do
     mserial <- serialQuery env ip port dom
     case mserial of
         Nothing -> return Nothing
         Just serial
-            | serial > serial0 -> Just <$> axfrQuery env ip port dom
+            | serial > serial0 -> Just <$> axfrQuery env mkey ip port dom
             | otherwise -> return Nothing
 
 serialQuery :: Env -> IP -> PortNumber -> Domain -> IO (Maybe Serial)
@@ -194,27 +204,39 @@ serialQuery env@Env{..} ip port dom = withUpstream ip port dom "SOA" $ do
 axfrTimeout :: Int
 axfrTimeout = 300 * 1000000
 
+currentTime :: IO EpochTime
+currentTime = fromIntegral . fromEnum <$> epochTime
+
 -- | Asking for a zone and reading it to the end.
 --
 --   A transfer arrives as a run of messages, not one (RFC 5936 Sec
 --   2.2), and reading only the first left everything past the first
 --   message behind.  The connection is driven here rather than through
 --   a resolver, which answers one message per question by nature.
-axfrQuery :: Env -> IP -> PortNumber -> Domain -> IO [ResourceRecord]
-axfrQuery _env ip port dom = withUpstream ip port dom "AXFR" $ do
-    mrrs <- timeout axfrTimeout $ E.bracket (openTCP ip port) close request
+axfrQuery :: Env -> Maybe TSIGKey -> IP -> PortNumber -> Domain -> IO [ResourceRecord]
+axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
+    now <- currentTime
+    mrrs <- timeout axfrTimeout $ E.bracket (openTCP ip port) close $ request now
     case mrrs of
         Nothing -> E.ioError $ E.userError "timed out"
         Just rrs -> return rrs
   where
     q = Question dom AXFR IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
-    request sock = do
-        sendVC (sendTCP sock) $ encodeQuery 0 q qctl
-        collect sock BS.empty []
+    request now sock = do
+        let bare = encodeQuery 0 q qctl
+        (asked, mrequestMAC) <- case mkey of
+            Nothing -> return (bare, Nothing)
+            Just key -> case decode bare of
+                Left e -> E.ioError $ E.userError $ show e
+                Right m -> do
+                    let (rr, mac) = signTSIG key now defaultFudge Nothing bare
+                    return (encode m{additional = additional m ++ [rr]}, Just mac)
+        sendVC (sendTCP sock) asked
+        collect now sock BS.empty (AtFirst mrequestMAC) []
     -- The records come back reversed, so the head is the last one seen:
     -- the transfer is over once that is the closing SOA.
-    collect sock rest racc = do
+    collect now sock rest chain racc = do
         (bs, rest') <- recvMessage sock rest
         msg <- case decode bs of
             Left e -> E.ioError $ E.userError $ show e
@@ -223,15 +245,70 @@ axfrQuery _env ip port dom = withUpstream ip port dom "AXFR" $ do
             NoErr -> return ()
             rc -> E.ioError $ E.userError $ show rc
         let racc' = reverse (answer msg) ++ racc
-        case racc' of
-            closing : _ : _ | rrtype closing == SOA -> return $ opening $ reverse racc'
-            _ -> collect sock rest' racc'
+            done = case racc' of
+                closing : _ : _ -> rrtype closing == SOA
+                _ -> False
+        chain' <- checkChain mkey now chain bs msg done
+        if done
+            then return $ opening $ reverse racc'
+            else collect now sock rest' chain' racc'
     -- RFC 5936 Sec 2.2: the first record is the SOA and the last is the
     -- same one again.  The copy at the end is dropped here, which is
     -- what the rest of clove expects of a zone.
     opening (soa : rrs)
         | rrtype soa == SOA = soa : init rrs
     opening _ = []
+
+----------------------------------------------------------------
+
+-- | How far along the signatures of a transfer we are (RFC 8945 Sec
+--   5.3.1).
+data Chain
+    = -- | Nothing has come back yet.  The MAC of the request, which the
+      --   first message is bound to, if it was signed.
+      AtFirst (Maybe Opaque)
+    | -- | The MAC of the last message which carried a record, and the
+      --   messages since then which did not.
+      AfterFirst Opaque [BS.ByteString]
+
+-- | Most messages of a transfer may come unsigned, so long as the
+--   first and the last do not.  RFC 8945 Sec 5.3.1 puts up with ninety
+--   nine of them in a row.
+unsignedRun :: Int
+unsignedRun = 99
+
+-- | Following the signatures across a transfer, message by message.
+checkChain
+    :: Maybe TSIGKey
+    -> EpochTime
+    -> Chain
+    -> BS.ByteString
+    -- ^ this message, exactly as it arrived
+    -> DNSMessage
+    -> Bool
+    -- ^ whether this is the last message of the transfer
+    -> IO Chain
+checkChain Nothing _ chain _ _ _ = return chain
+checkChain (Just key) now chain bs msg final = case chain of
+    -- The first message answers the request and is bound to it, and it
+    -- has to be signed before anything after it is allowed not to be.
+    AtFirst mrequest
+        | not signedHere -> failed "the first message of the transfer is not signed"
+        | otherwise -> took $ verifyTSIG held now mrequest bs msg
+    AfterFirst prior earlier
+        | signedHere -> took $ verifyTSIGCont held now prior earlier bs msg
+        | final -> failed "the last message of the transfer is not signed"
+        | length earlier >= unsignedRun ->
+            failed $ show (unsignedRun + 1) ++ " messages in a row went unsigned"
+        | otherwise -> return $ AfterFirst prior (earlier ++ [bs])
+  where
+    signedHere = any ((== TSIG) . rrtype) $ additional msg
+    took r = case r of
+        TSIGOk mac -> return $ AfterFirst mac []
+        TSIGMissing -> failed "the record went missing between looking and checking"
+        TSIGFailed e -> failed $ show e
+    held n = if n == tsigKeyName key then Just key else Nothing
+    failed why = E.ioError $ E.userError $ "TSIG: " ++ why
 
 -- | Reading one length-prefixed message, keeping whatever was read past
 --   it for the next one.

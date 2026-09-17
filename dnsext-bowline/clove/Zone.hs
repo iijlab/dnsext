@@ -157,9 +157,9 @@ initSync = do
 
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = do
-    Zone{..} <- readIORef zoneref
-    handleLogErrIn env WARNING (zoneLabel zoneName) () $ do
-        (db, rrs) <- loadSourceWithSigning env zoneName zoneSource zoneSigning zoneRRs
+    zone <- readIORef zoneref
+    handleLogErrIn env WARNING (zoneLabel $ zoneName zone) () $ do
+        (db, rrs) <- loadSourceWithSigning env zone
         atomicModifyIORef' zoneref $ modify db rrs
   where
     modify db rrs zone = (zone', ())
@@ -200,52 +200,58 @@ zoneDirectory zone = case toRepresentation zone of
 --   are used again when the source turns out to have nothing new, so
 --   that signing again never waits on the source changing.
 --   This function throws 'AuthException'.
-loadSourceWithSigning
-    :: Env
-    -> Domain
-    -> Source
-    -> Maybe Signing
-    -> [ResourceRecord]
-    -> IO (DB, [ResourceRecord])
-loadSourceWithSigning env zone source Nothing oldRRs = do
-    let zoneDir = zoneDirectory zone
-    createDirectoryIfMissing True zoneDir
-    mserial <- loadSerial zoneDir
-    rrs <- reloadSource env zone mserial source oldRRs
-    db <- makeDBforSecondary zone rrs
-    saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-    return (db, rrs)
-loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
-    let zoneDir = zoneDirectory zone
-    createDirectoryIfMissing True zoneDir
-    mserial <- loadSerial zoneDir
-    rrs0 <- reloadSource env zone mserial source oldRRs
-    (soa0, soarr0, rrs) <- checkRRs rrs0
-    checkUnsigned rrs
-    let soa
-            | byMySelf source = case mserial of
-                Nothing -> soa0 -- No serial file, serial from zone file
-                Just s -> soa0{soa_serial = s <> Serial 1}
-            | otherwise = soa0
-        soarr = soarr0{rdata = toRData soa}
-        -- TTL of the DNSKEY RRset: the zone's own, taken from the apex
-        -- SOA.  Not the SOA minimum, which RFC 2308 Sec 4 redefined as
-        -- the negative caching TTL and which is commonly a few minutes;
-        -- no rule makes it the TTL of the keys.  NSEC3 does take it,
-        -- and makeDBforPrimary uses it there (RFC 5155 Sec 3).
-        keyTTL = rrttl soarr0
-    let kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
-    (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
-    signKey <- makeSigner kskKeyConfig keyInfoKSK
-    let zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
-    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
-        loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
-    signZone <- makeSigner zskKeyConfig keyInfoZSK1
-    db <- makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
-    -- Stored only after the zone has been built successfully so that a
-    -- failure does not inflate the serial.
-    saveSerial zoneDir $ soa_serial soa
-    return (db, rrs0)
+loadSourceWithSigning :: Env -> Zone -> IO (DB, [ResourceRecord])
+loadSourceWithSigning env z = case zoneSigning z of
+    Nothing -> unsigned
+    Just signing -> signed signing
+  where
+    zone = zoneName z
+    source = zoneSource z
+    oldRRs = zoneRRs z
+    key = zoneSourceKey z
+    zoneDir = zoneDirectory zone
+
+    unsigned = do
+        createDirectoryIfMissing True zoneDir
+        mserial <- loadSerial zoneDir
+        rrs <- reloadSource env key zone mserial source oldRRs
+        db <- makeDBforSecondary zone rrs
+        saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
+        return (db, rrs)
+
+    signed Signing{..} = do
+        createDirectoryIfMissing True zoneDir
+        mserial <- loadSerial zoneDir
+        rrs0 <- reloadSource env key zone mserial source oldRRs
+        (soa0, soarr0, rrs) <- checkRRs rrs0
+        checkUnsigned rrs
+        let soa
+                | byMySelf source = case mserial of
+                    Nothing -> soa0 -- No serial file, serial from zone file
+                    Just sr -> soa0{soa_serial = sr <> Serial 1}
+                | otherwise = soa0
+            soarr = soarr0{rdata = toRData soa}
+            -- TTL of the DNSKEY RRset: the zone's own, taken from the
+            -- apex SOA.  Not the SOA minimum, which RFC 2308 Sec 4
+            -- redefined as the negative caching TTL and which is
+            -- commonly a few minutes; no rule makes it the TTL of the
+            -- keys.  NSEC3 does take it, and makeDBforPrimary uses it
+            -- there (RFC 5155 Sec 3).
+            keyTTL = rrttl soarr0
+            kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
+            zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
+        (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
+        signKey <- makeSigner kskKeyConfig keyInfoKSK
+        ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
+            loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
+        signZone <- makeSigner zskKeyConfig keyInfoZSK1
+        db <-
+            makeDBforPrimary zone signingN3P signKey signZone $
+                soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2]
+        -- Stored only after the zone has been built successfully so
+        -- that a failure does not inflate the serial.
+        saveSerial zoneDir $ soa_serial soa
+        return (db, rrs0)
 
 -- | Refusing to sign a zone which is signed already.
 --
@@ -276,13 +282,14 @@ byMySelf _ = False
 --   when the source has nothing new.
 reloadSource
     :: Env
+    -> Maybe TSIGKey
     -> Domain
     -> Maybe Serial
     -> Source
     -> [ResourceRecord]
     -> IO [ResourceRecord]
-reloadSource env zone mserial source oldRRs =
-    fromMaybe oldRRs <$> loadSource env zone sinceSerial source
+reloadSource env key zone mserial source oldRRs =
+    fromMaybe oldRRs <$> loadSource env key zone sinceSerial source
   where
     -- With nothing to fall back on there is nothing to be gained by
     -- asking only for what is newer: fetch the zone whatever the
@@ -293,10 +300,16 @@ reloadSource env zone mserial source oldRRs =
 
 -- | 'Nothing' means the source has nothing newer than the serial given.
 --   This function throws 'AuthException'.
-loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO (Maybe [ResourceRecord])
-loadSource env zone mserial source = case source of
-    FromUpstream4 ip4 port -> Axfr.client env mserial (IPv4 ip4) port zone
-    FromUpstream6 ip6 port -> Axfr.client env mserial (IPv6 ip6) port zone
+loadSource
+    :: Env
+    -> Maybe TSIGKey
+    -> Domain
+    -> Maybe Serial
+    -> Source
+    -> IO (Maybe [ResourceRecord])
+loadSource env key zone mserial source = case source of
+    FromUpstream4 ip4 port -> Axfr.client env key mserial (IPv4 ip4) port zone
+    FromUpstream6 ip6 port -> Axfr.client env key mserial (IPv6 ip6) port zone
     FromFile fn -> Just <$> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])

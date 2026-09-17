@@ -24,6 +24,13 @@ fromQuery query =
           -- Copy question
           flags = flgs
         , ednsHeader = ednsH
+        , -- Whatever the query carried in these is the querier's, not
+          -- ours to send back.  An ordinary query carries nothing in
+          -- them, which is why this went unnoticed; one carrying a TSIG
+          -- had its own record echoed at it as though we had signed.
+          answer = []
+        , authority = []
+        , additional = []
         }
   where
     -- RFC 6891: Sec 6.1.1
