@@ -95,10 +95,24 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                             -- is the SOA record of the zone.  I.e. the
                             -- behavior is the same as an AXFR response
                             -- except the query type is IXFR.
-                            mx <- allowAXFR sa dom zoneAlist
+                            mx <- allowAXFR sa bs query zoneAlist
                             case mx of
-                                Nothing -> sendReply sa $ replyRefused proto query
-                                Just zone -> transfer env proto zone sa query
+                                TransferOk zone mmac ->
+                                    transfer env proto zone mmac sa query
+                                TransferRefused ->
+                                    sendReply sa $ replyRefused proto query
+                                TransferNotAuth e -> do
+                                    envPutLines
+                                        WARNING
+                                        Nothing
+                                        [ "    axfr @"
+                                            ++ peer
+                                            ++ "/TCP \""
+                                            ++ toRepresentation dom
+                                            ++ "\": "
+                                            ++ show e
+                                        ]
+                                    sendReply sa $ replyNotAuth proto query
                         else
                             response proto zoneAlist sa query dom
                 _ -> sendReply sa $ replyRefused proto query
@@ -141,6 +155,13 @@ replyQuery proto query db = encodeReply proto query $ getAnswer db query
 
 replyRefused :: Proto -> DNSMessage -> ByteString
 replyRefused proto query = encodeReply proto query $ (fromQuery query){rcode = Refused}
+
+-- | The TSIG on the request was not good (RFC 8945 Sec 5.2).  The
+--   answer ought to carry a TSIG of its own saying which of the checks
+--   failed; it does not yet, so a peer is told that it was not
+--   authorised without being told why.  The log says why.
+replyNotAuth :: Proto -> DNSMessage -> ByteString
+replyNotAuth proto query = encodeReply proto query $ (fromQuery query){rcode = NotAuth}
 
 -- | We are configured for this zone but have nothing to say about it.
 --   Not authoritative: there is no data to be authoritative about.

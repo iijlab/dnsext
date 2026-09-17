@@ -136,7 +136,7 @@ udpServer env zoneAlist s = Auth.server env proto zoneAlist
         Proto
             { recvQuery = NSB.recvFrom s 2048
             , sendReply = \sa bs -> void $ NSB.sendTo s bs sa
-            , allowAXFR = \_ _ _ -> return Nothing
+            , allowAXFR = \_ _ _ _ -> return TransferRefused
             , protoName = "UDP"
             , recvErrorFatal = False
             , replyLimit = Just . udpReplyLimit

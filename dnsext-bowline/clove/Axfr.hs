@@ -29,6 +29,8 @@ import DNS.TSIG
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
+import qualified DNS.Types.Opaque as Opaque
+import DNS.Types.TSIG (unsignedTSIG)
 import DNS.Types.Time (EpochTime)
 
 import Exception
@@ -58,18 +60,31 @@ unanswered Env{..} ip port dom what why = do
     envPutLines WARNING Nothing ["    " ++ what ++ " " ++ peer ip port dom ++ ": " ++ why]
     return Nothing
 
-tcpAllowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
-tcpAllowAXFR sa dom zoneAlist = case List.lookup dom zoneAlist of -- exact match
-    Nothing -> return Nothing
+tcpAllowAXFR :: SockAddr -> BS.ByteString -> DNSMessage -> ZoneAlist -> IO Transfer
+tcpAllowAXFR sa whole msg zoneAlist = case List.lookup dom zoneAlist of -- exact match
+    Nothing -> return TransferRefused
     Just zoneref -> do
         zone <- readIORef zoneref
         -- Transferring a zone which is not loaded would hand out the
         -- empty database, that is a zero record AXFR response.
-        if zoneReady zone && accessControl zone
-            then return $ Just zone
-            else return Nothing
+        if not (zoneReady zone)
+            then return TransferRefused
+            else case zoneTransferKey zone of
+                -- Holding the key is what grants the transfer, so the
+                -- addresses are not asked about as well.
+                Just key -> do
+                    now <- currentTime
+                    let held n = if n == tsigKeyName key then Just key else Nothing
+                    return $ case verifyTSIG held now Nothing whole msg of
+                        TSIGOk mac -> TransferOk zone (Just mac)
+                        TSIGMissing -> TransferRefused
+                        TSIGFailed e -> TransferNotAuth e
+                Nothing
+                    | byAddress zone -> return $ TransferOk zone Nothing
+                    | otherwise -> return TransferRefused
   where
-    accessControl zone = case fromSockAddr sa of
+    dom = qname $ question msg
+    byAddress zone = case fromSockAddr sa of
         Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
         Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
         _ -> False
@@ -77,10 +92,15 @@ tcpAllowAXFR sa dom zoneAlist = case List.lookup dom zoneAlist of -- exact match
         t4 = zoneAllowTransfer4 zone
         t6 = zoneAllowTransfer6 zone
 
--- | Largest AXFR message clove builds.  A name compression pointer is
---   fourteen bits wide, so a message staying under 16384 bytes can
---   never need one that does not fit -- the encoder throws when it does
---   -- and it is well inside the 65535 a TCP length prefix allows.
+-- | Largest AXFR message clove builds, in octets.  Well inside the
+--   65535 a TCP length prefix allows, and small enough to be going on
+--   with.
+--
+--   It is not usually what decides how much goes in a message: the
+--   encoder will not put more than a set number of distinct names in
+--   one, and throws when asked to, which for a zone of many names comes
+--   first.  Either way the answer is the same, to ask what actually
+--   encodes rather than to work it out.
 axfrLimit :: Int
 axfrLimit = 16384
 
@@ -90,11 +110,10 @@ axfrLimit = 16384
 minRRSize :: Int
 minRRSize = 12
 
-transfer :: Env -> Proto -> Zone -> SockAddr -> DNSMessage -> IO ()
-transfer Env{..} Proto{..} zone sa query = do
-    let db = zoneDB zone
-        client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
-    msgs <- axfrMessages (fromQuery query) $ dbAll db
+transfer :: Env -> Proto -> Zone -> Maybe Opaque -> SockAddr -> DNSMessage -> IO ()
+transfer Env{..} Proto{..} zone mrequestMAC sa query = do
+    now <- currentTime
+    batches <- axfrBatches asSent $ dbAll $ zoneDB zone
     envPutLines
         NOTICE
         Nothing
@@ -103,24 +122,67 @@ transfer Env{..} Proto{..} zone sa query = do
             ++ "/TCP \""
             ++ toRepresentation (zoneName zone)
             ++ "\": "
-            ++ show (length msgs)
+            ++ show (length batches)
             ++ " message(s)"
+            ++ maybe "" (const ", signed") mkey
         ]
-    mapM_ (sendReply sa) msgs
+    case mkey of
+        Nothing -> mapM_ (sendReply sa . encode . withAnswer) batches
+        Just key -> signAndSend now key (AtFirst mrequestMAC) batches
+  where
+    asSent batch = case mkey of
+        Nothing -> withAnswer batch
+        Just key -> (withAnswer batch){additional = [placeholder key]}
+    -- Of the size and the names the real record will have, which is all
+    -- the measuring needs of it.
+    placeholder key =
+        ResourceRecord
+            { rrname = tsigKeyName key
+            , rrtype = TSIG
+            , rrclass = CL_ANY
+            , rrttl = 0
+            , rdata =
+                toRData $
+                    (unsignedTSIG (algorithmName $ tsigKeyAlgorithm key) 0 defaultFudge 0)
+                        { tsig_mac =
+                            Opaque.fromByteString $
+                                BS.replicate (macLength $ tsigKeyAlgorithm key) 0
+                        }
+            }
+    reply = fromQuery query
+    mkey = zoneTransferKey zone
+    client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
+    withAnswer batch = reply{answer = batch}
+    -- Measured in the shape it will be sent in.  A signed message
+    -- carries a record with a name of its own, and the encoder counts
+    -- the names in a message, so a batch measured without it can be one
+    -- name too many with it.
+    -- RFC 8945 Sec 5.3.1 allows most messages of a transfer to go
+    -- unsigned; signing all of them is simpler and is what it asks for.
+    signAndSend _ _ _ [] = return ()
+    signAndSend now key chain (batch : rest) = do
+        let body = encode $ withAnswer batch
+            (rr, mac) = case chain of
+                -- The first message answers the request and is bound to
+                -- it; every one after is bound to the one before.
+                AtFirst mrequest -> signTSIG key now defaultFudge mrequest body
+                AfterFirst prior _ -> signTSIGCont key now defaultFudge prior [body]
+        sendReply sa $ encode (withAnswer batch){additional = [rr]}
+        signAndSend now key (AfterFirst mac []) rest
 
 -- | Spreading the records of a zone over as many messages as they need.
 --   RFC 5936 Sec 2.2 lets a transfer be split anywhere so long as it
 --   opens and closes with the SOA, which dbAll already arranges; one
 --   message only ever held as much as fit, which for a zone of a few
 --   hundred records was none of it.
-axfrMessages :: DNSMessage -> [ResourceRecord] -> IO [BS.ByteString]
-axfrMessages reply = go
+axfrBatches :: ([ResourceRecord] -> DNSMessage) -> [ResourceRecord] -> IO [[ResourceRecord]]
+axfrBatches asSent = go
   where
     go [] = return []
     go rrs = do
         n <- fitting rrs
         let (batch, rest) = splitAt n rrs
-        (encode reply{answer = batch} :) <$> go rest
+        (batch :) <$> go rest
     -- As many records as stay within the limit, or a single record when
     -- even that does not: better an oversized message than no progress.
     fitting rrs = do
@@ -134,11 +196,10 @@ axfrMessages reply = go
             let mid = (lo + hi + 1) `div` 2
             ok <- fits rrs mid
             if ok then search rrs mid hi else search rrs lo (mid - 1)
-    -- The encoder throws when a name lands beyond the reach of a
-    -- compression pointer, so a batch it cannot encode is one that does
-    -- not fit.
+    -- The encoder throws rather than going over its own limits, so a
+    -- batch it will not encode is a batch that does not fit.
     fits rrs n = do
-        e <- trySync $ E.evaluate $ BS.length $ encode reply{answer = take n rrs}
+        e <- trySync $ E.evaluate $ BS.length $ encode $ asSent $ take n rrs
         return $ either (const False) (<= axfrLimit) e
 
 ----------------------------------------------------------------

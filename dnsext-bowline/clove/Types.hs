@@ -12,7 +12,7 @@ import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
-import DNS.TSIG (TSIGKey)
+import DNS.TSIG (TSIGError, TSIGKey)
 import DNS.Types
 
 ----------------------------------------------------------------
@@ -76,10 +76,20 @@ data Env = Env
 
 ----------------------------------------------------------------
 
+-- | What came of asking whether a transfer may go ahead.
+data Transfer
+    = -- | It may.  The MAC of the request, when it carried one, which
+      --   the answer has to be bound to.
+      TransferOk Zone (Maybe Opaque)
+    | -- | It may not, and there is nothing more to say about it
+      TransferRefused
+    | -- | It carried a TSIG and the TSIG was not good
+      TransferNotAuth TSIGError
+
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
     , sendReply :: SockAddr -> ByteString -> IO ()
-    , allowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
+    , allowAXFR :: SockAddr -> ByteString -> DNSMessage -> ZoneAlist -> IO Transfer
     , protoName :: String
     , recvErrorFatal :: Bool
     -- ^ Whether a failing 'recvQuery' means that nothing more can ever
