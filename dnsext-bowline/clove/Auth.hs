@@ -82,56 +82,44 @@ server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
                 -- a connection open after that only has the peer wait
                 -- for the idle timeout, so it ends here.
                 return $ not recvErrorFatal
-            Right query -> (>> return True) $ case opcode query of
-                OP_NOTIFY -> handleNotify env proto zoneAlist sa bs query
-                OP_STD -> do
-                    let q = question query
-                        dom = qname q
-                        typ = qtype q
-                        peer = peerOf sa
-                    envPutLines
-                        DEBUG
-                        Nothing
-                        ["\"" ++ toRepresentation dom ++ "\" " ++ show typ ++ " from " ++ peer ++ "/" ++ protoName]
-                    if typ == AXFR || typ == IXFR
-                        then do
-                            -- RFC 1995 Sec 4
-                            -- If incremental zone transfer is not
-                            -- available, the entire zone is returned.
-                            -- The first and the last RR of the response
-                            -- is the SOA record of the zone.  I.e. the
-                            -- behavior is the same as an AXFR response
-                            -- except the query type is IXFR.
-                            mx <- allowAXFR sa bs query zoneAlist
-                            case mx of
-                                TransferOk zone mmac ->
-                                    transfer env proto zone mmac sa query
-                                TransferRefused ->
-                                    sendReply sa $ replyRefused proto query
-                                TransferNotAuth fault -> do
-                                    envPutLines
-                                        WARNING
-                                        Nothing
-                                        [ "    axfr @"
-                                            ++ peer
-                                            ++ "/TCP \""
-                                            ++ toRepresentation dom
-                                            ++ "\": "
-                                            ++ show fault
-                                        ]
-                                    now <- currentTime
-                                    sendReply sa $ replyNotAuth proto query fault now
-                        else do
-                            -- RFC 8945 Sec 5.2: a query which carries a
-                            -- TSIG is checked before it is answered, and
-                            -- Sec 5.3 has the answer to it carry one in
-                            -- turn.  A query without one is answered as
-                            -- it always was.
-                            esealed <- sealFor env keys proto bs query
-                            case esealed of
-                                Left refusal -> sendReply sa refusal
-                                Right seal -> response proto seal zoneAlist sa query dom
-                _ -> sendReply sa $ replyRefused proto query
+            Right query -> (>> return True) $ do
+                -- RFC 8945 Sec 5.2: whatever the message is for, the
+                -- TSIG on it is looked at first, and before anybody
+                -- asks what holding that key is worth.
+                echecked <- checkTSIG env keys proto sa bs query
+                case echecked of
+                    Left notAuth -> sendReply sa notAuth
+                    Right sender -> do
+                        -- Sec 5.3: and whatever we answer is signed with
+                        -- the same key.
+                        let seal = sealer proto query sender
+                        case opcode query of
+                            OP_NOTIFY -> handleNotify proto seal zoneAlist sa sender query
+                            OP_STD -> do
+                                let q = question query
+                                    dom = qname q
+                                    typ = qtype q
+                                envPutLines
+                                    DEBUG
+                                    Nothing
+                                    ["\"" ++ toRepresentation dom ++ "\" " ++ show typ ++ " from " ++ peerOf sa ++ "/" ++ protoName]
+                                if typ == AXFR || typ == IXFR
+                                    then do
+                                        -- RFC 1995 Sec 4
+                                        -- If incremental zone transfer is not
+                                        -- available, the entire zone is returned.
+                                        -- The first and the last RR of the response
+                                        -- is the SOA record of the zone.  I.e. the
+                                        -- behavior is the same as an AXFR response
+                                        -- except the query type is IXFR.
+                                        mx <- allowAXFR sa sender query zoneAlist
+                                        case mx of
+                                            TransferOk zone ->
+                                                transfer env proto zone sender sa query
+                                            TransferRefused ->
+                                                sendReply sa $ seal $ refusal query
+                                    else response proto seal zoneAlist sa query dom
+                            _ -> sendReply sa $ seal $ refusal query
 
 response :: Proto -> Seal -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
 response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
@@ -148,56 +136,30 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlis
             then sendReply sa $ seal $ getAnswer (zoneDB zone) query
             else sendReply sa $ seal $ serverFailure query
 
-handleNotify :: Env -> Proto -> ZoneAlist -> SockAddr -> ByteString -> DNSMessage -> IO ()
-handleNotify env proto@Proto{..} zoneAlist sa whole query = case lookup dom zoneAlist of -- exact match
+-- | Someone says the zone has moved on (RFC 1996).  Whether to believe
+--   them is what allow-notify-key and allow-notify-addrs decide; the
+--   answer to a signed notify is signed either way.
+handleNotify :: Proto -> Seal -> ZoneAlist -> SockAddr -> Sender -> DNSMessage -> IO ()
+handleNotify Proto{..} seal zoneAlist sa sender query = case lookup dom zoneAlist of -- exact match
     Nothing -> refuse
     Just zoneref -> do
         Zone{..} <- readIORef zoneref
         case zoneAllowNotifyKey of
             -- Holding the key is what says who this is, so the
             -- addresses are not asked about as well.
-            Just key -> do
-                now <- currentTime
-                let held n = if n == tsigKeyName key then Just key else Nothing
-                case verifyTSIG held now Nothing whole query of
-                    TSIGOk mac -> do
-                        sendReply sa $ replySigned proto query key now mac
-                        zoneWakeUp
-                    TSIGMissing -> refuse
-                    TSIGFailed fault -> do
-                        envPutLines
-                            env
-                            WARNING
-                            Nothing
-                            ["    notify " ++ peerOf sa ++ " \"" ++ toRepresentation dom ++ "\": " ++ show fault]
-                        sendReply sa $ replyNotAuth proto query fault now
+            Just key
+                | senderKey sender == Just key -> heard zoneWakeUp
+                | otherwise -> refuse
             Nothing -> case fromSockAddr sa of
                 Just (ip, _)
-                    | ip `elem` zoneAllowNotifyAddrs -> do
-                        sendReply sa $ replyNotice proto query
-                        zoneWakeUp
+                    | ip `elem` zoneAllowNotifyAddrs -> heard zoneWakeUp
                 _ -> refuse
   where
     dom = qname $ question query
-    refuse = sendReply sa $ replyRefused proto query
-
-replyNotice :: Proto -> DNSMessage -> ByteString
-replyNotice proto query = encodeReply proto query $ fromQuery query
-
--- | The same, signed, so that whoever asked can tell we are who we say.
---
---   The MAC is taken over the plain encoding rather than over whatever
---   'encodeReply' would make of it.  The two are the same for anything
---   which fits, and an acknowledgement is nowhere near not fitting.
-replySigned :: Proto -> DNSMessage -> TSIGKey -> EpochTime -> Opaque -> ByteString
-replySigned proto query key now requestMAC = encodeReply proto query signedReply
-  where
-    reply = fromQuery query
-    (rr, _) = signTSIG key now defaultFudge (Just requestMAC) (encode reply)
-    signedReply = reply{additional = [rr]}
-
-replyRefused :: Proto -> DNSMessage -> ByteString
-replyRefused proto query = encodeReply proto query $ refusal query
+    heard wake = do
+        sendReply sa $ seal $ fromQuery query
+        wake
+    refuse = sendReply sa $ seal $ refusal query
 
 -- | We will not answer this one.
 refusal :: DNSMessage -> DNSMessage
@@ -239,47 +201,65 @@ replyFormErr proto query = encodeReply proto query $ (fromQuery query){rcode = F
 --   and signing it where the query it answers was signed.
 type Seal = DNSMessage -> ByteString
 
--- | Looking at the TSIG on a query, where it has one (RFC 8945 Sec
---   5.2).  What comes back either closes off the answer -- signed with
---   the key the query came with, which Sec 5.3 requires of us -- or is
---   the whole of the answer, because the query carried a TSIG we would
---   not take.
+-- | Looking at the TSIG on a message, where it has one (RFC 8945 Sec
+--   5.2).  What comes back is either the key it was signed with, for
+--   the answer to be signed with in turn, or the whole of the answer,
+--   because it carried a TSIG we would not take.
 --
---   The keys are the ones clove holds, all of them: a TSIG on an
---   ordinary query says who is asking, and answering is not a
---   permission that any of them grants.  What the key grants is said
---   elsewhere -- allow-transfer-key for a transfer, allow-notify-key
---   for a notify.
-sealFor
+--   The keys are the ones clove holds, all of them.  A TSIG says who is
+--   talking, which is not the same question as what they may have, and
+--   answering the first one here is what lets every kind of message be
+--   answered properly signed -- including the ones whose permission
+--   comes from an address rather than from a key.
+checkTSIG
     :: Env
     -> TSIGKeys
     -> Proto
+    -> SockAddr
     -> ByteString
     -> DNSMessage
-    -> IO (Either ByteString Seal)
-sealFor Env{..} keys proto whole query
-    | not carried = return $ Right plain
+    -> IO (Either ByteString Sender)
+checkTSIG Env{..} keys proto@Proto{..} sa whole msg
+    | not carried = return $ Right Unsigned
     | otherwise = do
         now <- currentTime
-        case verifyTSIG held now Nothing whole query of
-            TSIGOk mac -> return $ case keyOf query of
-                Just key -> Right $ sealWith proto query key now mac
+        case verifyTSIG held now Nothing whole msg of
+            TSIGOk mac -> return $ case keyOf msg of
+                Just key -> Right $ SignedWith key mac now
                 -- Unreachable: the check just found that key.
-                Nothing -> Right plain
+                Nothing -> Right Unsigned
             -- Sec 5.2: exactly one record, and last.  Anything else is
             -- a message to answer FORMERR and no more.
-            TSIGMissing -> return $ Left $ replyFormErr proto query
+            TSIGMissing -> return $ Left $ replyFormErr proto msg
             TSIGFailed fault -> do
                 envPutLines
                     WARNING
                     Nothing
-                    ["    query \"" ++ toRepresentation (qname $ question query) ++ "\": " ++ show fault]
-                return $ Left $ replyNotAuth proto query fault now
+                    [ "    "
+                        ++ kind
+                        ++ " @"
+                        ++ peerOf sa
+                        ++ "/"
+                        ++ protoName
+                        ++ " \""
+                        ++ toRepresentation (qname $ question msg)
+                        ++ "\": "
+                        ++ show fault
+                    ]
+                return $ Left $ replyNotAuth proto msg fault now
   where
-    carried = any ((== TSIG) . rrtype) $ additional query
+    carried = any ((== TSIG) . rrtype) $ additional msg
     held n = lookupTSIGKey n keys
-    keyOf msg = lastTSIG msg >>= \(name, _) -> held name
-    plain = encodeReply proto query
+    keyOf m = lastTSIG m >>= \(name, _) -> held name
+    kind = case opcode msg of
+        OP_NOTIFY -> "notify"
+        _ | qtype (question msg) `elem` [AXFR, IXFR] -> "axfr"
+        _ -> "query"
+
+-- | Closing off an answer for the message it answers.
+sealer :: Proto -> DNSMessage -> Sender -> Seal
+sealer proto query Unsigned = encodeReply proto query
+sealer proto query (SignedWith key mac now) = sealWith proto query key now mac
 
 -- | The answer, signed with the key its query came with and bound to it
 --   (RFC 8945 Sec 5.3).

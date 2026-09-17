@@ -59,8 +59,12 @@ unanswered Env{..} ip port dom what why = do
     envPutLines WARNING Nothing ["    " ++ what ++ " " ++ peer ip port dom ++ ": " ++ why]
     return Nothing
 
-tcpAllowAXFR :: SockAddr -> BS.ByteString -> DNSMessage -> ZoneAlist -> IO Transfer
-tcpAllowAXFR sa whole msg zoneAlist = case List.lookup dom zoneAlist of -- exact match
+-- | Whether a transfer may go ahead.  The TSIG has been checked by the
+--   time this is asked (RFC 8945 Sec 5.2); what is left is whether the
+--   key it was signed with, or the address it came from, is one this
+--   zone hands itself to.
+tcpAllowAXFR :: SockAddr -> Sender -> DNSMessage -> ZoneAlist -> IO Transfer
+tcpAllowAXFR sa sender msg zoneAlist = case List.lookup dom zoneAlist of -- exact match
     Nothing -> return TransferRefused
     Just zoneref -> do
         zone <- readIORef zoneref
@@ -68,19 +72,15 @@ tcpAllowAXFR sa whole msg zoneAlist = case List.lookup dom zoneAlist of -- exact
         -- empty database, that is a zero record AXFR response.
         if not (zoneReady zone)
             then return TransferRefused
-            else case zoneTransferKey zone of
+            else return $ case zoneTransferKey zone of
                 -- Holding the key is what grants the transfer, so the
                 -- addresses are not asked about as well.
-                Just key -> do
-                    now <- currentTime
-                    let held n = if n == tsigKeyName key then Just key else Nothing
-                    return $ case verifyTSIG held now Nothing whole msg of
-                        TSIGOk mac -> TransferOk zone (Just mac)
-                        TSIGMissing -> TransferRefused
-                        TSIGFailed e -> TransferNotAuth e
+                Just key
+                    | senderKey sender == Just key -> TransferOk zone
+                    | otherwise -> TransferRefused
                 Nothing
-                    | byAddress zone -> return $ TransferOk zone Nothing
-                    | otherwise -> return TransferRefused
+                    | byAddress zone -> TransferOk zone
+                    | otherwise -> TransferRefused
   where
     dom = qname $ question msg
     byAddress zone = case fromSockAddr sa of
@@ -109,9 +109,12 @@ axfrLimit = 16384
 minRRSize :: Int
 minRRSize = 12
 
-transfer :: Env -> Proto -> Zone -> Maybe Opaque -> SockAddr -> DNSMessage -> IO ()
-transfer Env{..} Proto{..} zone mrequestMAC sa query = do
-    now <- currentTime
+-- | Handing the zone over, in as many messages as it takes.  Signed
+--   with the key the request came with, where it came with one: RFC
+--   8945 Sec 5.3 asks that of us whether the key is also what granted
+--   the transfer or whether an address did.
+transfer :: Env -> Proto -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
+transfer Env{..} Proto{..} zone sender sa query = do
     batches <- axfrBatches asSent $ dbAll $ zoneDB zone
     envPutLines
         NOTICE
@@ -125,9 +128,9 @@ transfer Env{..} Proto{..} zone mrequestMAC sa query = do
             ++ " message(s)"
             ++ maybe "" (const ", signed") mkey
         ]
-    case mkey of
-        Nothing -> mapM_ (sendReply sa . encode . withAnswer) batches
-        Just key -> signAndSend now key (AtFirst mrequestMAC) batches
+    case sender of
+        Unsigned -> mapM_ (sendReply sa . encode . withAnswer) batches
+        SignedWith key requestMAC now -> signAndSend now key (AtFirst $ Just requestMAC) batches
   where
     asSent batch = case mkey of
         Nothing -> withAnswer batch
@@ -135,7 +138,7 @@ transfer Env{..} Proto{..} zone mrequestMAC sa query = do
         -- which is all the measuring needs of it.
         Just key -> (withAnswer batch){additional = [tsigPlaceholder key]}
     reply = fromQuery query
-    mkey = zoneTransferKey zone
+    mkey = senderKey sender
     client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
     withAnswer batch = reply{answer = batch}
     -- Measured in the shape it will be sent in.  A signed message

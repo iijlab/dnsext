@@ -12,8 +12,9 @@ import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
-import DNS.TSIG (TSIGFault, TSIGKey)
+import DNS.TSIG (TSIGKey)
 import DNS.Types
+import DNS.Types.Time (EpochTime)
 
 ----------------------------------------------------------------
 
@@ -81,20 +82,36 @@ data Env = Env
 
 ----------------------------------------------------------------
 
+-- | What the TSIG on a message came to (RFC 8945 Sec 5.2).
+--
+--   Checking the TSIG says who sent a message; it does not say what
+--   they may have.  That second question is answered further on, by
+--   allow-transfer-key and allow-notify-key, on a message we have
+--   already been able to place.  Either way the answer to a signed
+--   message is signed with the same key, which Sec 5.3 requires.
+data Sender
+    = -- | The message carried no TSIG, so the answer carries none
+      Unsigned
+    | -- | The key it was signed with, its MAC, which the answer has to
+      --   be bound to, and the time it was checked at
+      SignedWith TSIGKey Opaque EpochTime
+
+-- | The key a message was signed with, where it was signed at all.
+senderKey :: Sender -> Maybe TSIGKey
+senderKey Unsigned = Nothing
+senderKey (SignedWith key _ _) = Just key
+
 -- | What came of asking whether a transfer may go ahead.
 data Transfer
-    = -- | It may.  The MAC of the request, when it carried one, which
-      --   the answer has to be bound to.
-      TransferOk Zone (Maybe Opaque)
+    = -- | It may
+      TransferOk Zone
     | -- | It may not, and there is nothing more to say about it
       TransferRefused
-    | -- | It carried a TSIG and the TSIG was not good
-      TransferNotAuth TSIGFault
 
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
     , sendReply :: SockAddr -> ByteString -> IO ()
-    , allowAXFR :: SockAddr -> ByteString -> DNSMessage -> ZoneAlist -> IO Transfer
+    , allowAXFR :: SockAddr -> Sender -> DNSMessage -> ZoneAlist -> IO Transfer
     , protoName :: String
     , recvErrorFatal :: Bool
     -- ^ Whether a failing 'recvQuery' means that nothing more can ever
