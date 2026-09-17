@@ -3,7 +3,7 @@
 
 module Main where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (concurrently_)
 import qualified Control.Exception as E
 import Control.Monad
@@ -49,14 +49,12 @@ main = reportingError $ do
     setCurrentDirectory cnf_clove_dir
     --
     withLogger Config{..} $ \env reopenLog -> do
-        zones <- newZones env zonelist
+        zones <- newZones zonelist
         zoneAlist <- toZoneAlist zones
-        -- Notify
         let (_, zonerefs) = unzip zoneAlist
-        _ <- forkIO $ do
-            threadDelay 1000000
-            mapM_ (notifyWithZone env) zonerefs
-        -- Zone updators.  SIGHUP also reopens the log file, as a
+        -- Zone updators.  Each loads its own zone, so a source which is
+        -- slow to answer holds up neither the other zones nor the
+        -- servers below.  SIGHUP also reopens the log file, as a
         -- daemon is expected to, so that log rotation does not leave us
         -- writing into a file nobody can find any more.
         let onHUP = sequence_ (map zoneWakeUp zones) >> reopenLog
@@ -178,8 +176,15 @@ tcpServer env zoneAlist port addr =
 ----------------------------------------------------------------
 
 syncZone :: Env -> IORef Zone -> IO ()
-syncZone env zoneref = loopLogErr env WARNING go
+syncZone env zoneref = do
+    -- The zone is loaded before the first wait rather than in newZone,
+    -- so that the servers can start listening straight away.
+    load
+    loopLogErr env WARNING go
   where
+    load = do
+        updateZone env zoneref
+        notifyWithZone env zoneref
     go = do
         Zone{..} <- readIORef zoneref
         let mtm
@@ -195,10 +200,8 @@ syncZone env zoneref = loopLogErr env WARNING go
             Nothing -> return ()
             Just Signing{..} -> do
                 rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
-        -- reading zone source
-        updateZone env zoneref
-        -- notify
-        notifyWithZone env zoneref
+        -- reading zone source, and telling the secondaries about it
+        load
 
 notifyWithZone :: Env -> IORef Zone -> IO ()
 notifyWithZone env zoneref = do

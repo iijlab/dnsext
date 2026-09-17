@@ -40,10 +40,10 @@ import Types
 
 ----------------------------------------------------------------
 
-newZones :: Env -> [ZoneConf] -> IO [Zone]
-newZones env zcs = do
+newZones :: [ZoneConf] -> IO [Zone]
+newZones zcs = do
     checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone env) zcs
+    mapM newZone zcs
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -58,17 +58,19 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: Env -> ZoneConf -> IO Zone
-newZone env zoneconf@ZoneConf{..} = do
+newZone :: ZoneConf -> IO Zone
+newZone zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
     msigning <- withZoneName $ readSigning zone zoneconf
-    (db, ready) <- handleLogErr env WARNING (emptyDB, False) $ do
-        db' <- loadSourceWithSigning env zone source msigning
-        return (db', True)
+    -- The source is not read here.  Reading it can block for as long as
+    -- an unreachable upstream takes to time out, and nothing is
+    -- listening yet at this point, so every other zone would be
+    -- unreachable for that whole time too.  syncZone loads it.
+    -- Until then the zone is not ready, which is answered with SERVFAIL.
     -- Each switch gates its own address list.  Listing addresses is not
     -- by itself a permission: "allow-transfer: no" must deny the
     -- transfer even when allow-transfer-addrs is not empty.
@@ -86,8 +88,8 @@ newZone env zoneconf@ZoneConf{..} = do
     (wakeup, wait) <- initSync
     return $
         Zone
-            { zoneDB = db
-            , zoneReady = ready
+            { zoneDB = emptyDB
+            , zoneReady = False
             , zoneFromFile = fromFile source
             , zoneNotifyAddrs = notify_addrs
             , zoneAllowNotifyAddrs = allow_notify_addrs
