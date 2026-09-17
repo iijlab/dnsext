@@ -41,7 +41,20 @@ import Types
 ----------------------------------------------------------------
 
 newZones :: Env -> [ZoneConf] -> IO [Zone]
-newZones env zcs = mapM (newZone env) zcs
+newZones env zcs = do
+    checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
+    mapM (newZone env) zcs
+
+-- | Refusing to serve the same zone twice.  Two entries with the same
+--   name share a directory, so they overwrite each other's serial and
+--   key files, and they are told apart inconsistently: a query goes to
+--   the most specific match while a transfer or a notify goes to the
+--   first entry listed, so the access control of one entry ends up
+--   guarding the data of the other.
+checkDuplicate :: [Domain] -> IO ()
+checkDuplicate zones = case nub (zones \\ nub zones) of
+    [] -> return ()
+    ds -> E.ioError $ E.userError $ "duplicate zone: " ++ unwords (map toRepresentation ds)
 
 ----------------------------------------------------------------
 
