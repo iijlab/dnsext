@@ -49,7 +49,7 @@ main = reportingError $ do
     --
     setCurrentDirectory cnf_clove_dir
     --
-    withLogger Config{..} $ \env -> do
+    withLogger Config{..} $ \env reopenLog -> do
         zones <- newZones env zonelist
         zoneAlist <- toZoneAlist zones
         -- Notify
@@ -57,9 +57,11 @@ main = reportingError $ do
         _ <- forkIO $ do
             threadDelay 1000000
             mapM_ (notifyWithZone env) zonerefs
-        -- Zone updators
-        let wakeupAll = sequence_ $ map zoneWakeUp zones
-        void $ installHandler sigHUP (Catch wakeupAll) Nothing
+        -- Zone updators.  SIGHUP also reopens the log file, as a
+        -- daemon is expected to, so that log rotation does not leave us
+        -- writing into a file nobody can find any more.
+        let onHUP = sequence_ (map zoneWakeUp zones) >> reopenLog
+        void $ installHandler sigHUP (Catch onHUP) Nothing
         mapM_ (void . forkIO . syncZone env) zonerefs
         -- AXFR servers: TCP
         let as = map (tcpServer env zoneAlist (show cnf_tcp_port)) cnf_tcp_addrs
@@ -107,16 +109,19 @@ die msg = do
 -- | Setting up logging as the configuration asks for it.  "log: no"
 --   means no logging at all, and "log-file" means a file rather than
 --   standard output; both used to be read and then ignored.
-withLogger :: Config -> (Env -> IO a) -> IO a
+--
+--   The body is also handed the action which reopens the log, for the
+--   signal handler to call.
+withLogger :: Config -> (Env -> IO () -> IO a) -> IO a
 withLogger Config{..} body
-    | not cnf_log = body Env{envPutLines = \_ _ _ -> return ()}
+    | not cnf_log = body Env{envPutLines = \_ _ _ -> return ()} (return ())
     | otherwise = case cnf_log_file of
         Nothing -> withStdLogger name Stdout level toEnv
         Just file -> withHandleLogger name (pure id) (open file) hClose level toEnv
   where
     name = "clove logger"
     level = cnf_log_level
-    toEnv Ops{..} = body Env{envPutLines = putLines}
+    toEnv Ops{..} = body Env{envPutLines = putLines} reopenLogger
     open file = do
         h <- openFile file AppendMode
         hSetBuffering h LineBuffering
