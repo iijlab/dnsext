@@ -194,17 +194,22 @@ loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
     mserial <- loadSerial zoneDir
     rrs0 <- reloadSource env zone mserial source oldRRs
     (soa0, soarr0, rrs) <- checkRRs rrs0
-    let ttl = soa_minimum soa0
-        soa
+    let soa
             | byMySelf source = case mserial of
                 Nothing -> soa0 -- No serial file, serial from zone file
                 Just s -> soa0{soa_serial = s <> Serial 1}
             | otherwise = soa0
         soarr = soarr0{rdata = toRData soa}
-    let kskKeyConfig = signingKSKConfig{keyConfTTL = ttl}
+        -- TTL of the DNSKEY RRset: the zone's own, taken from the apex
+        -- SOA.  Not the SOA minimum, which RFC 2308 Sec 4 redefined as
+        -- the negative caching TTL and which is commonly a few minutes;
+        -- no rule makes it the TTL of the keys.  NSEC3 does take it,
+        -- and makeDBforPrimary uses it there (RFC 5155 Sec 3).
+        keyTTL = rrttl soarr0
+    let kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
     (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
     signKey <- makeSigner kskKeyConfig keyInfoKSK
-    let zskKeyConfig = signingZSKConfig{keyConfTTL = ttl}
+    let zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
     ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
         loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
     signZone <- makeSigner zskKeyConfig keyInfoZSK1
