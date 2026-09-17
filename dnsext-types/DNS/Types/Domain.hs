@@ -235,19 +235,37 @@ unconsDomain (Domain d) = case uncons (Array.elems d) of
     Nothing -> Nothing
     Just (l, d') -> Just (l, Domain $ listWireLabels d')
 
+-- | Getting the left most label of a domain.
+--   'Nothing' for the root domain, which has no label.
+--
+-- >>> leafDomain "www.example.jp."
+-- Just "www"
+-- >>> leafDomain "example.jp."
+-- Just "example"
+-- >>> leafDomain "jp."
+-- Just "jp"
+-- >>> leafDomain "*.example.jp."
+-- Just "*"
+-- >>> leafDomain "."
+-- Nothing
 leafDomain :: Domain -> Maybe Label
 leafDomain (Domain d)
-    | end == 0 = Nothing
+    | Array.numElements d == 0 = Nothing
     | otherwise = Just (d ! 0)
-  where
-    (_, end) = Array.bounds d
 
+-- | Getting the left most label of a domain.
+--   \".\" for the root domain, which has no label.
+--
+-- >>> unsafeLeafDomain "www.example.jp."
+-- "www"
+-- >>> unsafeLeafDomain "jp."
+-- "jp"
+-- >>> unsafeLeafDomain "."
+-- "."
 unsafeLeafDomain :: Domain -> Label
 unsafeLeafDomain (Domain d)
-    | end == 0 = "."
+    | Array.numElements d == 0 = "."
     | otherwise = d ! 0
-  where
-    (_, end) = Array.bounds d
 
 -- | Generating a reverse list of domain labels.
 --
