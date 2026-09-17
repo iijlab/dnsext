@@ -3,6 +3,7 @@
 
 module Serial where
 
+import AtomicFile
 import DNS.Types
 import qualified Data.ByteString.Char8 as C8
 import System.FilePath
@@ -13,7 +14,7 @@ serialFile :: FilePath
 serialFile = "serial"
 
 saveSerial :: FilePath -> Serial -> IO ()
-saveSerial zoneDir serial = C8.writeFile (zoneDir </> serialFile) str
+saveSerial zoneDir serial = writeAtomic (zoneDir </> serialFile) 0o644 str
   where
     str = C8.pack (show (unSerial serial)) <> "\n"
 

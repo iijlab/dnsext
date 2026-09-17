@@ -150,6 +150,7 @@ executable clove
     hs-source-dirs:   clove
     other-modules:
                       Algo
+                      AtomicFile
                       Auth
                       Axfr
                       Config
