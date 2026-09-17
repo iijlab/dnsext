@@ -5,6 +5,7 @@
 module KeyFile where
 
 import Control.Monad
+import qualified Control.Exception as E
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
 import Data.List (isSuffixOf, sortBy)
@@ -12,6 +13,7 @@ import Data.UnixTime
 import Foreign.C.Types
 import System.Directory
 import System.FilePath
+import System.IO
 import qualified System.IO.Error as E
 import System.Posix.Files
 
@@ -33,7 +35,7 @@ saveZSKInfo zoneDir ki = save zoneDir ".zsk" ki
 save :: FilePath -> String -> KeyInfo -> IO ()
 save zoneDir suffix KeyInfo{..} = do
     fn <- getUnixTime >>= findNonExistingFile zoneDir suffix
-    C8.writeFile fn statusBS
+    saveAtomic fn statusBS
   where
     statusBS =
         "Zone:       " <> toRepresentation keyInfoZone <> "\n" <>
@@ -46,6 +48,24 @@ save zoneDir suffix KeyInfo{..} = do
         "Flag:       " <> toB keyInfoFlag <> "\n"
     toB :: Show a => a -> C8.ByteString
     toB = C8.pack . show
+
+-- | Storing a file so that it either appears complete or does not
+--   appear at all.  A key file which cannot be read back is an error,
+--   so a half written one -- from a crash, a signal or a full disk --
+--   would leave the zone unloadable for ever.  The temporary file is
+--   made private before anything is written into it: this holds a
+--   private key.  Its name does not end in the suffix the loader looks
+--   for, so a leftover is never mistaken for a key.
+saveAtomic :: FilePath -> C8.ByteString -> IO ()
+saveAtomic fn bs = write `E.onException` discard
+  where
+    tmp = fn <.> "tmp"
+    write = do
+        withFile tmp WriteMode $ \h -> do
+            setFileMode tmp 0o600
+            C8.hPutStr h bs
+        rename tmp fn
+    discard = removeFile tmp `E.catchIOError` \_ -> return ()
 
 findNonExistingFile :: FilePath -> String -> UnixTime -> IO FilePath
 findNonExistingFile zoneDir suffix ut0 = loop ut0
