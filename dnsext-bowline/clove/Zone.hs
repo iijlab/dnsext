@@ -293,11 +293,11 @@ readSigning dom ZoneConf{..}
 --   configured zones wins.  Taking the first match instead made
 --   \"www.sub.example.jp\" land in \"example.jp\" whenever that zone
 --   happened to be written first in the configuration file.
--- | Shortest a duration may be, in seconds.  The rollover check
---   tolerates its timer firing a few minutes early, so a rollover
---   duration of that order would have every wake up generate a key; and
---   a signature which lives less than this is of no use with any
---   sensible TTL.
+-- | Shortest a duration may be, in seconds.  A key is published a whole
+--   rollover duration before it starts signing, so that duration has to
+--   cover the TTL of the DNSKEY RRset for resolvers to have the key by
+--   then, and those TTLs are hours; and a signature which lives less
+--   than this is of no use with any sensible TTL either.
 minDuration :: Int
 minDuration = 3600
 

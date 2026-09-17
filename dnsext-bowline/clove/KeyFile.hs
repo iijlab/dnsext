@@ -138,6 +138,15 @@ generateKey zoneDir keyConf = do
 
 ----------------------------------------------------------------
 
+-- | How early a rollover may happen, so that waking a moment before the
+--   key is due does not put the rollover off for another whole
+--   duration.  A sixteenth of the duration: a margin of a fixed number
+--   of seconds is either nothing at all next to a long duration, or the
+--   whole of a short one -- at which point every wake up generates a
+--   key.
+rolloverMargin :: Int -> Int
+rolloverMargin duration = duration `div` 16
+
 -- | Generating the next ZSK once the newest one has been in use for
 --   the rollover duration.  That duration is how long a key is used,
 --   which is a different thing from how long an RRSIG stays valid.
@@ -150,9 +159,10 @@ rolloverZSK zoneDir duration keyConf = do
             ut0 <- fromEpochTime . modificationTime <$> getFileStatus (zoneDir </> fn)
             ut1 <- getUnixTime
             let CTime diff = udtSeconds (ut1 `diffUnixTime` ut0)
-            when (diff + 300 > fromIntegral duration) $ do
-                -- fixme: 5min good enough?
-                void $ generateKey zoneDir keyConf
+                margin = fromIntegral $ rolloverMargin duration
+            when (diff + margin > fromIntegral duration) $
+                void $
+                    generateKey zoneDir keyConf
 
 ----------------------------------------------------------------
 
