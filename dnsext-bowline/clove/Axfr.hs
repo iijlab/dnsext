@@ -16,13 +16,16 @@ import Data.List as List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
+import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
+import System.Timeout (timeout)
 
 import DNS.Auth.Algorithm
 import DNS.Do53.Client
 import DNS.Do53.Internal
 import DNS.Log
 import DNS.Types
+import DNS.Types.Decode
 import DNS.Types.Encode
 
 import Exception
@@ -186,45 +189,64 @@ serialQuery env@Env{..} ip port dom = withUpstream ip port dom "SOA" $ do
     q = Question dom SOA IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
 
+-- | How long a whole transfer may take.  Generous: a large zone is many
+--   messages, and the thread waiting for them is the zone's own.
+axfrTimeout :: Int
+axfrTimeout = 300 * 1000000
+
+-- | Asking for a zone and reading it to the end.
+--
+--   A transfer arrives as a run of messages, not one (RFC 5936 Sec
+--   2.2), and reading only the first left everything past the first
+--   message behind.  The connection is driven here rather than through
+--   a resolver, which answers one message per question by nature.
 axfrQuery :: Env -> IP -> PortNumber -> Domain -> IO [ResourceRecord]
-axfrQuery Env{..} ip port dom = withUpstream ip port dom "AXFR" $ do
-    emsg <- fmap replyDNSMessage <$> resolve renv q qctl
-    case emsg of
-        Left _ -> return []
-        Right msg -> return $ checkSOA $ answer msg
+axfrQuery _env ip port dom = withUpstream ip port dom "AXFR" $ do
+    mrrs <- timeout axfrTimeout $ E.bracket (openTCP ip port) close request
+    case mrrs of
+        Nothing -> E.ioError $ E.userError "timed out"
+        Just rrs -> return rrs
   where
-    riActions =
-        defaultResolveActions
-            { ractionTimeoutTime = 30000000
-            , ractionLog = envPutLines
-            }
-    ris =
-        [ defaultResolveInfo
-            { rinfoIP = ip
-            , rinfoPort = port
-            , rinfoActions = riActions
-            , rinfoUDPRetry = 1
-            , rinfoVCLimit = 32 * 1024
-            }
-        ]
-    renv =
-        ResolveEnv
-            { renvResolver = tcpResolver
-            , renvConcurrent = True -- should set True if multiple RIs are provided
-            , renvResolveInfos = ris
-            }
     q = Question dom AXFR IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
+    request sock = do
+        sendVC (sendTCP sock) $ encodeQuery 0 q qctl
+        collect sock BS.empty []
+    -- The records come back reversed, so the head is the last one seen:
+    -- the transfer is over once that is the closing SOA.
+    collect sock rest racc = do
+        (bs, rest') <- recvMessage sock rest
+        msg <- case decode bs of
+            Left e -> E.ioError $ E.userError $ show e
+            Right m -> return m
+        case rcode msg of
+            NoErr -> return ()
+            rc -> E.ioError $ E.userError $ show rc
+        let racc' = reverse (answer msg) ++ racc
+        case racc' of
+            closing : _ : _ | rrtype closing == SOA -> return $ opening $ reverse racc'
+            _ -> collect sock rest' racc'
+    -- RFC 5936 Sec 2.2: the first record is the SOA and the last is the
+    -- same one again.  The copy at the end is dropped here, which is
+    -- what the rest of clove expects of a zone.
+    opening (soa : rrs)
+        | rrtype soa == SOA = soa : init rrs
+    opening _ = []
 
-checkSOA :: [ResourceRecord] -> [ResourceRecord]
-checkSOA [] = []
-checkSOA (soa : rrs)
-    | rrtype soa == SOA =
-        case unsnoc' rrs of
-            Nothing -> []
-            Just (rrs', soa')
-                | rrtype soa' == SOA -> soa : rrs'
-                | otherwise -> []
-    | otherwise = []
+-- | Reading one length-prefixed message, keeping whatever was read past
+--   it for the next one.
+recvMessage :: Socket -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
+recvMessage sock rest0 = do
+    (lenbs, rest1) <- recvExactly sock 2 rest0
+    recvExactly sock (fromIntegral $ decodeVCLength lenbs) rest1
+
+recvExactly :: Socket -> Int -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
+recvExactly sock n rest0 = go [rest0] (BS.length rest0)
   where
-    unsnoc' = foldr (\x -> Just . maybe ([], x) (\(~(a, b)) -> (x : a, b))) Nothing
+    go acc len
+        | len >= n = return $ BS.splitAt n $ BS.concat $ reverse acc
+        | otherwise = do
+            bs <- NSB.recv sock $ max 2048 (n - len)
+            if BS.null bs
+                then E.ioError $ E.userError "the connection closed in mid message"
+                else go (bs : acc) (len + BS.length bs)
