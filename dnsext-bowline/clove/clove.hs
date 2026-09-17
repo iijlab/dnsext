@@ -39,13 +39,13 @@ import Zone
 ----------------------------------------------------------------
 
 main :: IO ()
-main = do
+main = reportingError $ do
     DNS.runInitIO $ do
         DNS.addResourceDataForDNSSEC
         DNS.addResourceDataForSVCB
     -- Initialization
     conffile <- getConfFile
-    (Config{..}, zonelist) <- reportingError $ loadConfig conffile
+    (Config{..}, zonelist) <- loadConfig conffile
     --
     setCurrentDirectory cnf_clove_dir
     --
@@ -82,13 +82,19 @@ getConfFile = do
             name <- getProgName
             die $ "usage: " ++ name ++ " <config file>"
 
--- | Reporting a bad configuration as one line rather than as an
---   uncaught exception with a backtrace.
+-- | Reporting a failure as one line rather than as an uncaught
+--   exception with a backtrace.  This covers the whole of 'main', not
+--   just the reading of the configuration file: a missing clove-dir, an
+--   unusable log-file and a zone we cannot make sense of are all
+--   reasons not to start, and each of them deserves a sentence rather
+--   than a stack trace.  Anything which is not an 'IOError' is a bug in
+--   clove and keeps the backtrace it deserves.
 reportingError :: IO a -> IO a
-reportingError action = action `E.catch` \e ->
-    -- Our own complaints read better without the "user error" wrapper;
-    -- a system error keeps its file name and its cause.
-    die $ if isUserError e then ioeGetErrorString e else show e
+reportingError action =
+    action `E.catch` \e ->
+        -- Our own complaints read better without the "user error"
+        -- wrapper; a system error keeps its file name and its cause.
+        die $ if isUserError e then ioeGetErrorString e else show e
 
 die :: String -> IO a
 die msg = do
