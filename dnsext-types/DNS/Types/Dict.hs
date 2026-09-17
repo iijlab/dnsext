@@ -80,6 +80,7 @@ defaultRDataDict =
         , (toKey SRV    , getRD get_srv)
         , (toKey DNAME  , getRD get_dname)
         , (toKey TLSA   , getRD get_tlsa)
+        , (toKey TSIG   , getRD get_tsig)
         ]
   where
     getRD get_x len rbuf ref = toRData <$> get_x len rbuf ref

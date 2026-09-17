@@ -15,6 +15,7 @@ module DNS.Wire.Parser (
     get8,
     get16,
     get32,
+    get48,
     getInt8,
     getInt16,
     getInt32,
@@ -85,6 +86,13 @@ get16 = read16
 
 get32 :: ReadBuffer -> IO Word32
 get32 = read32
+
+-- | Reading a 48 bit integer, most significant octet first.
+get48 :: ReadBuffer -> IO Word64
+get48 rbuf = do
+    hi <- get16 rbuf
+    lo <- get32 rbuf
+    return $ (fromIntegral hi `shiftL` 32) .|. fromIntegral lo
 
 getInt8 :: ReadBuffer -> IO Int
 getInt8 rbuf = fromIntegral <$> get8 rbuf

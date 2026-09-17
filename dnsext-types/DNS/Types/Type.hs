@@ -19,6 +19,7 @@ module DNS.Types.Type (
         OPT,
         TLSA,
         CSYNC,
+        TSIG,
         IXFR,
         AXFR,
         ANY,
@@ -127,6 +128,11 @@ pattern CSYNC :: TYPE
 pattern CSYNC = TYPE 62 -- RFC 7477
 
 -- | Incremental zone transfer (RFC1995)
+-- | Transaction signature (RFC 8945).  A meta RR: it is made for one
+--   message and never stored in a zone.
+pattern TSIG :: TYPE
+pattern TSIG = TYPE 250 -- RFC 8945
+
 pattern IXFR :: TYPE
 pattern IXFR = TYPE 251 -- RFC 1995
 
@@ -163,6 +169,7 @@ typeAndNames =
     , (OPT,   "OPT")
     , (TLSA,  "TLSA")
     , (CSYNC, "CSYNC")
+    , (TSIG,  "TSIG")
     , (IXFR,  "IXFR")
     , (AXFR,  "AXFR")
     , (ANY,   "ANY")

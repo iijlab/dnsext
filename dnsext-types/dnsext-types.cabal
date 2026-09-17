@@ -74,6 +74,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         DomainSpec
+        TSIGSpec
         EncodeSpec
         DecodeSpec
         RoundTripSpec

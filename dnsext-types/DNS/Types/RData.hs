@@ -568,6 +568,78 @@ rd_tlsa a b c d = toRData $ RD_TLSA a b c d
 
 ----------------------------------------------------------------
 
+{- FOURMOLU_DISABLE -}
+-- | Transaction signature (RFC 8945 Sec 4.2).
+--
+--   A meta RR: it authenticates one message with a secret shared with
+--   one peer, and is never stored in a zone.  The owner name is the name
+--   of the key, the class is ANY and the TTL is 0.
+--
+--   The MAC Size and Other Len fields of the wire format are the lengths
+--   of 'tsig_mac' and 'tsig_other', so they are not kept separately.
+data RD_TSIG = RD_TSIG
+    { tsig_algorithm   :: Domain
+    -- ^ Name of the algorithm, such as @hmac-sha256@
+    , tsig_time_signed :: Word64
+    -- ^ Seconds since the epoch, 48 bits on the wire
+    , tsig_fudge       :: Word16
+    -- ^ Seconds of difference from 'tsig_time_signed' permitted
+    , tsig_mac         :: Opaque
+    -- ^ The message authentication code itself
+    , tsig_original_id :: Word16
+    -- ^ Identifier of the message this signs
+    , tsig_error       :: Word16
+    -- ^ Extended RCODE covering TSIG processing
+    , tsig_other       :: Opaque
+    -- ^ Meaningful only for some errors
+    }
+    deriving (Eq, Ord, Show)
+{- FOURMOLU_ENABLE -}
+
+{- FOURMOLU_DISABLE -}
+instance ResourceData RD_TSIG where
+    resourceDataType _ = TSIG
+    -- algorithm + 48 bit time + 5 * 16 bit + the two variable fields
+    resourceDataSize RD_TSIG{..} =
+        domainSize tsig_algorithm
+            + 16
+            + Opaque.length tsig_mac
+            + Opaque.length tsig_other
+    putResourceData cf RD_TSIG{..} = \wbuf ref -> do
+        -- RFC 8945 Sec 4.2: the algorithm name MUST NOT be compressed.
+        putDomain cf tsig_algorithm wbuf ref
+        put48 wbuf           tsig_time_signed
+        put16 wbuf           tsig_fudge
+        put16 wbuf           $ fromIntegral $ Opaque.length tsig_mac
+        putOpaque            tsig_mac wbuf ref
+        put16 wbuf           tsig_original_id
+        put16 wbuf           tsig_error
+        put16 wbuf           $ fromIntegral $ Opaque.length tsig_other
+        putOpaque            tsig_other wbuf ref
+{- FOURMOLU_ENABLE -}
+
+{- FOURMOLU_DISABLE -}
+get_tsig :: Int -> Parser RD_TSIG
+get_tsig _ rbuf ref = do
+    -- getDomain rejects a compressed name, which is what RFC 8945 asks.
+    tsig_algorithm   <- getDomain rbuf ref
+    tsig_time_signed <- get48 rbuf
+    tsig_fudge       <- get16 rbuf
+    maclen           <- getInt16 rbuf
+    tsig_mac         <- getOpaque maclen rbuf ref
+    tsig_original_id <- get16 rbuf
+    tsig_error       <- get16 rbuf
+    otherlen         <- getInt16 rbuf
+    tsig_other       <- getOpaque otherlen rbuf ref
+    return RD_TSIG{..}
+{- FOURMOLU_ENABLE -}
+
+-- | Smart constructor.
+rd_tsig :: Domain -> Word64 -> Word16 -> Opaque -> Word16 -> Word16 -> Opaque -> RData
+rd_tsig a b c d e f g = toRData $ RD_TSIG a b c d e f g
+
+----------------------------------------------------------------
+
 -- | Unknown resource data
 data RD_Unknown = RD_Unknown TYPE Opaque deriving (Eq, Ord)
 
