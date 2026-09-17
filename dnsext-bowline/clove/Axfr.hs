@@ -7,6 +7,8 @@ module Axfr (
     client,
 ) where
 
+import qualified Control.Exception as E
+import qualified Data.ByteString as BS
 import Data.IORef
 import Data.IP
 import qualified Data.IP.RouteTable as T
@@ -69,16 +71,69 @@ tcpAllowAXFR sa dom zoneAlist = case List.lookup dom zoneAlist of -- exact match
         t4 = zoneAllowTransfer4 zone
         t6 = zoneAllowTransfer6 zone
 
+-- | Largest AXFR message clove builds.  A name compression pointer is
+--   fourteen bits wide, so a message staying under 16384 bytes can
+--   never need one that does not fit -- the encoder throws when it does
+--   -- and it is well inside the 65535 a TCP length prefix allows.
+axfrLimit :: Int
+axfrLimit = 16384
+
+-- | Fewest bytes a resource record can take: a compressed owner name,
+--   type, class, TTL and RDLENGTH.  Only used to bound the search
+--   below, so that it never encodes far more records than could fit.
+minRRSize :: Int
+minRRSize = 12
+
 transfer :: Env -> Proto -> Zone -> SockAddr -> DNSMessage -> IO ()
 transfer Env{..} Proto{..} zone sa query = do
     let db = zoneDB zone
-        reply = (fromQuery query){answer = dbAll db}
         client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
+    msgs <- axfrMessages (fromQuery query) $ dbAll db
     envPutLines
         NOTICE
         Nothing
-        ["    axfr @" ++ client' ++ "/TCP \"" ++ toRepresentation (zoneName zone) ++ "\""]
-    sendReply sa $ encode reply
+        [ "    axfr @"
+            ++ client'
+            ++ "/TCP \""
+            ++ toRepresentation (zoneName zone)
+            ++ "\": "
+            ++ show (length msgs)
+            ++ " message(s)"
+        ]
+    mapM_ (sendReply sa) msgs
+
+-- | Spreading the records of a zone over as many messages as they need.
+--   RFC 5936 Sec 2.2 lets a transfer be split anywhere so long as it
+--   opens and closes with the SOA, which dbAll already arranges; one
+--   message only ever held as much as fit, which for a zone of a few
+--   hundred records was none of it.
+axfrMessages :: DNSMessage -> [ResourceRecord] -> IO [BS.ByteString]
+axfrMessages reply = go
+  where
+    go [] = return []
+    go rrs = do
+        n <- fitting rrs
+        let (batch, rest) = splitAt n rrs
+        (encode reply{answer = batch} :) <$> go rest
+    -- As many records as stay within the limit, or a single record when
+    -- even that does not: better an oversized message than no progress.
+    fitting rrs = do
+        one <- fits rrs 1
+        if not one
+            then return 1
+            else search rrs 1 $ max 1 $ min (length rrs) (axfrLimit `div` minRRSize)
+    search rrs lo hi
+        | lo >= hi = return lo
+        | otherwise = do
+            let mid = (lo + hi + 1) `div` 2
+            ok <- fits rrs mid
+            if ok then search rrs mid hi else search rrs lo (mid - 1)
+    -- The encoder throws when a name lands beyond the reach of a
+    -- compression pointer, so a batch it cannot encode is one that does
+    -- not fit.
+    fits rrs n = do
+        e <- trySync $ E.evaluate $ BS.length $ encode reply{answer = take n rrs}
+        return $ either (const False) (<= axfrLimit) e
 
 ----------------------------------------------------------------
 
