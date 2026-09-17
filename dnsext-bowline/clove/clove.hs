@@ -220,4 +220,4 @@ notifyWithZone env zoneref = do
     -- The name comes from the configuration, not from the database: the
     -- empty database of a zone which failed to load carries the root as
     -- its apex, and we would be notifying our secondaries about ".".
-    when zoneReady $ mapM_ (notify env zoneName) zoneNotifyAddrs
+    when zoneReady $ mapM_ (\ip -> notify env zoneName ip zoneNotifyPort) zoneNotifyAddrs

@@ -29,25 +29,25 @@ import Types
 -- | Saying which zone and which upstream a failure belongs to.  Without
 --   it the operator is told only that some socket somewhere would not
 --   connect.
-withUpstream :: IP -> Domain -> String -> IO a -> IO a
-withUpstream ip dom what action = do
+withUpstream :: IP -> PortNumber -> Domain -> String -> IO a -> IO a
+withUpstream ip port dom what action = do
     er <- trySync action
     case er of
         Right a -> return a
         Left se ->
             E.ioError $
                 E.userError $
-                    what ++ " @" ++ show ip ++ " \"" ++ toRepresentation dom ++ "\": " ++ show se
+                    what ++ " " ++ peer ip port dom ++ ": " ++ show se
+
+peer :: IP -> PortNumber -> Domain -> String
+peer ip port dom = "@" ++ show ip ++ "#" ++ show port ++ " \"" ++ toRepresentation dom ++ "\""
 
 -- | Saying that we asked and did not get a usable answer.  'Nothing'
 --   rather than an error: failing to reach the upstream this once is
 --   something to carry on from, not to stop for.
-unanswered :: Env -> IP -> Domain -> String -> String -> IO (Maybe a)
-unanswered Env{..} ip dom what why = do
-    envPutLines
-        WARNING
-        Nothing
-        ["    " ++ what ++ " @" ++ show ip ++ " \"" ++ toRepresentation dom ++ "\": " ++ why]
+unanswered :: Env -> IP -> PortNumber -> Domain -> String -> String -> IO (Maybe a)
+unanswered Env{..} ip port dom what why = do
+    envPutLines WARNING Nothing ["    " ++ what ++ " " ++ peer ip port dom ++ ": " ++ why]
     return Nothing
 
 tcpAllowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
@@ -73,11 +73,11 @@ transfer :: Env -> Proto -> Zone -> SockAddr -> DNSMessage -> IO ()
 transfer Env{..} Proto{..} zone sa query = do
     let db = zoneDB zone
         reply = (fromQuery query){answer = dbAll db}
-        peer = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
+        client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
     envPutLines
         NOTICE
         Nothing
-        ["    axfr @" ++ peer ++ "/TCP \"" ++ toRepresentation (zoneName zone) ++ "\""]
+        ["    axfr @" ++ client' ++ "/TCP \"" ++ toRepresentation (zoneName zone) ++ "\""]
     sendReply sa $ encode reply
 
 ----------------------------------------------------------------
@@ -87,25 +87,25 @@ transfer Env{..} Proto{..} zone sa query = do
 --   because the upstream has not moved on, or because it could not be
 --   asked.  It does not mean the zone is empty, and it is not an error:
 --   a failing transfer throws instead.
-client :: Env -> Maybe Serial -> IP -> Domain -> IO (Maybe [ResourceRecord])
-client env Nothing ip dom = Just <$> axfrQuery env ip dom
-client env (Just serial0) ip dom = do
-    mserial <- serialQuery env ip dom
+client :: Env -> Maybe Serial -> IP -> PortNumber -> Domain -> IO (Maybe [ResourceRecord])
+client env Nothing ip port dom = Just <$> axfrQuery env ip port dom
+client env (Just serial0) ip port dom = do
+    mserial <- serialQuery env ip port dom
     case mserial of
         Nothing -> return Nothing
         Just serial
-            | serial > serial0 -> Just <$> axfrQuery env ip dom
+            | serial > serial0 -> Just <$> axfrQuery env ip port dom
             | otherwise -> return Nothing
 
-serialQuery :: Env -> IP -> Domain -> IO (Maybe Serial)
-serialQuery env@Env{..} ip dom = withUpstream ip dom "SOA" $ do
+serialQuery :: Env -> IP -> PortNumber -> Domain -> IO (Maybe Serial)
+serialQuery env@Env{..} ip port dom = withUpstream ip port dom "SOA" $ do
     emsg <- fmap replyDNSMessage <$> resolve renv q qctl
     case emsg of
-        Left e -> unanswered env ip dom "SOA" $ show e
+        Left e -> unanswered env ip port dom "SOA" $ show e
         Right msg -> case answer msg of
-            [] -> unanswered env ip dom "SOA" "no SOA in the answer"
+            [] -> unanswered env ip port dom "SOA" "no SOA in the answer"
             soa : _ -> case fromRData $ rdata soa of
-                Nothing -> unanswered env ip dom "SOA" "broken SOA"
+                Nothing -> unanswered env ip port dom "SOA" "broken SOA"
                 Just s -> return $ Just $ soa_serial s
   where
     riActions =
@@ -116,7 +116,7 @@ serialQuery env@Env{..} ip dom = withUpstream ip dom "SOA" $ do
     ris =
         [ defaultResolveInfo
             { rinfoIP = ip
-            , rinfoPort = 53
+            , rinfoPort = port
             , rinfoActions = riActions
             , rinfoUDPRetry = 3
             , rinfoVCLimit = 0
@@ -131,8 +131,8 @@ serialQuery env@Env{..} ip dom = withUpstream ip dom "SOA" $ do
     q = Question dom SOA IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
 
-axfrQuery :: Env -> IP -> Domain -> IO [ResourceRecord]
-axfrQuery Env{..} ip dom = withUpstream ip dom "AXFR" $ do
+axfrQuery :: Env -> IP -> PortNumber -> Domain -> IO [ResourceRecord]
+axfrQuery Env{..} ip port dom = withUpstream ip port dom "AXFR" $ do
     emsg <- fmap replyDNSMessage <$> resolve renv q qctl
     case emsg of
         Left _ -> return []
@@ -146,7 +146,7 @@ axfrQuery Env{..} ip dom = withUpstream ip dom "AXFR" $ do
     ris =
         [ defaultResolveInfo
             { rinfoIP = ip
-            , rinfoPort = 53
+            , rinfoPort = port
             , rinfoActions = riActions
             , rinfoUDPRetry = 1
             , rinfoVCLimit = 32 * 1024

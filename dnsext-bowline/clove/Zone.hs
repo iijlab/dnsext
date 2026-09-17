@@ -93,6 +93,7 @@ newZone zoneconf@ZoneConf{..} = do
             , zoneReady = False
             , zoneFromFile = fromFile source
             , zoneNotifyAddrs = notify_addrs
+            , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
             , zoneAllowTransfer4 = t4
             , zoneAllowTransfer6 = t6
@@ -239,8 +240,8 @@ reloadSource env zone mserial source oldRRs =
 --   This function throws 'AuthException'.
 loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO (Maybe [ResourceRecord])
 loadSource env zone mserial source = case source of
-    FromUpstream4 ip4 -> Axfr.client env mserial (IPv4 ip4) zone
-    FromUpstream6 ip6 -> Axfr.client env mserial (IPv6 ip6) zone
+    FromUpstream4 ip4 port -> Axfr.client env mserial (IPv4 ip4) port zone
+    FromUpstream6 ip6 port -> Axfr.client env mserial (IPv6 ip6) port zone
     FromFile fn -> Just <$> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])
@@ -265,8 +266,8 @@ readIPRange ss0 = loop id id ss0
 
 readSource :: ZoneConf -> Source
 readSource ZoneConf{..}
-    | Just a6 <- readMaybe cnf_source = FromUpstream6 a6
-    | Just a4 <- readMaybe cnf_source = FromUpstream4 a4
+    | Just a6 <- readMaybe cnf_source = FromUpstream6 a6 cnf_source_port
+    | Just a4 <- readMaybe cnf_source = FromUpstream4 a4 cnf_source_port
     | otherwise = FromFile cnf_source
 
 readSigning :: Domain -> ZoneConf -> IO (Maybe Signing)

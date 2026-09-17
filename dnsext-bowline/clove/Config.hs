@@ -46,11 +46,13 @@ data ZoneConf = ZoneConf
     { cnf_zone                  :: String
     , cnf_notify                :: Bool
     , cnf_notify_addrs          :: [String]
+    , cnf_notify_port           :: PortNumber
     , cnf_allow_notify          :: Bool
     , cnf_allow_notify_addrs    :: [String]
     , cnf_allow_transfer        :: Bool
     , cnf_allow_transfer_addrs  :: [String]
     , cnf_source                :: String
+    , cnf_source_port           :: PortNumber
     , cnf_signing               :: Bool
     , cnf_nsec3                 :: Bool
     , cnf_ksk_algo              :: String
@@ -71,12 +73,14 @@ defaultZoneConf =
         { cnf_zone                  = "example.org"
         , cnf_notify                = False
         , cnf_notify_addrs          = []
+        , cnf_notify_port           = 53
         , cnf_allow_notify          = False
         , cnf_allow_notify_addrs    = []
         , cnf_allow_transfer        = False
         , cnf_allow_transfer_addrs  = []
         , cnf_signing               = True
         , cnf_source                = "example.zone"
+        , cnf_source_port           = 53
         , cnf_nsec3                 = True
         , cnf_ksk_algo              = "ED25519"
         , cnf_ksk_size              = 0
@@ -120,11 +124,13 @@ makeZoneConf def conf = do
     cnf_zone                  <- get "zone"                  cnf_zone
     cnf_notify                <- get "notify"                cnf_notify
     cnf_notify_addrs          <- get "notify-addrs"          cnf_notify_addrs
+    cnf_notify_port           <- get "notify-port"           cnf_notify_port
     cnf_allow_notify          <- get "allow-notify"          cnf_allow_notify
     cnf_allow_notify_addrs    <- get "allow-notify-addrs"    cnf_allow_notify_addrs
     cnf_allow_transfer        <- get "allow-transfer"        cnf_allow_transfer
     cnf_allow_transfer_addrs  <- get "allow-transfer-addrs"  cnf_allow_transfer_addrs
     cnf_source                <- get "source"                cnf_source
+    cnf_source_port           <- get "source-port"           cnf_source_port
     cnf_signing               <- get "signing"               cnf_signing
     cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
     cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo

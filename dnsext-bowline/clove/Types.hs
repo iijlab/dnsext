@@ -18,8 +18,8 @@ import DNS.Types
 
 data Source
     = FromFile FilePath
-    | FromUpstream4 IPv4
-    | FromUpstream6 IPv6
+    | FromUpstream4 IPv4 PortNumber
+    | FromUpstream6 IPv6 PortNumber
     deriving (Eq, Show)
 
 data Signing = Signing
@@ -51,6 +51,7 @@ data Zone = Zone
     , zoneReady :: Bool
     , zoneFromFile :: Bool
     , zoneNotifyAddrs :: [IP]
+    , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
     , zoneAllowTransfer4 :: IPRTable IPv4 Bool
     , zoneAllowTransfer6 :: IPRTable IPv6 Bool
