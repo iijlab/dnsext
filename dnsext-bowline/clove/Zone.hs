@@ -283,6 +283,8 @@ readSigning dom ZoneConf{..}
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_zsk_algo ++ " is unknown"
         checkAlgorithms kskAlgo zskAlgo
+        checkKeySize "ksk" kskAlgo cnf_ksk_size
+        checkKeySize "zsk" zskAlgo cnf_zsk_size
         dd <- case toDsDigest cnf_ds_digest of
             Just dd0 -> return dd0
             Nothing -> E.ioError $ E.userError $ "DS Digest: " ++ cnf_ds_digest ++ " is unknown"
@@ -392,6 +394,51 @@ checkAlgorithms ksk zsk
                     ++ show ksk
                     ++ " and "
                     ++ show zsk
+
+-- | Whether an algorithm takes a key size at all.  The others have one
+--   fixed by the curve they are named after.
+isRSA :: PubAlg -> Bool
+isRSA alg = alg `elem` [RSASHA1, RSASHA1_NSEC3_SHA1, RSASHA256, RSASHA512]
+
+-- | Narrowest and widest RSA modulus, in bits.  RFC 3110 Sec 2 puts it
+--   between 512 and 4096 for DNS.  The floor here is higher: 512 bits
+--   has not been safe for a very long time, and RFC 8624 Sec 3.1 asks
+--   for 2048.
+minKeySize, maxKeySize :: Int
+minKeySize = 1024
+maxKeySize = 4096
+
+-- | Checking the size of an RSA key.
+--
+--   Leaving it at the default of nothing gave a key crypton refused to
+--   generate at all, and a few hundred bits gave one too small to hold
+--   a SHA-256 signature -- in both cases after start up, as a bare
+--   CryptoError_PrimeSizeInvalid or SignatureTooLong naming neither the
+--   zone nor the setting, with the zone left on SERVFAIL.
+--
+--   The size is in bits and the generator divides it by eight, so a
+--   size which is not a multiple of eight quietly yields a smaller key
+--   than was asked for.
+checkKeySize :: String -> PubAlg -> Int -> IO ()
+checkKeySize what alg size
+    | not (isRSA alg) = return ()
+    | size < minKeySize || size > maxKeySize =
+        failWith $
+            what
+                ++ "-size must be between "
+                ++ show minKeySize
+                ++ " and "
+                ++ show maxKeySize
+                ++ " bits for "
+                ++ show alg
+                ++ ", but is "
+                ++ show size
+    | size `mod` 8 /= 0 =
+        failWith $
+            what ++ "-size must be a multiple of 8, but is " ++ show size
+    | otherwise = return ()
+  where
+    failWith = E.ioError . E.userError
 
 -- | Fewest ZSKs which may be kept.  Three of them are published at any
 --   time -- the previous key, the one signing and the next one -- so
