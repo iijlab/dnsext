@@ -26,6 +26,7 @@ library
         DNS.Types.Encode
         DNS.Types.Internal
         DNS.Types.Opaque
+        DNS.Types.TSIG
         DNS.Types.Time
 
     other-modules:

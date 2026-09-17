@@ -4,6 +4,7 @@ module TSIGSpec (spec) where
 
 import qualified Data.ByteString as BS
 import Data.Word (Word16, Word64)
+import Numeric (showHex)
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck (Gen, arbitrary, forAll, listOf)
@@ -12,6 +13,7 @@ import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
 import qualified DNS.Types.Opaque as Opaque
+import DNS.Types.TSIG
 
 spec :: Spec
 spec = do
@@ -43,7 +45,63 @@ spec = do
                 let rd = mkTSIG (w `mod` 0x1000000000000) (Opaque.fromByteString "") 0 (Opaque.fromByteString "")
                  in roundTrip rd == Right rd
 
+    -- Each of these was worked out a field at a time from RFC 8945
+    -- outside Haskell, so that the two constructions have nothing in
+    -- common but the RFC.
+    describe "the octets a MAC is taken over" $ do
+        -- Sec 4.3.3.  The key name is given in mixed case to show that
+        -- what goes in is the canonical, lower case form.
+        it "lays out the variables" $
+            hex (tsigVariables "KEY.Example.JP." rd)
+                `shouldBe` "036b6579076578616d706c65026a70"
+                    ++ "0000ff"
+                    ++ "00000000"
+                    ++ "0b686d61632d73686132353600"
+                    ++ "0000f1e2d3c4"
+                    ++ "012c"
+                    ++ "0000"
+                    ++ "0000"
+
+        -- Sec 4.3.1
+        it "puts a length in front of a MAC" $
+            hex (tsigMacField mac) `shouldBe` "0020" ++ hex (opaqueBytes mac)
+
+        -- Sec 5.3.1
+        it "lays out the timers" $
+            hex (tsigTimers rd) `shouldBe` "0000f1e2d3c4" ++ "012c"
+
+        it "signs a request as the message then the variables" $
+            tsigDigest Nothing body "key.example.jp." rd
+                `shouldBe` body <> tsigVariables "key.example.jp." rd
+
+        it "signs a response with the request's MAC in front" $
+            tsigDigest (Just mac) body "key.example.jp." rd
+                `shouldBe` tsigMacField mac <> body <> tsigVariables "key.example.jp." rd
+
+        it "signs a later message of a response with the timers alone" $
+            tsigDigestCont mac [body, body] rd
+                `shouldBe` tsigMacField mac <> body <> body <> tsigTimers rd
+
 ----------------------------------------------------------------
+
+rd :: RD_TSIG
+rd = case fromRData sample of
+    Just t -> t
+    Nothing -> error "sample is not a TSIG"
+
+mac :: Opaque
+mac = Opaque.fromByteString $ BS.pack [1 .. 32]
+
+body :: BS.ByteString
+body = BS.pack $ concat $ replicate 7 [0xab, 0xcd, 0xef]
+
+opaqueBytes :: Opaque -> BS.ByteString
+opaqueBytes = Opaque.toByteString
+
+hex :: BS.ByteString -> String
+hex = concatMap (pad . flip showHex "") . BS.unpack
+  where
+    pad s = if length s == 1 then '0' : s else s
 
 -- | A TSIG as it would be made for a message.
 mkTSIG :: Word64 -> Opaque -> Word16 -> Opaque -> RData
