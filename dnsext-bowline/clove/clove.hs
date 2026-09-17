@@ -12,6 +12,7 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import System.Directory
 import System.Environment (getArgs)
+import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hSetBuffering, openFile)
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 
 import DNS.Auth.Algorithm
@@ -45,8 +46,7 @@ main = do
     --
     setCurrentDirectory cnf_clove_dir
     --
-    withStdLogger "dug logger" Stdout (read cnf_log_level) $ \Ops{..} -> do
-        let env = Env{envPutLines = putLines}
+    withLogger Config{..} $ \env -> do
         zones <- newZones env zonelist
         zoneAlist <- toZoneAlist zones
         -- Notify
@@ -65,6 +65,26 @@ main = do
         let cs = map (udpServer env zoneAlist) ss
         -- Run servers
         foldr1 concurrently_ $ as ++ cs
+
+----------------------------------------------------------------
+
+-- | Setting up logging as the configuration asks for it.  "log: no"
+--   means no logging at all, and "log-file" means a file rather than
+--   standard output; both used to be read and then ignored.
+withLogger :: Config -> (Env -> IO a) -> IO a
+withLogger Config{..} body
+    | not cnf_log = body Env{envPutLines = \_ _ _ -> return ()}
+    | otherwise = case cnf_log_file of
+        Nothing -> withStdLogger name Stdout level toEnv
+        Just file -> withHandleLogger name (pure id) (open file) hClose level toEnv
+  where
+    name = "clove logger"
+    level = read cnf_log_level
+    toEnv Ops{..} = body Env{envPutLines = putLines}
+    open file = do
+        h <- openFile file AppendMode
+        hSetBuffering h LineBuffering
+        return h
 
 ----------------------------------------------------------------
 

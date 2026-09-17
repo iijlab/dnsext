@@ -55,11 +55,20 @@ newZone env zoneconf@ZoneConf{..} = do
     (db, ready) <- handleLogErr env WARNING (emptyDB, False) $ do
         db' <- loadSourceWithSigning env zone source msigning
         return (db', True)
-    let (a4, a6) = readIPRange cnf_allow_transfer_addrs
+    -- Each switch gates its own address list.  Listing addresses is not
+    -- by itself a permission: "allow-transfer: no" must deny the
+    -- transfer even when allow-transfer-addrs is not empty.
+    let (a4, a6)
+            | cnf_allow_transfer = readIPRange cnf_allow_transfer_addrs
+            | otherwise = ([], [])
         t4 = fromList $ map (,True) a4
         t6 = fromList $ map (,True) a6
-        notify_addrs = readIP cnf_notify_addrs
-        allow_notify_addrs = readIP cnf_allow_notify_addrs
+        notify_addrs
+            | cnf_notify = readIP cnf_notify_addrs
+            | otherwise = []
+        allow_notify_addrs
+            | cnf_allow_notify = readIP cnf_allow_notify_addrs
+            | otherwise = []
     (wakeup, wait) <- initSync
     return $
         Zone
