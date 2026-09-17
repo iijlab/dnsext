@@ -4,14 +4,10 @@
 module Notify (notify) where
 
 import qualified Control.Exception as E
-import qualified Data.ByteString as BS
 import Data.IP
-import qualified Data.List.NonEmpty as NE
-import Network.Socket
-import qualified Network.Socket.ByteString as NSB
+import Network.Socket (PortNumber)
 import qualified System.IO.Error as E
 import System.Posix.Time (epochTime)
-import System.Timeout (timeout)
 
 import DNS.Do53.Client
 import DNS.Do53.Internal
@@ -23,6 +19,7 @@ import DNS.Types.Encode
 import DNS.Types.Time (EpochTime)
 
 import Exception
+import Net
 import Types
 
 ----------------------------------------------------------------
@@ -44,7 +41,7 @@ notify :: Env -> Maybe TSIGKey -> Domain -> IP -> PortNumber -> IO (Maybe DNSMes
 notify Env{..} mkey dom ip port = withNotified $ do
     now <- currentTime
     (out, mrequestMAC) <- asked now
-    manswer <- attempt notifyTries out
+    manswer <- askUDP notifyTries notifyTimeout ip port out
     case manswer of
         Nothing -> unanswered "no answer"
         Just bs -> case decode bs of
@@ -63,15 +60,13 @@ notify Env{..} mkey dom ip port = withNotified $ do
             Just key -> case decode bare of
                 Left e -> E.ioError $ E.userError $ show e
                 Right m -> do
-                    let (rr, mac) = signTSIG key now defaultFudge Nothing bare
+                    -- Signed over what will be sent rather than over
+                    -- what was encoded a moment ago: the two are the
+                    -- same, and the MAC covers octets, so it is better
+                    -- not to have to say that they are.
+                    let body = encode m
+                        (rr, mac) = signTSIG key now defaultFudge Nothing body
                     return (encode m{additional = additional m ++ [rr]}, Just mac)
-
-    attempt 0 _ = return Nothing
-    attempt n out = do
-        r <- exchange ip port out
-        case r of
-            Just bs -> return $ Just bs
-            Nothing -> attempt (n - 1 :: Int) out
 
     -- The answer is only an acknowledgement, so a bad one is worth
     -- saying out loud and no more: the zone is not riding on it.
@@ -102,25 +97,6 @@ notify Env{..} mkey dom ip port = withNotified $ do
                 return Nothing
 
 ----------------------------------------------------------------
-
--- | One question and, if it comes, one answer.
-exchange :: IP -> PortNumber -> BS.ByteString -> IO (Maybe BS.ByteString)
-exchange ip port out = E.bracket (openUDP ip port) close $ \sock -> do
-    _ <- NSB.send sock out
-    timeout notifyTimeout $ NSB.recv sock 2048
-
-openUDP :: IP -> PortNumber -> IO Socket
-openUDP ip port = do
-    ai <- NE.head <$> getAddrInfo (Just hints) (Just $ show ip) (Just $ show port)
-    E.bracketOnError (openSocket ai) close $ \sock -> do
-        connect sock $ addrAddress ai
-        return sock
-  where
-    hints =
-        defaultHints
-            { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV]
-            , addrSocketType = Datagram
-            }
 
 currentTime :: IO EpochTime
 currentTime = fromIntegral . fromEnum <$> epochTime

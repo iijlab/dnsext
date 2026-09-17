@@ -29,10 +29,10 @@ import DNS.TSIG
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
-import qualified DNS.Types.Opaque as Opaque
 import DNS.Types.Time (EpochTime)
 
 import Exception
+import Net
 import Types
 
 -- | Saying which zone and which upstream a failure belongs to.  Without
@@ -204,46 +204,83 @@ client
     -> IO (Maybe [ResourceRecord])
 client env mkey Nothing ip port dom = Just <$> axfrQuery env mkey ip port dom
 client env mkey (Just serial0) ip port dom = do
-    mserial <- serialQuery env ip port dom
+    mserial <- serialQuery env mkey ip port dom
     case mserial of
         Nothing -> return Nothing
         Just serial
             | serial > serial0 -> Just <$> axfrQuery env mkey ip port dom
             | otherwise -> return Nothing
 
-serialQuery :: Env -> IP -> PortNumber -> Domain -> IO (Maybe Serial)
-serialQuery env@Env{..} ip port dom = withUpstream ip port dom "SOA" $ do
-    emsg <- fmap replyDNSMessage <$> resolve renv q qctl
-    case emsg of
-        Left e -> unanswered env ip port dom "SOA" $ show e
-        Right msg -> case answer msg of
-            [] -> unanswered env ip port dom "SOA" "no SOA in the answer"
-            soa : _ -> case fromRData $ rdata soa of
-                Nothing -> unanswered env ip port dom "SOA" "broken SOA"
-                Just s -> return $ Just $ soa_serial s
+-- | What serial the upstream holds, signed with the key the zone names
+--   where it names one (RFC 8945).  Built here rather than asked of the
+--   resolver: the resolver makes its own messages, which leaves nowhere
+--   to put a TSIG and nothing to check the answer against.
+--
+--   Without a key this is what it always was, an unsigned question and
+--   whatever comes back that matches it.  With one, an answer which is
+--   not signed by that key is no answer: it would otherwise be the one
+--   thing between two cloves which anybody could make up, and making it
+--   up is enough to hold a transfer off or to bring one on.
+serialQuery :: Env -> Maybe TSIGKey -> IP -> PortNumber -> Domain -> IO (Maybe Serial)
+serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
+    now <- currentTime
+    ident <- singleGenId
+    (out, mrequestMAC) <- asked now ident
+    manswer <- askUDP serialTries serialTimeout ip port out
+    case manswer of
+        Nothing -> nope "no answer"
+        Just bs -> case decode bs of
+            Left e -> nope $ show e
+            Right msg -> case checkRespM q ident msg of
+                -- Not an answer to what we asked: a late one, or one
+                -- from somebody who never saw the question.
+                Just e -> nope $ show e
+                Nothing
+                    | rcode msg /= NoErr -> nope $ case tsigReported msg of
+                        Just e -> show (rcode msg) ++ ": the far end says " ++ show e
+                        Nothing -> show (rcode msg)
+                    | otherwise -> checked now mrequestMAC bs msg
   where
-    riActions =
-        defaultResolveActions
-            { ractionTimeoutTime = 3000000
-            , ractionLog = envPutLines
-            }
-    ris =
-        [ defaultResolveInfo
-            { rinfoIP = ip
-            , rinfoPort = port
-            , rinfoActions = riActions
-            , rinfoUDPRetry = 3
-            , rinfoVCLimit = 0
-            }
-        ]
-    renv =
-        ResolveEnv
-            { renvResolver = udpResolver
-            , renvConcurrent = True -- should set True if multiple RIs are provided
-            , renvResolveInfos = ris
-            }
     q = Question dom SOA IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
+    nope = unanswered env ip port dom "SOA"
+
+    asked now ident = do
+        let bare = encodeQuery ident q qctl
+        case mkey of
+            Nothing -> return (bare, Nothing)
+            Just key -> case decode bare of
+                Left e -> E.ioError $ E.userError $ show e
+                Right m -> do
+                    let body = encode m
+                        (rr, mac) = signTSIG key now defaultFudge Nothing body
+                    return (encode m{additional = additional m ++ [rr]}, Just mac)
+
+    checked now mrequestMAC bs msg = case mkey of
+        Nothing -> serialOf msg
+        Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
+            TSIGOk _ -> serialOf msg
+            TSIGMissing -> nope "the answer is not signed"
+            TSIGFailed fault -> nope $ case tsigReported msg of
+                Just e -> "the far end says " ++ show e
+                Nothing -> show fault
+
+    held key n = if n == tsigKeyName key then Just key else Nothing
+
+    serialOf msg = case answer msg of
+        [] -> nope "no SOA in the answer"
+        soa : _ -> case fromRData $ rdata soa of
+            Nothing -> nope "broken SOA"
+            Just s -> return $ Just $ soa_serial s
+
+-- | How long to wait for the upstream to say what serial it holds, and
+--   how many times to ask.  What the resolver was set to before this
+--   was ours to do.
+serialTimeout :: Int
+serialTimeout = 3 * 1000000
+
+serialTries :: Int
+serialTries = 3
 
 -- | How long a whole transfer may take.  Generous: a large zone is many
 --   messages, and the thread waiting for them is the zone's own.
