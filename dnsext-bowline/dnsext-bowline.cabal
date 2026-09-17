@@ -150,11 +150,15 @@ executable clove
     hs-source-dirs:   clove
     other-modules:
                       Algo
+                      AtomicFile
                       Auth
                       Axfr
                       Config
+                      Exception
+                      KeyFile
                       Net
                       Notify
+                      Serial
                       Types
                       Zone
 
@@ -164,7 +168,10 @@ executable clove
         -- GHC bundled
         base,
         async,
+        base16-bytestring,
         bytestring,
+        directory,
+        filepath,
         network,
         -- dnsext packages
         dnsext-auth,
@@ -176,7 +183,8 @@ executable clove
         iproute,
         network-run >= 0.6.0 && < 0.7,
         stm,
-        unix
+        unix,
+        unix-time
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native

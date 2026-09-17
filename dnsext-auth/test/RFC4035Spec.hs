@@ -19,15 +19,8 @@ spec = describe "authoritative algorithm" $ do
     db <- runIO $ do
         rrs <- loadZoneFile zone "test/rfc4035.zone"
         (_pub, _pri, dnskey, _ds, doSign) <-
-            prepareDNSSEC $
-                DNSSECinfo
-                    { dnssecInfoZone = zone
-                    , dnssecInfoPubAlg = ED25519
-                    , dnssecInfoDigestAlg = SHA256
-                    , dnssecInfoTTL = 3600
-                    , dnssecInfoDuration = 86400
-                    }
-        makeDBforPrimary zone Nothing doSign (rrs ++ [dnskey])
+            prepareDNSSEC $ defaultKeyConfig{keyConfZone = zone}
+        makeDBforPrimary zone Nothing doSign doSign (rrs ++ [dnskey])
     doit db
     db2 <- runIO (makeDBforSecondary zone $ dbAll db)
     doit db2

@@ -8,7 +8,15 @@ module DNS.SEC.Verify.Sign (
     genKeyPair,
     makeDNSKEY,
     makeDS,
-    DNSSECinfo (..),
+    KeyConfig (..),
+    defaultKeyConfig,
+    KeyInfo (..),
+    KeyType (..),
+    Signer,
+    generateKeyInfo,
+    toKeyInfo,
+    fromKeyInfo,
+    makeSigner,
     prepareDNSSEC,
     RRSetSig (..),
     groupRRset,
@@ -29,13 +37,71 @@ import qualified Control.Exception as E
 import Data.ByteString ()
 import Data.List
 import Data.Maybe
+import Data.Word
 
-data SignFailure = SignFailure deriving (Show)
+----------------------------------------------------------------
+
+{- FOURMOLU_DISABLE -}
+data KeyConfig = KeyConfig
+    { keyConfZone      :: Domain
+    , keyConfPubAlg    :: PubAlg
+    , keyConfDigestAlg :: DigestAlg
+    , keyConfTTL       :: TTL
+    -- ^ TTL for DNSKEY and DS
+    , keyConfLifetime  :: DNSTime
+    -- ^ Lifetime of RRSIG. This value is added to inception to
+    -- calculate expiration.
+    , keyConfType      :: KeyType
+    , keyConfSize      :: Int
+    -- ^ Key size used only for RSA
+    }
+    deriving (Eq, Show)
+
+defaultKeyConfig :: KeyConfig
+defaultKeyConfig =
+    KeyConfig
+        { keyConfZone      = "."
+        , keyConfPubAlg    = ED25519
+        , keyConfDigestAlg = SHA256
+        , keyConfTTL       = 3600
+        , keyConfLifetime  = 86400
+        , keyConfType      = ZSK
+        , keyConfSize      = 0
+        }
+
+data KeyInfo = KeyInfo
+    { keyInfoZone       :: Domain
+    , keyInfoAlgorithm  :: PubAlg
+    , keyInfoDigestAlgo :: DigestAlg
+    , keyInfoTag        :: KeyTag
+    , keyInfoDigest     :: Opaque
+    , keyInfoPubKey     :: PubKey
+    , keyInfoPriKey     :: PriKey
+    , keyInfoFlag       :: Word16
+    }
+    deriving (Eq, Show)
+
+data RRSetSig = RRSetSig
+    { rrsetsigName :: Domain
+    , rrsetsigType :: TYPE
+    , rrsetsigRRs  :: [ResourceRecord]
+    , rrsetsigSig  :: Maybe ResourceRecord
+    }
+    deriving (Show, Eq, Ord)
+{- FOURMOLU_ENABLE -}
+
+----------------------------------------------------------------
+
+-- | Reason why a zone could not be signed.  This must never be turned
+--   into an empty result: an unsigned answer is worse than no answer.
+newtype SignFailure = SignFailure String deriving (Show)
 
 instance Exception SignFailure
 
+----------------------------------------------------------------
+
 sign :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO ResourceRecord
-sign _ _ [] = E.throwIO SignFailure
+sign _ _ [] = E.throwIO $ SignFailure "empty RRset"
 sign pri rrsig rrs@(rr : _) = do
     rrsig' <- sign' pri rrsig rrs
     let rd = toRData rrsig'
@@ -43,7 +109,7 @@ sign pri rrsig rrs@(rr : _) = do
 
 sign' :: PriKey -> RD_RRSIG -> [ResourceRecord] -> IO RD_RRSIG
 sign' pri rrsig rrs = case getRRSIGImpl alg of
-    Nothing -> E.throwIO SignFailure
+    Nothing -> E.throwIO $ SignFailure $ "unsupported algorithm: " ++ show alg
     Just impl -> do
         sig <- doSign impl pri rrs rrsig
         return rrsig{rrsig_signature = sig}
@@ -58,27 +124,35 @@ doSign
     -> IO Opaque
 doSign RRSIGImpl{..} pri rrs rrsig = do
     case rrsigIDecodePriKey pri of
-        Left _ -> E.throwIO SignFailure
+        Left e -> E.throwIO $ SignFailure $ "broken private key: " ++ e
         Right priK -> do
             let (sortedRDatas, sortedRRs) = unzip $ sortRDataCanonical rrs
-            canonicalRRsetSorted sortedRRs (\_ -> E.throwIO SignFailure) $
+            canonicalRRsetSorted sortedRRs (E.throwIO . SignFailure) $
                 \rrset_dom typ cls _ttl _rds -> do
                     let str = encodeRRset rrsig rrset_dom typ cls sortedRDatas
                     rrsigIEncodeSignature <$> rrsigISign priK str
 
-genKeyPair :: PubAlg -> IO (Maybe (PubKey, PriKey))
-genKeyPair alg = case getRRSIGImpl alg of
+----------------------------------------------------------------
+
+genKeyPair :: PubAlg -> Int -> IO (Maybe (PubKey, PriKey))
+genKeyPair alg keySiz = case getRRSIGImpl alg of
     Nothing -> return Nothing
     Just RRSIGImpl{..} -> do
-        (pub, pri) <- rrsigIGenKeyPair
+        (pub, pri) <- rrsigIGenKeyPair keySiz
         let pubkey = rrsigIEncodePubKey pub
             prikey = rrsigIEncodePriKey pri
         return $ Just (pubkey, prikey)
 
-makeDNSKEY :: PubAlg -> PubKey -> Bool -> RD_DNSKEY
-makeDNSKEY alg pub ksk =
+data KeyType = ZSK | KSK deriving (Eq, Show)
+
+fromKeyType :: KeyType -> [DNSKEY_Flag]
+fromKeyType ZSK = [ZONE]
+fromKeyType KSK = [ZONE, SecureEntryPoint]
+
+makeDNSKEY :: PubAlg -> PubKey -> [DNSKEY_Flag] -> RD_DNSKEY
+makeDNSKEY alg pub flags =
     RD_DNSKEY
-        { dnskey_flags = [ZONE] ++ if ksk then [SecureEntryPoint] else []
+        { dnskey_flags = flags
         , dnskey_protocol = 3
         , dnskey_pubalg = alg
         , dnskey_public_key = pub
@@ -96,79 +170,132 @@ makeDS owner digestalg dnskey =
     tag = keyTag dnskey
     dsimpl = fromJust $ getDSImpl digestalg
 
-data DNSSECinfo = DNSSECinfo
-    { dnssecInfoZone :: Domain
-    , dnssecInfoPubAlg :: PubAlg
-    , dnssecInfoDigestAlg :: DigestAlg
-    , dnssecInfoTTL :: TTL
-    -- ^ TTL for DNSKEY and DS
-    , dnssecInfoDuration :: DNSTime
-    -- ^ Duration of RRSIG. This value is added to inception to
-    -- calculate expiration.
-    }
-    deriving (Eq, Show)
+----------------------------------------------------------------
 
-data RRSetSig = RRSetSig
-    { rrsetsigName :: Domain
-    , rrsetsigType :: TYPE
-    , rrsetsigRRs :: [ResourceRecord]
-    , rrsetsigSig :: Maybe ResourceRecord
-    }
-    deriving (Show, Eq, Ord)
+generateKeyInfo
+    :: KeyConfig
+    -> IO
+        ( KeyInfo
+        , ResourceRecord -- DNSKEY
+        , ResourceRecord -- DS
+        )
+generateKeyInfo KeyConfig{..} = do
+    mp <- genKeyPair keyConfPubAlg keyConfSize
+    case mp of
+        Nothing -> E.throwIO $ SignFailure $ "cannot generate a key pair for " ++ show keyConfPubAlg
+        Just (pubkey, prikey) -> do
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
+                ds = makeDS keyConfZone keyConfDigestAlg dnskey
+                keyInfo = toKeyInfo keyConfZone prikey dnskey ds
+                (rrdnskey, rrds) = toRRs keyConfZone keyConfTTL dnskey ds
+            return (keyInfo, rrdnskey, rrds)
+
+toRRs :: Domain -> TTL -> RD_DNSKEY -> RD_DS -> (ResourceRecord, ResourceRecord)
+toRRs zone ttl dnskey ds = (rrdnskey, rrds)
+  where
+    rrdnskey =
+        ResourceRecord
+            { rrname = zone
+            , rrtype = DNSKEY
+            , rrclass = IN
+            , rrttl = ttl
+            , rdata = toRData dnskey
+            }
+    rrds =
+        ResourceRecord
+            { rrname = zone
+            , rrtype = DS
+            , rrclass = IN
+            , rrttl = ttl
+            , rdata = toRData ds
+            }
+
+toKeyInfo :: Domain -> PriKey -> RD_DNSKEY -> RD_DS -> KeyInfo
+toKeyInfo zone prikey RD_DNSKEY{..} RD_DS{..} =
+    KeyInfo
+        { keyInfoZone = zone
+        , keyInfoAlgorithm = dnskey_pubalg
+        , keyInfoDigestAlgo = ds_digestalg
+        , keyInfoTag = ds_key_tag
+        , keyInfoDigest = ds_digest
+        , keyInfoPubKey = dnskey_public_key
+        , keyInfoPriKey = prikey
+        , keyInfoFlag = fromDNSKEYflags dnskey_flags
+        }
+
+fromKeyInfo :: KeyInfo -> TTL -> (RD_DNSKEY, RD_DS, ResourceRecord, ResourceRecord)
+fromKeyInfo KeyInfo{..} ttl = (dnskey, ds, rrdnskey, rrds)
+  where
+    dnskey = makeDNSKEY keyInfoAlgorithm keyInfoPubKey $ toDNSKEYflags keyInfoFlag
+    ds = makeDS keyInfoZone keyInfoDigestAlgo dnskey
+    (rrdnskey, rrds) = toRRs keyInfoZone ttl dnskey ds
+
+type Signer =
+    Bool -- grouping up RRs if True
+    -> [ResourceRecord]
+    -> IO [RRSetSig]
+
+makeSigner :: KeyConfig -> KeyInfo -> IO Signer
+makeSigner conf KeyInfo{..} = do
+    rrsigTemp <- makeRRSIGtemplate conf keyInfoTag
+    let signer = signZone keyInfoPriKey rrsigTemp
+    return signer
 
 prepareDNSSEC
-    :: DNSSECinfo
+    :: KeyConfig
     -> IO
         ( PubKey
         , PriKey
         , ResourceRecord -- DNSKEY
         , ResourceRecord -- DS
-        , Bool -> [ResourceRecord] -> IO [RRSetSig]
+        , Signer
         )
-prepareDNSSEC info@DNSSECinfo{..} = do
-    mp <- genKeyPair dnssecInfoPubAlg
+prepareDNSSEC conf@KeyConfig{..} = do
+    mp <- genKeyPair keyConfPubAlg keyConfSize
     case mp of
-        Nothing -> E.throwIO SignFailure
+        Nothing -> E.throwIO $ SignFailure $ "cannot generate a key pair for " ++ show keyConfPubAlg
         Just (pubkey, prikey) -> do
-            let dnskey = makeDNSKEY dnssecInfoPubAlg pubkey True -- fixme
-                ds = makeDS dnssecInfoZone dnssecInfoDigestAlg dnskey
+            let dnskey = makeDNSKEY keyConfPubAlg pubkey $ fromKeyType keyConfType
+                ds = makeDS keyConfZone keyConfDigestAlg dnskey
                 tag = ds_key_tag ds
                 rrdnskey =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DNSKEY
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData dnskey
                         }
                 rrds =
                     ResourceRecord
-                        { rrname = dnssecInfoZone
+                        { rrname = keyConfZone
                         , rrtype = DS
                         , rrclass = IN
-                        , rrttl = dnssecInfoTTL
+                        , rrttl = keyConfTTL
                         , rdata = toRData ds
                         }
-            rrsigTemp <- makeRRSIGtemplate info tag
+            rrsigTemp <- makeRRSIGtemplate conf tag
             let signRRs = signZone prikey rrsigTemp
             return (pubkey, prikey, rrdnskey, rrds, signRRs)
 
-makeRRSIGtemplate :: DNSSECinfo -> KeyTag -> IO RD_RRSIG
-makeRRSIGtemplate DNSSECinfo{..} tag = do
+makeRRSIGtemplate :: KeyConfig -> KeyTag -> IO RD_RRSIG
+makeRRSIGtemplate KeyConfig{..} tag = do
     inception <- toDNSTime <$> getCurrentTime
-    let expiration = inception + dnssecInfoDuration
+    let expiration = inception + keyConfLifetime
     return $
         RD_RRSIG
             { rrsig_type = A -- overridden
-            , rrsig_pubalg = dnssecInfoPubAlg
+            , rrsig_pubalg = keyConfPubAlg
             , rrsig_num_labels = 0 -- overridden
             , rrsig_ttl = 0 -- overridden
             , rrsig_expiration = expiration
             , rrsig_inception = inception
             , rrsig_key_tag = tag
-            , rrsig_zone = dnssecInfoZone
+            , rrsig_zone = keyConfZone
             , rrsig_signature = Opaque.fromByteString "" -- overridden
             }
+
+----------------------------------------------------------------
 
 groupRRset :: [ResourceRecord] -> [[ResourceRecord]]
 groupRRset rrs = groupBy rreq $ sort rrs
@@ -185,13 +312,12 @@ signZone
     -> Bool
     -> [ResourceRecord]
     -> IO [RRSetSig]
-signZone prikey rrsigTemp0 groupup rrs0 = E.handle handler $ mapM f rrss
+signZone prikey rrsigTemp0 groupup rrs0 = mapM f rrss
   where
-    handler SignFailure = return []
     rrss
         | groupup = groupRRset rrs0
         | otherwise = map (: []) rrs0
-    f [] = E.throwIO SignFailure
+    f [] = E.throwIO $ SignFailure "empty RRset"
     f rrs@(ResourceRecord{..} : _) = do
         sig <- sign prikey rrsigTemp rrs
         return $

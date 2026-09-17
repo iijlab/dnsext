@@ -48,13 +48,10 @@ rsaSHA1 = rsaSHAHelper SHA1
 rsaSHA256 = rsaSHAHelper SHA256
 rsaSHA512 = rsaSHAHelper SHA512
 
-sizeInBits :: Int
-sizeInBits = 512 `div` 8 -- fixme: hard coding
-
 rsaSHAHelper :: (HashAlgorithm hash, HashAlgorithmASN1 hash) => hash -> RRSIGImpl
 rsaSHAHelper alg =
     RRSIGImpl
-        { rrsigIGenKeyPair = RSA.generate (sizeInBits `div` 8) 65537
+        { rrsigIGenKeyPair = \sizeInBits -> RSA.generate (sizeInBits `div` 8) 65537
         , rrsigIEncodePriKey = rsaEncodePriKey
         , rrsigIDecodePriKey = rsaDecodePriKey
         , rrsigIEncodePubKey = rsaEncodePubKey
