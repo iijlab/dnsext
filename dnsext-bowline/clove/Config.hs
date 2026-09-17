@@ -61,6 +61,7 @@ data ZoneConf = ZoneConf
     , cnf_nsec3_hash            :: String
     , cnf_rrsig_lifetime        :: Int
     , cnf_zsk_rollover_duration :: Int
+    , cnf_zsk_preserve          :: Int
     }
     deriving (Show)
 
@@ -85,6 +86,7 @@ defaultZoneConf =
         , cnf_nsec3_hash            = "SHA-1"
         , cnf_rrsig_lifetime        = 864000 -- 10 days
         , cnf_zsk_rollover_duration = 604800 -- 7 days
+        , cnf_zsk_preserve          = 10
         }
 
 ----------------------------------------------------------------
@@ -133,6 +135,7 @@ makeZoneConf def conf = do
     cnf_nsec3_hash            <- get "nsec3-hash"            cnf_nsec3_hash
     cnf_rrsig_lifetime        <- get "rrsig-lifetime"        cnf_rrsig_lifetime
     cnf_zsk_rollover_duration <- get "zsk-rollover-duration" cnf_zsk_rollover_duration
+    cnf_zsk_preserve          <- get "zsk-preserve"          cnf_zsk_preserve
     checkUnknown (cnf_zone ++ ": ") ref conf
     pure ZoneConf{..}
 

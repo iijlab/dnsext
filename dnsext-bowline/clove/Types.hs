@@ -28,6 +28,9 @@ data Signing = Signing
     , signingZSKRollover :: Int
     -- ^ How long, in seconds, a ZSK is used before the next one is
     --   generated.  Not the same thing as the life time of an RRSIG.
+    , signingZSKPreserve :: Int
+    -- ^ How many ZSKs are kept on disk.  Generating one beyond this
+    --   removes the oldest.
     , signingN3P :: Maybe RD_NSEC3PARAM -- Nothing for NSEC
     }
     deriving (Eq, Show)

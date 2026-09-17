@@ -192,7 +192,8 @@ loadSourceWithSigning env zone source (Just Signing{..}) = do
     (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
     signKey <- makeSigner kskKeyConfig keyInfoKSK
     let zskKeyConfig = signingZSKConfig{keyConfTTL = ttl}
-    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <- loadZSKInfo zoneDir zskKeyConfig
+    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
+        loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
     signZone <- makeSigner zskKeyConfig keyInfoZSK1
     db <- makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
     -- Stored only after the zone has been built successfully so that a
@@ -242,6 +243,7 @@ readSigning dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
         checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
+        checkPreserve cnf_zsk_preserve
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
@@ -283,6 +285,7 @@ readSigning dom ZoneConf{..}
                     { signingKSKConfig = keyConfKSK
                     , signingZSKConfig = keyConfZSK
                     , signingZSKRollover = cnf_zsk_rollover_duration
+                    , signingZSKPreserve = cnf_zsk_preserve
                     , signingN3P = mn3p
                     }
 
@@ -331,6 +334,23 @@ checkDurations lifetime rollover
   where
     needed = (4 * rollover + 2) `div` 3
     failWith = E.ioError . E.userError
+
+-- | Fewest ZSKs which may be kept.  Three of them are published at any
+--   time -- the previous key, the one signing and the next one -- so
+--   keeping fewer would have every load generate a whole new set.
+minPreserve :: Int
+minPreserve = 3
+
+checkPreserve :: Int -> IO ()
+checkPreserve preserve
+    | preserve < minPreserve =
+        E.ioError $
+            E.userError $
+                "zsk-preserve must be at least "
+                    ++ show minPreserve
+                    ++ ", the number of ZSKs published at a time, but is "
+                    ++ show preserve
+    | otherwise = return ()
 
 ----------------------------------------------------------------
 

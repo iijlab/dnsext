@@ -9,7 +9,7 @@ import Control.Monad
 import Data.Bits (shiftR)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
-import Data.List (isSuffixOf, sortBy)
+import Data.List (isSuffixOf, sort, sortBy)
 import Data.UnixTime
 import Foreign.C.Types
 import System.Directory
@@ -88,18 +88,19 @@ loadKSKInfo
 loadKSKInfo zoneDir keyConf = do
     ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> generateKey zoneDir keyConf
+        [] -> generateKSK zoneDir keyConf
         fn : _ -> loadKey zoneDir keyConf fn
 
 loadZSKInfo
     :: FilePath
+    -> Int
     -> KeyConfig
     -> IO
         ( (KeyInfo, ResourceRecord) -- previous
         , (KeyInfo, ResourceRecord) -- current
         , (KeyInfo, ResourceRecord) -- next
         )
-loadZSKInfo zoneDir keyConf = do
+loadZSKInfo zoneDir preserve keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         fn2 : fn1 : fn0 : _ -> do
@@ -108,9 +109,9 @@ loadZSKInfo zoneDir keyConf = do
             ki2 <- loadKey zoneDir keyConf fn2
             return (ki0, ki1, ki2)
         _ -> do
-            ki0 <- generateKey zoneDir keyConf
-            ki1 <- generateKey zoneDir keyConf
-            ki2 <- generateKey zoneDir keyConf
+            ki0 <- generateZSK zoneDir preserve keyConf
+            ki1 <- generateZSK zoneDir preserve keyConf
+            ki2 <- generateZSK zoneDir preserve keyConf
             return (ki0, ki1, ki2)
 
 -- | Loading an existing key.  A key file which cannot be read is an
@@ -126,16 +127,37 @@ loadKey zoneDir keyConf fn = do
     let (_, _, dnskeyrr, _) = fromKeyInfo ki $ keyConfTTL keyConf
     return (ki, dnskeyrr)
 
-generateKey
+generateKSK
     :: FilePath
     -> KeyConfig
     -> IO (KeyInfo, ResourceRecord) -- DNSKEY
-generateKey zoneDir keyConf = do
+generateKSK zoneDir keyConf = do
     (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
-    case keyConfType keyConf of
-        KSK -> saveKSKInfo zoneDir keyInfo
-        ZSK -> saveZSKInfo zoneDir keyInfo
+    saveKSKInfo zoneDir keyInfo
     return (keyInfo, dnskeyrr)
+
+-- | Generating the next ZSK, keeping at most 'preserve' of them on
+--   disk.  Each one holds a private key, and only the three newest are
+--   ever published, so they must not pile up for ever.
+generateZSK
+    :: FilePath
+    -> Int
+    -> KeyConfig
+    -> IO (KeyInfo, ResourceRecord) -- DNSKEY
+generateZSK zoneDir preserve keyConf = do
+    (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
+    saveZSKInfo zoneDir keyInfo
+    -- Pruned once the new key is safely stored, never before it.
+    pruneZSK zoneDir preserve
+    return (keyInfo, dnskeyrr)
+
+-- | Removing the oldest ZSKs until at most 'keep' are left.  A key file
+--   is named after the time it was made, so sorting by name sorts by
+--   age.
+pruneZSK :: FilePath -> Int -> IO ()
+pruneZSK zoneDir keep = do
+    zsks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
+    mapM_ (removeFile . (zoneDir </>)) $ take (length zsks - keep) $ sort zsks
 
 ----------------------------------------------------------------
 
@@ -151,8 +173,8 @@ rolloverMargin duration = duration `shiftR` 6
 -- | Generating the next ZSK once the newest one has been in use for
 --   the rollover duration.  That duration is how long a key is used,
 --   which is a different thing from how long an RRSIG stays valid.
-rolloverZSK :: FilePath -> Int -> KeyConfig -> IO ()
-rolloverZSK zoneDir duration keyConf = do
+rolloverZSK :: FilePath -> Int -> Int -> KeyConfig -> IO ()
+rolloverZSK zoneDir duration preserve keyConf = do
     ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
     case sortBy (flip compare) ksks of -- decreasing order
         [] -> E.ioError $ E.userError "no ZSK files are found"
@@ -163,7 +185,7 @@ rolloverZSK zoneDir duration keyConf = do
                 margin = fromIntegral $ rolloverMargin duration
             when (diff + margin > fromIntegral duration) $
                 void $
-                    generateKey zoneDir keyConf
+                    generateZSK zoneDir preserve keyConf
 
 ----------------------------------------------------------------
 

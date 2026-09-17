@@ -194,7 +194,7 @@ syncZone env zoneref = loopLogErr env WARNING go
         case zoneSigning of
             Nothing -> return ()
             Just Signing{..} -> do
-                rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKConfig
+                rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
         -- reading zone source
         updateZone env zoneref
         -- notify
