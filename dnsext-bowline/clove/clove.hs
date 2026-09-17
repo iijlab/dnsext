@@ -187,13 +187,21 @@ syncZone env zoneref = do
         notifyWithZone env zoneref
     go = do
         Zone{..} <- readIORef zoneref
-        let mtm
-                -- Key rollover
-                | Just signing <- zoneSigning = Just $ signingZSKRollover signing
+        let refresh
                 -- Source is from file. No timeout.
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
                 | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
+            -- Key rollover.  A signed zone has to wake up for this even
+            -- when its source never changes.
+            rollover = signingZSKRollover <$> zoneSigning
+            -- Whichever comes first.  Taking only the rollover left a
+            -- signed zone checking its upstream once a week, and never
+            -- reaching the retry above.
+            mtm = case (refresh, rollover) of
+                (Just a, Just b) -> Just $ min a b
+                (Nothing, b) -> b
+                (a, Nothing) -> a
         -- A signal or timeout breaks this wait.
         zoneTimeoutWait mtm
         case zoneSigning of
