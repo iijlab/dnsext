@@ -7,6 +7,8 @@ module Config (
 ) where
 
 import DNS.Config
+import Data.IORef
+import Data.List (nub, (\\))
 import Network.Socket (PortNumber)
 import System.IO.Error (ioeGetErrorString, ioeSetErrorString, tryIOError)
 
@@ -86,6 +88,11 @@ defaultZoneConf =
 
 makeConfig :: Config -> [Conf] -> IO (Config, [ZoneConf])
 makeConfig def conf0 = do
+    ref <- newIORef []
+    -- The signature keeps 'get' polymorphic under the monomorphism
+    -- restriction.
+    let get :: FromConf a => String -> (Config -> a) -> IO a
+        get k func = getting ref conf k func def
     cnf_tcp_addrs <- get "tcp-addrs" cnf_tcp_addrs
     cnf_tcp_port  <- get "tcp-port"  cnf_tcp_port
     cnf_udp_addrs <- get "udp-addrs" cnf_udp_addrs
@@ -94,19 +101,17 @@ makeConfig def conf0 = do
     cnf_log_file  <- get "log-file"  cnf_log_file
     cnf_log_level <- get "log-level" cnf_log_level
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
+    checkUnknown "" ref conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
     (conf, zones) = splitConfig conf0
-    get k func = do
-        et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
-        let left e = do
-                let e' = ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
-                ioError e'
-        either left pure et
 
 makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
 makeZoneConf def conf = do
+    ref <- newIORef []
+    let get :: FromConf a => String -> (ZoneConf -> a) -> IO a
+        get k func = getting ref conf k func def
     cnf_zone                 <- get "zone"                 cnf_zone
     cnf_notify               <- get "notify"               cnf_notify
     cnf_notify_addrs         <- get "notify-addrs"         cnf_notify_addrs
@@ -124,16 +129,31 @@ makeZoneConf def conf = do
     cnf_ds_digest            <- get "ds-digest"            cnf_ds_digest
     cnf_nsec3_hash           <- get "nsec3-hash"           cnf_nsec3_hash
     cnf_rrsig_lifetime       <- get "rrsig-lifetime"       cnf_rrsig_lifetime
+    checkUnknown (cnf_zone ++ ": ") ref conf
     pure ZoneConf{..}
-  where
-    get k func = do
-        et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
-        let left e = do
-                let e' = ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
-                ioError e'
-        either left pure et
 
 {- FOURMOLU_ENABLE -}
+
+----------------------------------------------------------------
+
+-- | Reading one setting, remembering its name as a known one.
+getting :: FromConf a => IORef [String] -> [Conf] -> String -> (b -> a) -> b -> IO a
+getting ref conf k func def = do
+    modifyIORef' ref (k :)
+    et <- tryIOError $ maybe (pure $ func def) fromConf $ lookup k conf
+    let left e = ioError $ ioeSetErrorString e (k ++ ": " ++ ioeGetErrorString e)
+    either left pure et
+
+-- | Rejecting a setting we do not know.  Without this a misspelt name
+--   is simply not found, the default is used and nothing is reported,
+--   which is how \"log-devel\" and \"siging\" sat in the sample
+--   configuration file without anybody noticing.
+checkUnknown :: String -> IORef [String] -> [Conf] -> IO ()
+checkUnknown label ref conf = do
+    known <- readIORef ref
+    case nub (map fst conf) \\ known of
+        [] -> pure ()
+        ks -> ioError $ userError $ label ++ "unknown setting: " ++ unwords ks
 
 loadConfig :: FilePath -> IO (Config, [ZoneConf])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
