@@ -83,8 +83,8 @@ defaultZoneConf =
         , cnf_zsk_size             = 0
         , cnf_ds_digest            = "SHA-256"
         , cnf_nsec3_hash           = "SHA-1"
-        , cnf_rrsig_lifetime       = 604800 -- one week
-        , cnf_zsk_rollover_duration = 604800 -- one week
+        , cnf_rrsig_lifetime       = 864000 -- 10 days
+        , cnf_zsk_rollover_duration = 604800 -- 7 days
         }
 
 ----------------------------------------------------------------
