@@ -124,9 +124,18 @@ updateZone env zoneref = handleLogErr env WARNING () $ do
 
 -- | Directory holding the per-zone state, that is the serial file and
 --   the key files.  It must exist before anything is stored into it.
+--
+--   The trailing dot of the zone is dropped, so that \"example.jp.\"
+--   becomes \"example.jp\".  That would leave the root zone with an
+--   empty path, so it gets a name of its own.  Two zones must never be
+--   given the same directory -- they would overwrite each other's
+--   serial and keys -- and the trailing dot of that name is what makes
+--   it safe: dropping the trailing dot of a representation can never
+--   leave another one, because a zone has no empty label.  Plain
+--   \"root\" would have collided with the zone \"root.\".
 zoneDirectory :: Domain -> FilePath
 zoneDirectory zone = case toRepresentation zone of
-    "." -> "root"
+    "." -> "root."
     rep -> init rep -- dropping the trailing dot
 
 -- | This function throws 'AuthException'.
