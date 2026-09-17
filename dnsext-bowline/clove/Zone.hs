@@ -194,6 +194,7 @@ loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
     mserial <- loadSerial zoneDir
     rrs0 <- reloadSource env zone mserial source oldRRs
     (soa0, soarr0, rrs) <- checkRRs rrs0
+    checkUnsigned zone rrs
     let soa
             | byMySelf source = case mserial of
                 Nothing -> soa0 -- No serial file, serial from zone file
@@ -218,6 +219,28 @@ loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
     -- failure does not inflate the serial.
     saveSerial zoneDir $ soa_serial soa
     return (db, rrs0)
+
+-- | Refusing to sign a zone which is signed already.
+--
+--   The source of a signed zone is expected to be the bare zone.  When
+--   it carries RRSIGs, signing it again signs those RRSIGs too, and
+--   publishes the upstream's keys beside ours, its NSEC3 chain beside
+--   ours, and its SOA beside ours -- a zone which answers plausibly and
+--   is thoroughly wrong.  Measured on a signed secondary of a signed
+--   primary: eight DNSKEYs, two NSEC3PARAMs and two SOAs.
+--
+--   The zone is left as it was, which for a zone already serving means
+--   it goes on serving what it had.
+checkUnsigned :: Domain -> [ResourceRecord] -> IO ()
+checkUnsigned zone rrs
+    | any ((== RRSIG) . rrtype) rrs =
+        E.ioError $
+            E.userError $
+                toRepresentation zone
+                    ++ ": the source is signed already, so it is not signed again."
+                    ++ "  Set signing to no to serve it as it comes, or take the"
+                    ++ " signatures out of the source."
+    | otherwise = return ()
 
 byMySelf :: Source -> Bool
 byMySelf (FromFile _) = True
