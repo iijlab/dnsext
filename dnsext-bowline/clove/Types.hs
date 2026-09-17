@@ -54,6 +54,11 @@ data Zone = Zone
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
+    , zoneNotifyKey :: Maybe TSIGKey
+    -- ^ Key the notifies we send are signed with
+    , zoneAllowNotifyKey :: Maybe TSIGKey
+    -- ^ Key a notify must be signed with.  When there is one, the
+    --   addresses are not consulted.
     , zoneSourceKey :: Maybe TSIGKey
     -- ^ Key the queries to the upstream are signed with
     , zoneTransferKey :: Maybe TSIGKey

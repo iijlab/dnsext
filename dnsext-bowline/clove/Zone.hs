@@ -70,6 +70,8 @@ newZone env keys zoneconf@ZoneConf{..} = do
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
     msigning <- withZoneName $ readSigning env zone zoneconf
+    notifyKey <- withZoneName $ namedKey keys "notify-key" cnf_notify_key
+    allowNotifyKey <- withZoneName $ namedKey keys "allow-notify-key" cnf_allow_notify_key
     sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
     transferKey <- withZoneName $ namedKey keys "allow-transfer-key" cnf_allow_transfer_key
     -- The source is not read here.  Reading it can block for as long as
@@ -101,6 +103,8 @@ newZone env keys zoneconf@ZoneConf{..} = do
             , zoneNotifyAddrs = notify_addrs
             , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
+            , zoneNotifyKey = notifyKey
+            , zoneAllowNotifyKey = allowNotifyKey
             , zoneSourceKey = sourceKey
             , zoneTransferKey = transferKey
             , zoneAllowTransfer4 = t4

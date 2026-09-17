@@ -15,8 +15,11 @@ import qualified Data.ByteString as BS
 import Data.IORef
 import Data.IP
 import Network.Socket
+import System.Posix.Time (epochTime)
 
 import Axfr
+import DNS.TSIG
+import DNS.Types.Time (EpochTime)
 import Exception
 import Types
 import Zone
@@ -29,6 +32,9 @@ recvErrorBurst = 10
 -- | How long to pause once a socket keeps failing.
 recvRetryDelay :: Int
 recvRetryDelay = 1000000
+
+currentTime :: IO EpochTime
+currentTime = fromIntegral . fromEnum <$> epochTime
 
 peerOf :: SockAddr -> String
 peerOf sa = maybe (show sa) (show . fst) $ fromSockAddr sa
@@ -76,7 +82,7 @@ server env@Env{..} proto@Proto{..} zoneAlist = loop 0
                 -- for the idle timeout, so it ends here.
                 return $ not recvErrorFatal
             Right query -> (>> return True) $ case opcode query of
-                OP_NOTIFY -> handleNotify proto zoneAlist sa query
+                OP_NOTIFY -> handleNotify env proto zoneAlist sa bs query
                 OP_STD -> do
                     let q = question query
                         dom = qname q
@@ -132,23 +138,53 @@ response proto@Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAli
             then sendReply sa $ replyQuery proto query $ zoneDB zone
             else sendReply sa $ replyServFail proto query
 
-handleNotify :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> IO ()
-handleNotify proto@Proto{..} zoneAlist sa query = case lookup dom zoneAlist of -- exact match
-    Nothing -> sendReply sa $ replyRefused proto query
+handleNotify :: Env -> Proto -> ZoneAlist -> SockAddr -> ByteString -> DNSMessage -> IO ()
+handleNotify env proto@Proto{..} zoneAlist sa whole query = case lookup dom zoneAlist of -- exact match
+    Nothing -> refuse
     Just zoneref -> do
         Zone{..} <- readIORef zoneref
-        case fromSockAddr sa of
-            Nothing -> sendReply sa $ replyRefused proto query
-            Just (ip, _)
-                | ip `elem` zoneAllowNotifyAddrs -> do
-                    sendReply sa $ replyNotice proto query
-                    zoneWakeUp
-                | otherwise -> sendReply sa $ replyRefused proto query
+        case zoneAllowNotifyKey of
+            -- Holding the key is what says who this is, so the
+            -- addresses are not asked about as well.
+            Just key -> do
+                now <- currentTime
+                let held n = if n == tsigKeyName key then Just key else Nothing
+                case verifyTSIG held now Nothing whole query of
+                    TSIGOk mac -> do
+                        sendReply sa $ replySigned proto query key now mac
+                        zoneWakeUp
+                    TSIGMissing -> refuse
+                    TSIGFailed e -> do
+                        envPutLines
+                            env
+                            WARNING
+                            Nothing
+                            ["    notify " ++ peerOf sa ++ " \"" ++ toRepresentation dom ++ "\": " ++ show e]
+                        sendReply sa $ replyNotAuth proto query
+            Nothing -> case fromSockAddr sa of
+                Just (ip, _)
+                    | ip `elem` zoneAllowNotifyAddrs -> do
+                        sendReply sa $ replyNotice proto query
+                        zoneWakeUp
+                _ -> refuse
   where
     dom = qname $ question query
+    refuse = sendReply sa $ replyRefused proto query
 
 replyNotice :: Proto -> DNSMessage -> ByteString
 replyNotice proto query = encodeReply proto query $ fromQuery query
+
+-- | The same, signed, so that whoever asked can tell we are who we say.
+--
+--   The MAC is taken over the plain encoding rather than over whatever
+--   'encodeReply' would make of it.  The two are the same for anything
+--   which fits, and an acknowledgement is nowhere near not fitting.
+replySigned :: Proto -> DNSMessage -> TSIGKey -> EpochTime -> Opaque -> ByteString
+replySigned proto query key now requestMAC = encodeReply proto query signedReply
+  where
+    reply = fromQuery query
+    (rr, _) = signTSIG key now defaultFudge (Just requestMAC) (encode reply)
+    signedReply = reply{additional = [rr]}
 
 replyQuery :: Proto -> DNSMessage -> DB -> ByteString
 replyQuery proto query db = encodeReply proto query $ getAnswer db query
