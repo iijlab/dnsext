@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -14,6 +15,7 @@ module DNS.Types.TSIG (
     tsigVariables,
     tsigTimers,
     stripTSIG,
+    unsignedTSIG,
 ) where
 
 import qualified Data.ByteString as BS
@@ -22,6 +24,7 @@ import DNS.Types.Domain
 import DNS.Types.Imports
 import DNS.Types.Message
 import DNS.Types.Opaque.Internal (Opaque, putOpaque)
+
 import qualified DNS.Types.Opaque.Internal as Opaque
 import DNS.Types.RData
 import DNS.Types.Type
@@ -67,6 +70,34 @@ tsigDigestCont prior bodies tsig =
     tsigMacField prior <> BS.concat bodies <> tsigTimers tsig
 
 ----------------------------------------------------------------
+
+-- | A record with no MAC in it yet: everything a MAC is taken over,
+--   before there is one to take.  Put the MAC in afterwards with
+--   @rd{tsig_mac = mac}@; nothing covers itself.
+--
+--   The error is zero and there is no other data, which is what a
+--   record made to sign with carries.  A record made to say what went
+--   wrong is a different thing and is built where that is decided.
+unsignedTSIG
+    :: Domain
+    -- ^ name of the algorithm
+    -> Word64
+    -- ^ time signed
+    -> Word16
+    -- ^ fudge
+    -> Word16
+    -- ^ identifier of the message being signed
+    -> RD_TSIG
+unsignedTSIG alg time fudge origid =
+    RD_TSIG
+        { tsig_algorithm = alg
+        , tsig_time_signed = time
+        , tsig_fudge = fudge
+        , tsig_mac = Opaque.fromByteString ""
+        , tsig_original_id = origid
+        , tsig_error = 0
+        , tsig_other = Opaque.fromByteString ""
+        }
 
 -- | A MAC as it enters a digest (RFC 8945 Sec 4.3.1): its length as an
 --   unsigned 16 bit integer, then its octets.

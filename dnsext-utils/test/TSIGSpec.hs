@@ -6,9 +6,14 @@ import qualified Data.ByteString as BS
 import Numeric (showHex)
 import Test.Hspec
 
+import Data.Bits (xor)
+
 import DNS.TSIG
 import DNS.Types
+import DNS.Types.Decode
+import DNS.Types.Encode
 import qualified DNS.Types.Opaque as Opaque
+import DNS.Types.Time (EpochTime)
 
 spec :: Spec
 spec = do
@@ -96,6 +101,133 @@ spec = do
             fromTSIGError BADKEY `shouldBe` 17
             fromTSIGError BADTIME `shouldBe` 18
             fromTSIGError BADTRUNC `shouldBe` 22
+
+    -- A message signed and then checked, which is what the two halves
+    -- are for.  Signing puts a record on the end of the message, so
+    -- what is checked is the message with it, encoded.
+    describe "signing a message and checking it again" $ do
+        it "accepts what it signed" $
+            verifyTSIG held now Nothing (signed Nothing plain) (decoded $ signed Nothing plain)
+                `shouldBe` TSIGOk (macOf $ signed Nothing plain)
+
+        it "accepts a response bound to its request" $
+            let reqMac = macOf $ signed Nothing plain
+                rsp = signed (Just reqMac) plain
+             in verifyTSIG held now (Just reqMac) rsp (decoded rsp) `shouldBe` TSIGOk (macOf rsp)
+
+        it "rejects a response checked against another request" $
+            let reqMac = macOf $ signed Nothing plain
+                rsp = signed (Just reqMac) plain
+                wrong = Opaque.fromByteString $ BS.replicate 32 0
+             in verifyTSIG held now (Just wrong) rsp (decoded rsp) `shouldBe` TSIGFailed BADSIG
+
+        it "rejects a message a byte of which was changed" $
+            -- A byte of the header: changing one of a name instead is
+            -- also refused, but as BADKEY, since the owner name of the
+            -- record is a pointer into the question and moves with it.
+            let bs = flipBit 3 $ signed Nothing plain
+             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADSIG
+
+        it "rejects one whose question was changed under it" $
+            let bs = flipBit 20 $ signed Nothing plain
+             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADKEY
+
+        it "rejects one signed with another secret" $
+            let bs = signedWith other Nothing plain
+             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADSIG
+
+        it "says BADKEY for a key it does not hold" $
+            let bs = signedWith stranger Nothing plain
+             in verifyTSIG held now Nothing bs (decoded bs) `shouldBe` TSIGFailed BADKEY
+
+        it "says BADTIME when the clocks are too far apart" $
+            let bs = signed Nothing plain
+             in verifyTSIG held (now + 301) Nothing bs (decoded bs) `shouldBe` TSIGFailed BADTIME
+
+        it "says nothing is there when nothing is" $
+            verifyTSIG held now Nothing (encode plain) plain `shouldBe` TSIGMissing
+
+        it "puts the record last, where RFC 8945 Sec 5.1 wants it" $
+            (rrtype . last . additional . decoded) (signed Nothing plain) `shouldBe` TSIG
+
+        it "keeps the identifier of the message it signs" $
+            (tsig_original_id <$> tsigOf (signed Nothing plain)) `shouldBe` Just (identifier plain)
+
+    -- RFC 8945 Sec 5.3.1: after the first, a message is bound to the
+    -- one before it and to every unsigned message in between.
+    describe "a chain of messages" $ do
+        it "accepts a second message bound to the first" $
+            let first' = signed Nothing plain
+                firstMac = macOf first'
+                body = encode plain
+                (rr, _) = signTSIGCont key now defaultFudge firstMac [body]
+                second' = encode $ withRR rr plain
+             in verifyTSIGCont held now firstMac [] second' (decoded second')
+                    `shouldBe` TSIGOk (macOf second')
+
+        it "takes in the messages that carried no record" $
+            let firstMac = macOf $ signed Nothing plain
+                body = encode plain
+                (rr, _) = signTSIGCont key now defaultFudge firstMac [body, body, body]
+                third = encode $ withRR rr plain
+             in verifyTSIGCont held now firstMac [body, body] third (decoded third)
+                    `shouldBe` TSIGOk (macOf third)
+
+        it "rejects one that lost a message in between" $
+            let firstMac = macOf $ signed Nothing plain
+                body = encode plain
+                (rr, _) = signTSIGCont key now defaultFudge firstMac [body, body, body]
+                third = encode $ withRR rr plain
+             in verifyTSIGCont held now firstMac [body] third (decoded third)
+                    `shouldBe` TSIGFailed BADSIG
+
+----------------------------------------------------------------
+
+now :: EpochTime
+now = 1700000000
+
+plain :: DNSMessage
+plain =
+    defaultQuery
+        { identifier = 0xbeef
+        , question = Question "example.jp." AXFR IN
+        }
+
+held :: Domain -> Maybe TSIGKey
+held n
+    | n == tsigKeyName key = Just key
+    | otherwise = Nothing
+
+stranger :: TSIGKey
+stranger = key{tsigKeyName = "nobody.example.jp."}
+
+flipBit :: Int -> BS.ByteString -> BS.ByteString
+flipBit i bs =
+    BS.concat [BS.take i bs, BS.singleton (BS.index bs i `xor` 1), BS.drop (i + 1) bs]
+
+withRR :: ResourceRecord -> DNSMessage -> DNSMessage
+withRR rr m = m{additional = additional m ++ [rr]}
+
+signedWith :: TSIGKey -> Maybe Opaque -> DNSMessage -> BS.ByteString
+signedWith k mreq m = encode $ withRR rr m
+  where
+    (rr, _) = signTSIG k now defaultFudge mreq (encode m)
+
+signed :: Maybe Opaque -> DNSMessage -> BS.ByteString
+signed = signedWith key
+
+decoded :: BS.ByteString -> DNSMessage
+decoded bs = case decode bs of
+    Right m -> m
+    Left e -> error $ show e
+
+tsigOf :: BS.ByteString -> Maybe RD_TSIG
+tsigOf bs = case reverse $ additional $ decoded bs of
+    rr : _ -> fromRData $ rdata rr
+    _ -> Nothing
+
+macOf :: BS.ByteString -> Opaque
+macOf bs = maybe (error "no TSIG") tsig_mac $ tsigOf bs
 
 ----------------------------------------------------------------
 
