@@ -94,7 +94,15 @@ response Proto{..} zoneAlist sa query dom = case findZoneAlist dom zoneAlist of 
     Nothing -> sendReply sa $ replyRefused query
     Just (_, zoneref) -> do
         zone <- readIORef zoneref
-        sendReply sa $ replyQuery query $ zoneDB zone
+        -- A zone whose source could not be loaded holds the empty
+        -- database, whose apex is the root, so every name in it would be
+        -- answered with an authoritative NXDOMAIN and the placeholder
+        -- SOA of that database.  We would be denying the existence of
+        -- names we simply know nothing about, and downstream caches
+        -- would keep the denial.
+        if zoneReady zone
+            then sendReply sa $ replyQuery query $ zoneDB zone
+            else sendReply sa $ replyServFail query
 
 handleNotify :: Proto -> ZoneAlist -> SockAddr -> DNSMessage -> IO ()
 handleNotify Proto{..} zoneAlist sa query = case lookup dom zoneAlist of -- exact match
@@ -119,3 +127,11 @@ replyQuery query db = encode $ getAnswer db query
 
 replyRefused :: DNSMessage -> ByteString
 replyRefused query = encode $ (fromQuery query){rcode = Refused}
+
+-- | We are configured for this zone but have nothing to say about it.
+--   Not authoritative: there is no data to be authoritative about.
+replyServFail :: DNSMessage -> ByteString
+replyServFail query = encode reply{rcode = ServFail, flags = flgs}
+  where
+    reply = fromQuery query
+    flgs = (flags reply){authAnswer = False}

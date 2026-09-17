@@ -132,4 +132,7 @@ syncZone env zoneref = loopLogErr env WARNING go
 notifyWithZone :: Env -> IORef Zone -> IO ()
 notifyWithZone env zoneref = do
     Zone{..} <- readIORef zoneref
-    mapM_ (notify env $ dbZone zoneDB) $ zoneNotifyAddrs
+    -- The name comes from the configuration, not from the database: the
+    -- empty database of a zone which failed to load carries the root as
+    -- its apex, and we would be notifying our secondaries about ".".
+    when zoneReady $ mapM_ (notify env zoneName) zoneNotifyAddrs

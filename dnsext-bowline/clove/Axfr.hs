@@ -29,7 +29,9 @@ tcpAllowAXFR sa dom zoneAlist = case List.lookup dom zoneAlist of -- exact match
     Nothing -> return Nothing
     Just zoneref -> do
         zone <- readIORef zoneref
-        if accessControl zone
+        -- Transferring a zone which is not loaded would hand out the
+        -- empty database, that is a zero record AXFR response.
+        if zoneReady zone && accessControl zone
             then return $ Just zone
             else return Nothing
   where
