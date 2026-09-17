@@ -4,8 +4,8 @@
 
 module KeyFile where
 
-import Control.Monad
 import qualified Control.Exception as E
+import Control.Monad
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C8
 import Data.List (isSuffixOf, sortBy)

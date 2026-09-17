@@ -3,8 +3,8 @@
 
 module Serial where
 
-import qualified Data.ByteString.Char8 as C8
 import DNS.Types
+import qualified Data.ByteString.Char8 as C8
 import System.FilePath
 import qualified System.IO.Error as E
 import Text.Read

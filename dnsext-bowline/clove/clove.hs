@@ -5,12 +5,12 @@ module Main where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (concurrently_)
+import qualified Control.Exception as E
 import Control.Monad
 import DNS.Do53.Internal
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
-import qualified Control.Exception as E
 import System.Directory
 import System.Environment (getArgs, getProgName)
 import System.Exit (exitFailure)

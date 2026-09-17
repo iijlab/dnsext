@@ -12,8 +12,8 @@ module Zone (
 
 import Control.Concurrent.STM
 import qualified Control.Exception as E
-import Data.IORef
 import Data.Function (on)
+import Data.IORef
 import Data.IP
 import Data.IP.RouteTable
 import Data.List
@@ -102,8 +102,9 @@ newZone env zoneconf@ZoneConf{..} = do
   where
     zone = fromRepresentation cnf_zone
     source = readSource zoneconf
-    withZoneName action = action `E.catchIOError` \e ->
-        E.ioError $ E.ioeSetErrorString e (cnf_zone ++ ": " ++ E.ioeGetErrorString e)
+    withZoneName action =
+        action `E.catchIOError` \e ->
+            E.ioError $ E.ioeSetErrorString e (cnf_zone ++ ": " ++ E.ioeGetErrorString e)
 
 fromFile :: Source -> Bool
 fromFile (FromFile _) = True
