@@ -82,15 +82,20 @@ transfer Env{..} Proto{..} zone sa query = do
 
 ----------------------------------------------------------------
 
-client :: Env -> Maybe Serial -> IP -> Domain -> IO [ResourceRecord]
-client env Nothing ip dom = axfrQuery env ip dom
+-- | Transferring the zone when the upstream has something newer than
+--   the serial given.  'Nothing' means there is nothing to transfer --
+--   because the upstream has not moved on, or because it could not be
+--   asked.  It does not mean the zone is empty, and it is not an error:
+--   a failing transfer throws instead.
+client :: Env -> Maybe Serial -> IP -> Domain -> IO (Maybe [ResourceRecord])
+client env Nothing ip dom = Just <$> axfrQuery env ip dom
 client env (Just serial0) ip dom = do
     mserial <- serialQuery env ip dom
     case mserial of
-        Nothing -> return []
+        Nothing -> return Nothing
         Just serial
-            | serial > serial0 -> axfrQuery env ip dom
-            | otherwise -> return []
+            | serial > serial0 -> Just <$> axfrQuery env ip dom
+            | otherwise -> return Nothing
 
 serialQuery :: Env -> IP -> Domain -> IO (Maybe Serial)
 serialQuery env@Env{..} ip dom = withUpstream ip dom "SOA" $ do

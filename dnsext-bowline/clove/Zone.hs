@@ -89,6 +89,7 @@ newZone zoneconf@ZoneConf{..} = do
     return $
         Zone
             { zoneDB = emptyDB
+            , zoneRRs = []
             , zoneReady = False
             , zoneFromFile = fromFile source
             , zoneNotifyAddrs = notify_addrs
@@ -135,15 +136,16 @@ initSync = do
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = handleLogErr env WARNING () $ do
     Zone{..} <- readIORef zoneref
-    db <- loadSourceWithSigning env zoneName zoneSource zoneSigning
-    atomicModifyIORef' zoneref $ modify db
+    (db, rrs) <- loadSourceWithSigning env zoneName zoneSource zoneSigning zoneRRs
+    atomicModifyIORef' zoneref $ modify db rrs
   where
-    modify db zone = (zone', ())
+    modify db rrs zone = (zone', ())
       where
         zone' =
             zone
                 { zoneReady = True
                 , zoneDB = db
+                , zoneRRs = rrs
                 }
 
 ----------------------------------------------------------------
@@ -164,25 +166,32 @@ zoneDirectory zone = case toRepresentation zone of
     "." -> "root."
     rep -> init rep -- dropping the trailing dot
 
--- | This function throws 'AuthException'.
+-- | Rebuilding the zone database, signing it again if it is a signed
+--   one.  The records passed in are the ones obtained last time; they
+--   are used again when the source turns out to have nothing new, so
+--   that signing again never waits on the source changing.
+--   This function throws 'AuthException'.
 loadSourceWithSigning
     :: Env
     -> Domain
     -> Source
     -> Maybe Signing
-    -> IO DB
-loadSourceWithSigning env zone source Nothing = do
+    -> [ResourceRecord]
+    -> IO (DB, [ResourceRecord])
+loadSourceWithSigning env zone source Nothing oldRRs = do
     let zoneDir = zoneDirectory zone
     createDirectoryIfMissing True zoneDir
     mserial <- loadSerial zoneDir
-    db <- loadSource env zone mserial source >>= makeDBforSecondary zone
+    rrs <- reloadSource env zone mserial source oldRRs
+    db <- makeDBforSecondary zone rrs
     saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-    return db
-loadSourceWithSigning env zone source (Just Signing{..}) = do
+    return (db, rrs)
+loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
     let zoneDir = zoneDirectory zone
     createDirectoryIfMissing True zoneDir
     mserial <- loadSerial zoneDir
-    (soa0, soarr0, rrs) <- loadSource env zone mserial source >>= checkRRs
+    rrs0 <- reloadSource env zone mserial source oldRRs
+    (soa0, soarr0, rrs) <- checkRRs rrs0
     let ttl = soa_minimum soa0
         soa
             | byMySelf source = case mserial of
@@ -201,18 +210,38 @@ loadSourceWithSigning env zone source (Just Signing{..}) = do
     -- Stored only after the zone has been built successfully so that a
     -- failure does not inflate the serial.
     saveSerial zoneDir $ soa_serial soa
-    return db
+    return (db, rrs0)
 
 byMySelf :: Source -> Bool
 byMySelf (FromFile _) = True
 byMySelf _ = False
 
--- | This function throws 'AuthException'.
-loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO [ResourceRecord]
+-- | Reading the source, falling back on the records obtained last time
+--   when the source has nothing new.
+reloadSource
+    :: Env
+    -> Domain
+    -> Maybe Serial
+    -> Source
+    -> [ResourceRecord]
+    -> IO [ResourceRecord]
+reloadSource env zone mserial source oldRRs =
+    fromMaybe oldRRs <$> loadSource env zone sinceSerial source
+  where
+    -- With nothing to fall back on there is nothing to be gained by
+    -- asking only for what is newer: fetch the zone whatever the
+    -- stored serial says.
+    sinceSerial
+        | null oldRRs = Nothing
+        | otherwise = mserial
+
+-- | 'Nothing' means the source has nothing newer than the serial given.
+--   This function throws 'AuthException'.
+loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO (Maybe [ResourceRecord])
 loadSource env zone mserial source = case source of
     FromUpstream4 ip4 -> Axfr.client env mserial (IPv4 ip4) zone
     FromUpstream6 ip6 -> Axfr.client env mserial (IPv6 ip6) zone
-    FromFile fn -> loadZoneFile zone fn
+    FromFile fn -> Just <$> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])
 checkRRs [] = E.ioError $ E.userError "No RRs"

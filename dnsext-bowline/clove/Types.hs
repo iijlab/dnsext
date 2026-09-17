@@ -45,6 +45,9 @@ data Zone = Zone
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
     , zoneDB :: DB
+    , zoneRRs :: [ResourceRecord]
+    -- ^ Records last obtained from the source, kept so that the zone
+    --   can be signed again without transferring it again.
     , zoneReady :: Bool
     , zoneFromFile :: Bool
     , zoneNotifyAddrs :: [IP]
