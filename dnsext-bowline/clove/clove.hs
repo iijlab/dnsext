@@ -204,10 +204,13 @@ syncZone env zoneref = do
                 (a, Nothing) -> a
         -- A signal or timeout breaks this wait.
         zoneTimeoutWait mtm
+        -- A rollover which goes wrong must not stop the zone from
+        -- being loaded: that is how it would recover.
         case zoneSigning of
             Nothing -> return ()
-            Just Signing{..} -> do
-                rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
+            Just Signing{..} ->
+                handleLogErr env WARNING () $
+                    rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
         -- reading zone source, and telling the secondaries about it
         load
 
