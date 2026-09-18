@@ -104,6 +104,18 @@ spec = do
                 m' = m{additional = additional m ++ [aRR "last.example.jp."]}
              in stripTSIG (encode m') `shouldBe` Nothing
 
+        -- RFC 8945 Sec 5.2: one TSIG and no more.  A message with two
+        -- of them is dropped and answered FORMERR, not checked: the
+        -- record says what it covers, and the earlier one would be
+        -- covered by the later, which is not a thing anybody signs.
+        it "refuses one carrying two TSIGs" $
+            stripTSIG (encode $ withTSIG $ withTSIG plain) `shouldBe` Nothing
+
+        it "refuses one with a TSIG in an earlier section" $
+            let m = withTSIG plain
+                m' = m{answer = answer m ++ [tsigRR]}
+             in stripTSIG (encode m') `shouldBe` Nothing
+
         it "refuses anything too short to be a message" $
             mapM_ (\n -> stripTSIG (BS.take n whole) `shouldBe` Nothing) [0 .. 11]
 
@@ -135,18 +147,16 @@ aRR d = ResourceRecord d A IN 3600 $ rd_a "192.0.2.1"
 
 -- | The same message with a TSIG at the end of it, as it would be sent.
 withTSIG :: DNSMessage -> DNSMessage
-withTSIG m =
-    m
-        { additional =
-            additional m
-                ++ [ ResourceRecord
-                        { rrname = "key.example.jp."
-                        , rrtype = TSIG
-                        , rrclass = CL_ANY
-                        , rrttl = 0
-                        , rdata = sample
-                        }
-                   ]
+withTSIG m = m{additional = additional m ++ [tsigRR]}
+
+tsigRR :: ResourceRecord
+tsigRR =
+    ResourceRecord
+        { rrname = "key.example.jp."
+        , rrtype = TSIG
+        , rrclass = CL_ANY
+        , rrttl = 0
+        , rdata = sample
         }
 
 rd :: RD_TSIG

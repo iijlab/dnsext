@@ -147,6 +147,14 @@ spec = do
         it "says nothing is there when nothing is" $
             verifyTSIG held now Nothing (encode plain) plain `shouldBe` TSIGMissing
 
+        -- RFC 8945 Sec 5.2: a message with two of them is dropped and
+        -- answered FORMERR.  There is nothing here to check, which is
+        -- what a caller acts on -- not a MAC which happens not to match.
+        it "will not check a message carrying two TSIGs" $
+            let one = decoded $ signed Nothing plain
+                two = encode $ withRR (last $ additional one) one
+             in verifyTSIG held now Nothing two (decoded two) `shouldBe` TSIGMissing
+
         it "puts the record last, where RFC 8945 Sec 5.1 wants it" $
             (rrtype . last . additional . decoded) (signed Nothing plain) `shouldBe` TSIG
 

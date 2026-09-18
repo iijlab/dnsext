@@ -31,7 +31,7 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Short as Short
 import Data.Either
 import Data.Function (on)
-import Data.List (groupBy, nub, partition, sort)
+import Data.List (group, groupBy, partition, sort)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromJust)
 import qualified Data.Set as Set
@@ -580,8 +580,12 @@ makeRRSetSigGroup :: Domain -> [RRSetSig] -> [((Domain, [Label]), [RRSetSig])]
 makeRRSetSigGroup zone rrs0 = map (\xs -> (getLabels xs, xs)) rrss
   where
     n = labelsCount zone
+    -- One of each, which the sort has already put together.  This
+    -- was 'nub', whose cost is the square of the number of RRsets: a
+    -- zone of sixty thousand records took fifty seconds to load, half
+    -- of it here.
     rrs :: [RRSetSig]
-    rrs = nub $ sort rrs0
+    rrs = map unsafeHead $ group $ sort rrs0
     rrss :: [[RRSetSig]]
     rrss = groupBy ((==) `on` rrsetsigName) rrs
     getLabels xs = (name, ls)

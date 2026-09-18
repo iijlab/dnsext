@@ -52,6 +52,14 @@ data Zone = Zone
     --   can be signed again without transferring it again.
     , zoneReady :: Bool
     , zoneFromFile :: Bool
+    , zoneAnswered :: EpochTime
+    -- ^ When the source last answered.  RFC 1035 Sec 3.3.13 counts the
+    --   expire of the zone from it: a secondary whose source has said
+    --   nothing for that long is no longer authoritative for the zone.
+    , zoneFailing :: Bool
+    -- ^ Whether the last attempt to reach the source failed.  RFC 1035
+    --   Sec 3.3.13 has the retry interval, not the refresh interval,
+    --   come after one that did.
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
@@ -80,6 +88,12 @@ data Env = Env
     { envPutLines :: PutLines IO
     }
 
+-- | What a log line is about, for a server which holds several zones:
+--   it says little by reporting that some file or other could not be
+--   read.
+zoneLabel :: Domain -> String
+zoneLabel zone = toRepresentation zone ++ ": "
+
 ----------------------------------------------------------------
 
 -- | What the TSIG on a message came to (RFC 8945 Sec 5.2).
@@ -100,6 +114,16 @@ data Sender
 senderKey :: Sender -> Maybe TSIGKey
 senderKey Unsigned = Nothing
 senderKey (SignedWith key _ _) = Just key
+
+-- | What came of going to the upstream for the zone.
+data FromUpstream
+    = -- | It answered, and this is the zone
+      Transferred [ResourceRecord]
+    | -- | It answered, and has nothing newer than what we hold
+      Unchanged
+    | -- | It did not answer, or not in a way we would take.  Not an
+      --   error: the zone goes on being served until it expires.
+      Unreachable
 
 -- | What came of asking whether a transfer may go ahead.
 data Transfer

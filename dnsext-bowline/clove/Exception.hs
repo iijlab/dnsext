@@ -5,6 +5,7 @@ module Exception (
     handleLogErr,
     handleLogErrIn,
     logSomeErr,
+    logSomeErrIn,
 ) where
 
 import Control.Concurrent (threadDelay)

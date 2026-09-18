@@ -153,9 +153,12 @@ tsigTimers RD_TSIG{..} = runBuilder 8 $ \wbuf _ -> do
 --
 --   'Nothing' unless the message really does end in a TSIG record, as
 --   RFC 8945 Sec 5.1 requires of one, and unless every name and length
---   on the way to it stays inside the message.  The contents of the
---   record come from the decoder as usual; only the octets are wanted
---   here.
+--   on the way to it stays inside the message.  'Nothing' as well for a
+--   message carrying a TSIG anywhere else, or more than one of them,
+--   which Sec 5.2 has dropped and answered FORMERR rather than checked:
+--   it says what the one record covers, and two of them say nothing at
+--   all.  The contents of the record come from the decoder as usual;
+--   only the octets are wanted here.
 stripTSIG :: ByteString -> Maybe ByteString
 stripTSIG bs = do
     guard $ BS.length bs >= 12
@@ -166,15 +169,18 @@ stripTSIG bs = do
     guard $ ar >= 1
     afterQs <- foldM (\i _ -> skipQuestion i) 12 [1 .. qd]
     -- Every record but the last one, which is the one we are after.
-    at <- foldM (\i _ -> skipRecord i) afterQs [1 .. an + ns + ar - 1]
+    -- Sec 5.2: exactly one TSIG, so one before the end is as bad as
+    -- none at the end.
+    at <- foldM (\i _ -> skipOrdinary i) afterQs [1 .. an + ns + ar - 1]
     typeAt <- skipName at
     typ <- word16At typeAt
-    guard $ typ == fromIntegral (fromTYPE TSIG)
+    guard $ typ == tsigType
     -- Sec 5.1: the TSIG is the last record there is.
     end <- skipRecord at
     guard $ end == BS.length bs
     return $ setARCOUNT (ar - 1) $ BS.take at bs
   where
+    tsigType = fromIntegral $ fromTYPE TSIG
     len = BS.length bs
     octet :: Int -> Maybe Word8
     octet i = if 0 <= i && i < len then Just (BS.index bs i) else Nothing
@@ -203,6 +209,14 @@ stripTSIG bs = do
         -- type, class, TTL, then the length of what follows
         rdlen <- word16At (j + 8)
         fitting (j + 10 + rdlen)
+    -- A record which is not a TSIG, since a TSIG here is not ours to
+    -- take.
+    skipOrdinary :: Int -> Maybe Int
+    skipOrdinary i = do
+        j <- skipName i
+        typ <- word16At j
+        guard $ typ /= tsigType
+        skipRecord i
     fitting :: Int -> Maybe Int
     fitting i = if i <= len then Just i else Nothing
     setARCOUNT :: Int -> ByteString -> ByteString

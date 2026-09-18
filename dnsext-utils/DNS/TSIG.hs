@@ -50,6 +50,7 @@ import qualified Crypto.MAC.HMAC as HMAC
 import Data.Bits (shiftR, xor, (.|.))
 import Data.ByteArray (convert)
 import qualified Data.ByteString as BS
+import Data.List (foldl')
 import Data.Word (Word16, Word64)
 
 import DNS.Types

@@ -17,6 +17,7 @@ import System.Exit (exitFailure)
 import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hPutStrLn, hSetBuffering, openFile, stderr)
 import System.IO.Error (ioeGetErrorString, isUserError)
 import System.Posix (Handler (Catch), installHandler, sigHUP)
+import qualified System.TimeManager as T
 
 import DNS.Auth.Algorithm
 import DNS.Log
@@ -51,7 +52,7 @@ main = reportingError $ do
     --
     withLogger Config{..} $ \env reopenLog -> do
         keys <- loadTSIGKeys env cnf_tsig_file
-        envPutLines env INFO Nothing [show (length keys) ++ " TSIG key(s)"]
+        envPutLines env INFO Nothing [show (countTSIGKeys keys) ++ " TSIG key(s)"]
         zones <- newZones env keys zonelist
         zoneAlist <- toZoneAlist zones
         let (_, zonerefs) = unzip zoneAlist
@@ -152,6 +153,44 @@ udpReplyLimit query = fromIntegral $ case ednsHeader query of
 
 ----------------------------------------------------------------
 
+-- | How long a TCP connection may sit idle before it is closed.
+--
+--   RFC 7766 Sec 6.2.3 asks for an idle period "on the order of
+--   seconds" and for at least a few of them, so that a client can make
+--   the SOA and the AXFR of one refresh on one connection -- which RFC
+--   1035 Sec 4.2.2 asked for first, along with not closing a connection
+--   until what was asked for has been answered.
+--
+--   Idle is the word.  The same value used to run from the moment the
+--   connection was accepted, whatever was happening on it, because the
+--   timeout handle the server is handed was never touched: a transfer to
+--   a far end which read it slowly was cut in half, and a client asking
+--   a question every few seconds was cut off in the middle of a
+--   conversation.  Every message received and every message sent now
+--   puts the deadline off.
+--
+--   Thirty seconds rather than the ten it was, which is also what BIND
+--   uses.  A send which blocks because the far end is reading slowly
+--   cannot say so until it completes, and a peer whose window updates
+--   come in large steps can hold one send for a good many seconds; ten
+--   was inside that range.
+tcpIdleTimeout :: Int
+tcpIdleTimeout = 30
+
+-- | How long the far end is given to take what has already been written
+--   to it, once clove is done with the connection, in milliseconds.
+--
+--   The kernel takes a message from us as soon as there is room in the
+--   socket buffer, so a transfer to a peer which reads slowly is
+--   finished being written while some hundreds of kilobytes of it are
+--   still on their way.  Closing the connection then loses them.  This
+--   is the grace 'gracefulClose' gives the peer to catch up before the
+--   descriptor goes; the five seconds it would use by default is not
+--   enough for a peer on a slow link, which is the only kind that needs
+--   it.
+tcpDrainTimeout :: Int
+tcpDrainTimeout = 30 * 1000
+
 tcpServer
     :: Env
     -> TSIGKeys
@@ -160,15 +199,18 @@ tcpServer
     -> HostName
     -> IO ()
 tcpServer env keys zoneAlist port addr =
-    runTCPServer 10 (Just addr) port $
-        \_tmgr _h s -> do
+    runTCPServerWithSettings settings tcpIdleTimeout (Just addr) port $
+        \_tmgr alive s -> do
             let proto =
                     Proto
                         { recvQuery = do
                             bs <- recvVC (32 * 1024) $ recvTCP s
+                            T.tickle alive
                             sa <- getPeerName s
                             return (bs, sa)
-                        , sendReply = \_sa bs -> sendVC (sendTCP s) bs
+                        , sendReply = \_sa bs -> do
+                            sendVC (sendTCP s) bs
+                            T.tickle alive
                         , allowAXFR = Auth.tcpAllowAXFR
                         , protoName = "TCP"
                         , recvErrorFatal = True
@@ -176,6 +218,8 @@ tcpServer env keys zoneAlist port addr =
                           replyLimit = const Nothing
                         }
             Auth.server env keys proto zoneAlist
+  where
+    settings = defaultServerSettings{settingsGracefulCloseTimeout = tcpDrainTimeout}
 
 ----------------------------------------------------------------
 
@@ -198,6 +242,10 @@ syncZone env zoneref = do
                 -- Source is from file. No timeout.
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
+                -- RFC 1035 Sec 3.3.13: what comes after an attempt which
+                -- failed is the retry interval, which is the shorter of
+                -- the two and is there to get the zone back sooner.
+                | zoneFailing = Just $ fromIntegral $ soa_retry $ dbRD_SOA zoneDB
                 | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
             -- Key rollover.  A signed zone has to wake up for this even
             -- when its source never changes.
