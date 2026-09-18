@@ -188,6 +188,7 @@ executable clove
         iproute,
         network-run >= 0.6.0 && < 0.7,
         stm,
+        time-manager,
         unix,
         unix-time
 
