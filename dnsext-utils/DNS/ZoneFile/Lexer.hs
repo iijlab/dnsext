@@ -222,17 +222,27 @@ comment :: MonadParser W8 s m => m ()
 comment = void (many spc *> lineComment *> optional newline)
 
 {- FOURMOLU_DISABLE -}
+-- | One token, chosen by the byte it starts with.
+--
+--   The eight kinds used to be tried in turn, so an ordinary letter --
+--   which is most of a zone file -- was read and put back seven times
+--   before the character-string branch took it.  The first byte says
+--   which kind it can be, so it is looked at once and only the branches
+--   it allows are tried.  A dollar still falls back to a
+--   character-string, since "$FOO" is one.
 {-# INLINEABLE lexerToken #-}
 lexerToken :: MonadParser W8 s m => m Token
-lexerToken =
-    Directive <$> directive     <|>
-    At <$ byte _at              <|>
-    LParen <$ byte _parenleft   <|>
-    RParen <$ byte _parenright  <|>
-    Blank <$ some spc           <|>
-    Dot <$ byte _period         <|>
-    CS <$> lex_cstring          <|>
-    Comment <$ comment
+lexerToken = peek >>= starting
+  where
+    starting c
+        | c == _at          = At <$ token
+        | c == _parenleft   = LParen <$ token
+        | c == _parenright  = RParen <$ token
+        | c == _period      = Dot <$ token
+        | isSpc c           = Blank <$ some spc
+        | c == _semicolon   = Comment <$ comment
+        | c == _dollar      = Directive <$> directive <|> CS <$> lex_cstring
+        | otherwise         = CS <$> lex_cstring
 {- FOURMOLU_ENABLE -}
 
 -- |

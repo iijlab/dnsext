@@ -85,6 +85,17 @@ parseError s = do
         | lin < 0    = ""
         | otherwise  = "line " ++ show lin ++ ", column " ++ show col ++ ": "
 
+-- | The token which comes next, left where it is.  'lookAhead' 'token'
+--   does the same by taking it and putting the input and the position
+--   back; this reads and writes nothing, which is what a parser wants
+--   when it is deciding which way to go.
+{-# INLINEABLE peek #-}
+peek :: MonadParser t s m => m t
+peek = caseCons cons nil =<< getInput
+  where
+    cons t _ = pure t
+    nil = parseError "peek: eof"
+
 {-# INLINEABLE token #-}
 token :: MonadParser t s m => m t
 token = caseCons cons nil =<< getInput
@@ -119,8 +130,9 @@ lookAhead px = do
 satisfy :: (Show t, MonadParser t s m) => String -> (t -> Bool) -> m t
 satisfy name p = do
     t <- token
-    guard (p t) <|> parseError ("satisfy: not satisfied, <" ++ name ++ "> predicate against " ++ show t)
-    pure t
+    if p t
+        then pure t
+        else parseError ("satisfy: not satisfied, <" ++ name ++ "> predicate against " ++ show t)
 
 {-# INLINEABLE this #-}
 this :: (Eq t, Show t, MonadParser t s m) => t -> m t
