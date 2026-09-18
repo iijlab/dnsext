@@ -56,10 +56,15 @@ runParser p = Poly.runParser . runStateT p
 
 instance MonadParser Token [Token] Parser where
     getInput = lift getInput
+    {-# INLINE getInput #-}
     putInput = lift . putInput
+    {-# INLINE putInput #-}
     raiseParser = lift . raiseParser
+    {-# INLINE raiseParser #-}
     getPos = lift getPos
+    {-# INLINE getPos #-}
     putPos = lift . putPos
+    {-# INLINE putPos #-}
 
 setCx :: (a -> Context -> Context) -> a -> Parser a
 setCx set_ x = modify (set_ x) $> x

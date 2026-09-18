@@ -24,12 +24,15 @@ type Parser a = Poly.Parser LBS a
 byte_token :: Parser Word8
 byte_token = token
 
+{-# INLINEABLE byte #-}
 byte :: MonadParser W8 s m => Word8 -> m Word8
 byte = this
 
+{-# INLINEABLE charByte #-}
 charByte :: MonadParser W8 s m => Char -> m Word8
 charByte c = satisfy "charByte" ((== c) . w8toChar)
 
+{-# INLINEABLE string #-}
 string :: MonadParser W8 s m => String -> m [Word8]
 string = mapM charByte
 
@@ -59,6 +62,7 @@ isNewline = (||) <$> (== _cr) <*> (== _lf)
 -- Right ((),"pqr")
 -- >>> isLeft $ runParser spc "abc"
 -- True
+{-# INLINEABLE spc #-}
 spc :: MonadParser W8 s m => m ()
 spc = void $ satisfy "tab or space" isSpc
 
@@ -68,6 +72,7 @@ spc = void $ satisfy "tab or space" isSpc
 -- Right ((),"")
 -- >>> isLeft $ runParser lineComment "abc; example"
 -- True
+{-# INLINEABLE lineComment #-}
 lineComment :: MonadParser W8 s m => m ()
 lineComment = void( byte _semicolon *> many not_nl )
   where not_nl = satisfy "not newline" $ not . isNewline
@@ -79,6 +84,7 @@ lineComment = void( byte _semicolon *> many not_nl )
 -- Right ((),"")
 -- >>> runParser newline "\r"
 -- Right ((),"")
+{-# INLINEABLE newline #-}
 newline :: MonadParser W8 s m => m ()
 newline =
     void
@@ -96,6 +102,7 @@ newline =
 -- True
 -- >>> all isLeft $ map (runParser (cstringbSimple <* eof) . fromString . (:"")) ".;()\\\" \n"
 -- True
+{-# INLINEABLE cstringbSimple #-}
 cstringbSimple :: MonadParser W8 s m => m Word8
 cstringbSimple = satisfy (notchars ++ " && not `space` && not `newline` && isPrint && isAscii") check
   where
@@ -106,6 +113,7 @@ cstringbSimple = satisfy (notchars ++ " && not `space` && not `newline` && isPri
         not (isNewline c) && isPrint c && isAscii c
 {- FOURMOLU_ENABLE -}
 
+{-# INLINEABLE backslash #-}
 backslash :: MonadParser W8 s m => m ()
 backslash = void $ byte _backslash
 
@@ -119,6 +127,7 @@ backslash = void $ byte _backslash
 -- True
 -- >>> isLeft $ runParser cstringbEscaped "\\\n"
 -- True
+{-# INLINEABLE cstringbEscaped #-}
 cstringbEscaped :: MonadParser W8 s m => m Word8
 cstringbEscaped = backslash *> satisfy "not isDigit && not `newline` && isPrint && isAscii || tab" check
   where check c = not (isDigit c) && not (isNewline c) && isPrint c && isAscii c || c == _tab
@@ -132,6 +141,7 @@ cstringbEscaped = backslash *> satisfy "not isDigit && not `newline` && isPrint 
 -- >>> octProp i = runParser cstringbOct (escapedOct i) == Right (i, "")
 -- >>> all octProp [0..255]
 -- True
+{-# INLINEABLE cstringbOct #-}
 cstringbOct :: MonadParser W8 s m => m Word8
 cstringbOct = backslash *> (replicateM 3 oct >>= getOct)
   where
@@ -146,15 +156,18 @@ cstringbOct = backslash *> (replicateM 3 oct >>= getOct)
 -- Right (9,"")
 -- >>> runParser cstringByte "\\200"
 -- Right (128,"")
+{-# INLINEABLE cstringByte #-}
 cstringByte :: MonadParser W8 s m => m Word8
 cstringByte =
     cstringbSimple    <|>
     cstringbOct       <|>
     cstringbEscaped
 
+{-# INLINEABLE quote #-}
 quote :: MonadParser W8 s m => m ()
 quote = void $ byte _quotedbl
 
+{-# INLINEABLE quotedByte #-}
 quotedByte :: MonadParser W8 s m => m Word8
 quotedByte =
     cstringByte  <|>
@@ -166,6 +179,7 @@ quotedByte =
         || c == _tab
 {- FOURMOLU_ENABLE -}
 
+{-# INLINEABLE directive #-}
 directive :: MonadParser W8 s m => m Directive
 directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 
@@ -176,6 +190,7 @@ directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 -- Right ("abc","")
 -- >>> runParser lex_cstring "\"y.z\""
 -- Right ("y.z","")
+{-# INLINEABLE lex_cstring #-}
 lex_cstring :: MonadParser W8 s m => m CString
 lex_cstring =
     cstringW8 <$>
@@ -183,6 +198,7 @@ lex_cstring =
       quote *> many quotedByte <* quote )
 {- FOURMOLU_ENABLE -}
 
+{-# INLINEABLE comment #-}
 comment :: MonadParser W8 s m => m ()
 comment = void (many spc *> lineComment *> optional newline)
 
@@ -195,12 +211,14 @@ comment = void (many spc *> lineComment *> optional newline)
 -- True
 -- >>> isLeft $ runParser ehash "#"
 -- True
+{-# INLINEABLE ehash #-}
 ehash :: MonadParser W8 s m => m ()
 ehash = do
     _ <- string "\\#"
     m <- optional (lookAhead cstringByte)
     maybe (pure ()) (const $ raise "ehash: more of a character-string after \\#") m
 
+{-# INLINEABLE lexerToken #-}
 lexerToken :: MonadParser W8 s m => m Token
 lexerToken =
     Directive <$> directive     <|>
