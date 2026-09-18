@@ -1,9 +1,10 @@
 module Net where
 
 import qualified Control.Exception as E
+import Control.Monad (when)
 import qualified Data.ByteString as BS
 import Data.IORef
-import Data.IP
+import Data.IP (IP)
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -22,9 +23,19 @@ serverResolve pn addr = NE.head <$> getAddrInfo (Just hints) (Just addr) (Just p
             , addrSocketType = Datagram
             }
 
+-- | A socket to answer on, for one address of the configuration.
+--
+--   An address of one family serves that family and nothing else.  Left
+--   alone, a socket bound to @::@ would take IPv4 peers as well on most
+--   systems -- but not on all of them, and not over TCP, where
+--   network-run sets this for us: the same configuration answered a v4
+--   query over UDP and refused the same query over TCP, which is no way
+--   to run a server.  Two families means two addresses in the
+--   configuration, and it means the same thing for both transports.
 openSock :: AddrInfo -> IO Socket
 openSock ai = E.bracketOnError (openSocket ai) close $ \s -> do
     setSocketOption s ReuseAddr 1
+    when (addrFamily ai == AF_INET6) $ setSocketOption s IPv6Only 1
     bind s $ addrAddress ai
     return s
 
