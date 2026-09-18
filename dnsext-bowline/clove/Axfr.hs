@@ -193,10 +193,10 @@ axfrBatches asSent = go
 ----------------------------------------------------------------
 
 -- | Transferring the zone when the upstream has something newer than
---   the serial given.  'Nothing' means there is nothing to transfer --
---   because the upstream has not moved on, or because it could not be
---   asked.  It does not mean the zone is empty, and it is not an error:
---   a failing transfer throws instead.
+--   the serial given.  Whether it answered at all is told apart from
+--   what it said, since a zone which is not being refreshed is a zone on
+--   its way to expiring (RFC 1035 Sec 3.3.13).  A transfer which starts
+--   and then fails throws instead.
 client
     :: Env
     -> Maybe TSIGKey
@@ -204,15 +204,15 @@ client
     -> IP
     -> PortNumber
     -> Domain
-    -> IO (Maybe [ResourceRecord])
-client env mkey Nothing ip port dom = Just <$> axfrQuery env mkey ip port dom
+    -> IO FromUpstream
+client env mkey Nothing ip port dom = Transferred <$> axfrQuery env mkey ip port dom
 client env mkey (Just serial0) ip port dom = do
     mserial <- serialQuery env mkey ip port dom
     case mserial of
-        Nothing -> return Nothing
+        Nothing -> return Unreachable
         Just serial
-            | serial > serial0 -> Just <$> axfrQuery env mkey ip port dom
-            | otherwise -> return Nothing
+            | serial > serial0 -> Transferred <$> axfrQuery env mkey ip port dom
+            | otherwise -> return Unchanged
 
 -- | What serial the upstream holds, signed with the key the zone names
 --   where it names one (RFC 8945).  Built here rather than asked of the

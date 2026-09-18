@@ -52,6 +52,10 @@ data Zone = Zone
     --   can be signed again without transferring it again.
     , zoneReady :: Bool
     , zoneFromFile :: Bool
+    , zoneAnswered :: EpochTime
+    -- ^ When the source last answered.  RFC 1035 Sec 3.3.13 counts the
+    --   expire of the zone from it: a secondary whose source has said
+    --   nothing for that long is no longer authoritative for the zone.
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
@@ -100,6 +104,16 @@ data Sender
 senderKey :: Sender -> Maybe TSIGKey
 senderKey Unsigned = Nothing
 senderKey (SignedWith key _ _) = Just key
+
+-- | What came of going to the upstream for the zone.
+data FromUpstream
+    = -- | It answered, and this is the zone
+      Transferred [ResourceRecord]
+    | -- | It answered, and has nothing newer than what we hold
+      Unchanged
+    | -- | It did not answer, or not in a way we would take.  Not an
+      --   error: the zone goes on being served until it expires.
+      Unreachable
 
 -- | What came of asking whether a transfer may go ahead.
 data Transfer

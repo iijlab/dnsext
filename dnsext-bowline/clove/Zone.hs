@@ -23,6 +23,7 @@ import Data.Maybe
 import GHC.Event
 import System.Directory (createDirectoryIfMissing)
 import qualified System.IO.Error as E
+import System.Posix.Time (epochTime)
 import Text.Read
 
 import DNS.Auth.Algorithm
@@ -32,6 +33,7 @@ import DNS.SEC
 import DNS.SEC.Verify
 import DNS.TSIG (TSIGKey)
 import DNS.Types
+import DNS.Types.Time (EpochTime)
 
 import Algo
 import qualified Axfr
@@ -94,12 +96,17 @@ newZone env keys zoneconf@ZoneConf{..} = do
             | cnf_allow_notify = readIP cnf_allow_notify_addrs
             | otherwise = []
     (wakeup, wait) <- initSync
+    -- Nothing has been read yet, so the expire is counted from now: a
+    -- source which never answers must not leave the zone waiting for a
+    -- refresh which already happened.
+    now <- currentTime
     return $
         Zone
             { zoneDB = emptyDB
             , zoneRRs = []
             , zoneReady = False
             , zoneFromFile = fromFile source
+            , zoneAnswered = now
             , zoneNotifyAddrs = notify_addrs
             , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
@@ -162,18 +169,61 @@ initSync = do
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = do
     zone <- readIORef zoneref
-    handleLogErrIn env WARNING (zoneLabel $ zoneName zone) () $ do
-        (db, rrs) <- loadSourceWithSigning env zone
-        atomicModifyIORef' zoneref $ modify db rrs
+    now <- currentTime
+    er <- trySync $ loadSourceWithSigning env zone
+    case er of
+        -- Nothing was read, so the zone stays as it was -- for as long
+        -- as it may.
+        Left se -> do
+            logSomeErrIn env WARNING (zoneLabel $ zoneName zone) se
+            keeping =<< stillOurs now zone
+        Right Loaded{..}
+            | loadedAnswered ->
+                store $ \z ->
+                    z
+                        { zoneReady = True
+                        , zoneDB = loadedDB
+                        , zoneRRs = loadedRRs
+                        , zoneAnswered = now
+                        }
+            -- The source said nothing, but what was read last time may
+            -- have been signed again, so the database is taken all the
+            -- same.
+            | otherwise -> do
+                ready <- stillOurs now zone
+                store $ \z -> z{zoneReady = ready, zoneDB = loadedDB, zoneRRs = loadedRRs}
   where
-    modify db rrs zone = (zone', ())
+    store f = atomicModifyIORef' zoneref $ \z -> (f z, ())
+    keeping ready = store $ \z -> z{zoneReady = ready}
+    -- RFC 1035 Sec 3.3.13: the expire is the longest a secondary may
+    -- go on answering for a zone whose source has stopped answering.
+    -- Past it the zone is not ours to speak for, and it is answered the
+    -- way a zone which never loaded is -- SERVFAIL, without the
+    -- authoritative bit.  A zone read from a file has no source to lose
+    -- and never expires.
+    stillOurs now zone
+        | zoneFromFile zone = pure $ zoneReady zone
+        | not (zoneReady zone) = pure False
+        | age <= expire = pure True
+        | otherwise = do
+            envPutLines
+                env
+                WARNING
+                Nothing
+                [ zoneLabel (zoneName zone)
+                    ++ "the source has not answered for "
+                    ++ show age
+                    ++ " seconds, past the expire of "
+                    ++ show expire
+                    ++ ": the zone is not ours to answer for any more"
+                ]
+            pure False
       where
-        zone' =
-            zone
-                { zoneReady = True
-                , zoneDB = db
-                , zoneRRs = rrs
-                }
+        age = now - zoneAnswered zone
+        expire = fromIntegral $ soa_expire $ dbRD_SOA $ zoneDB zone
+
+currentTime :: IO EpochTime
+currentTime = fromIntegral . fromEnum <$> epochTime
 
 ----------------------------------------------------------------
 
@@ -199,12 +249,22 @@ zoneDirectory zone = case toRepresentation zone of
     "." -> "root."
     rep -> init rep -- dropping the trailing dot
 
+-- | What reading the source came to.
+data Loaded = Loaded
+    { loadedDB :: DB
+    , loadedRRs :: [ResourceRecord]
+    , loadedAnswered :: Bool
+    -- ^ Whether the source answered.  False when it could not be reached
+    --   or would not be believed, in which case what is here is what was
+    --   here before, signed again where the zone is signed.
+    }
+
 -- | Rebuilding the zone database, signing it again if it is a signed
 --   one.  The records passed in are the ones obtained last time; they
 --   are used again when the source turns out to have nothing new, so
 --   that signing again never waits on the source changing.
 --   This function throws 'AuthException'.
-loadSourceWithSigning :: Env -> Zone -> IO (DB, [ResourceRecord])
+loadSourceWithSigning :: Env -> Zone -> IO Loaded
 loadSourceWithSigning env z = case zoneSigning z of
     Nothing -> unsigned
     Just signing -> signed signing
@@ -218,15 +278,15 @@ loadSourceWithSigning env z = case zoneSigning z of
     unsigned = do
         createDirectoryIfMissing True zoneDir
         mserial <- loadSerial zoneDir
-        rrs <- reloadSource env key zone mserial source oldRRs
+        (answered, rrs) <- reloadSource env key zone mserial source oldRRs
         db <- makeDBforSecondary zone rrs
         saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-        return (db, rrs)
+        return $ Loaded db rrs answered
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
         mserial <- loadSerial zoneDir
-        rrs0 <- reloadSource env key zone mserial source oldRRs
+        (answered, rrs0) <- reloadSource env key zone mserial source oldRRs
         (soa0, soarr0, rrs) <- checkRRs rrs0
         checkUnsigned rrs
         let soa
@@ -255,7 +315,7 @@ loadSourceWithSigning env z = case zoneSigning z of
         -- Stored only after the zone has been built successfully so
         -- that a failure does not inflate the serial.
         saveSerial zoneDir $ soa_serial soa
-        return (db, rrs0)
+        return $ Loaded db rrs0 answered
 
 -- | Refusing to sign a zone which is signed already.
 --
@@ -283,7 +343,9 @@ byMySelf (FromFile _) = True
 byMySelf _ = False
 
 -- | Reading the source, falling back on the records obtained last time
---   when the source has nothing new.
+--   when the source has nothing new -- or nothing to say at all.  The
+--   flag says which of the two it was: a source which did not answer
+--   leaves the zone one refresh nearer its expire.
 reloadSource
     :: Env
     -> Maybe TSIGKey
@@ -291,10 +353,13 @@ reloadSource
     -> Maybe Serial
     -> Source
     -> [ResourceRecord]
-    -> IO [ResourceRecord]
+    -> IO (Bool, [ResourceRecord])
 reloadSource env key zone mserial source oldRRs =
-    fromMaybe oldRRs <$> loadSource env key zone sinceSerial source
+    said <$> loadSource env key zone sinceSerial source
   where
+    said (Transferred rrs) = (True, rrs)
+    said Unchanged = (True, oldRRs)
+    said Unreachable = (False, oldRRs)
     -- With nothing to fall back on there is nothing to be gained by
     -- asking only for what is newer: fetch the zone whatever the
     -- stored serial says.
@@ -302,7 +367,8 @@ reloadSource env key zone mserial source oldRRs =
         | null oldRRs = Nothing
         | otherwise = mserial
 
--- | 'Nothing' means the source has nothing newer than the serial given.
+-- | Going to the source for the zone.  A file is always there to be
+--   read; an upstream may have nothing newer, or nothing to say.
 --   This function throws 'AuthException'.
 loadSource
     :: Env
@@ -310,11 +376,11 @@ loadSource
     -> Domain
     -> Maybe Serial
     -> Source
-    -> IO (Maybe [ResourceRecord])
+    -> IO FromUpstream
 loadSource env key zone mserial source = case source of
     FromUpstream4 ip4 port -> Axfr.client env key mserial (IPv4 ip4) port zone
     FromUpstream6 ip6 port -> Axfr.client env key mserial (IPv6 ip6) port zone
-    FromFile fn -> Just <$> loadZoneFile zone fn
+    FromFile fn -> Transferred <$> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])
 checkRRs [] = E.ioError $ E.userError "No RRs"
