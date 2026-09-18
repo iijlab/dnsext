@@ -230,24 +230,24 @@ checkTSIG Env{..} keys proto@Proto{..} sa whole msg
                 Nothing -> Right Unsigned
             -- Sec 5.2: exactly one record, and last.  Anything else is
             -- a message to answer FORMERR and no more.
-            TSIGMissing -> return $ Left $ replyFormErr proto msg
+            TSIGMissing -> do
+                envPutLines WARNING Nothing [said "a TSIG which is not one record at the end"]
+                return $ Left $ replyFormErr proto msg
             TSIGFailed fault -> do
-                envPutLines
-                    WARNING
-                    Nothing
-                    [ "    "
-                        ++ kind
-                        ++ " @"
-                        ++ peerOf sa
-                        ++ "/"
-                        ++ protoName
-                        ++ " \""
-                        ++ toRepresentation (qname $ question msg)
-                        ++ "\": "
-                        ++ show fault
-                    ]
+                envPutLines WARNING Nothing [said $ show fault]
                 return $ Left $ replyNotAuth proto msg fault now
   where
+    said why =
+        "    "
+            ++ kind
+            ++ " @"
+            ++ peerOf sa
+            ++ "/"
+            ++ protoName
+            ++ " \""
+            ++ toRepresentation (qname $ question msg)
+            ++ "\": "
+            ++ why
     carried = any ((== TSIG) . rrtype) $ additional msg
     held n = lookupTSIGKey n keys
     keyOf m = lastTSIG m >>= \(name, _) -> held name
