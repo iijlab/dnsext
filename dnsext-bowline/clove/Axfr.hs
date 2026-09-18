@@ -9,6 +9,7 @@ module Axfr (
 
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
+import Data.Functor (($>))
 import Data.IORef
 import Data.IP
 import qualified Data.IP.RouteTable as T
@@ -229,8 +230,16 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
     now <- currentTime
     ident <- singleGenId
     (out, mrequestMAC) <- asked now ident
-    eserial <- askUDP serialTries serialTimeout ip port out $ taken ident now mrequestMAC
-    either nope (return . Just) eserial
+    eanswer <- askUDP serialTries serialTimeout ip port out $ taken ident now mrequestMAC
+    case eanswer of
+        Left why -> nope why
+        -- The answer has been shown to be the upstream's, so now what it
+        -- says is read -- and read once: one which says anything but
+        -- NOERROR has answered, and asking it again would only be told
+        -- the same thing three times.
+        Right msg
+            | rcode msg /= NoErr -> nope $ show $ rcode msg
+            | otherwise -> serialOf msg
   where
     q = Question dom SOA IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
@@ -247,22 +256,22 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
                         (rr, mac) = signTSIG key now defaultFudge Nothing body
                     return (encode m{additional = additional m ++ [rr]}, Just mac)
 
+    -- An answer is one carrying our identifier and our question, from
+    -- the upstream we asked -- which the connected socket sees to -- and
+    -- signed with the key where there is one.  Anything else is not an
+    -- answer, whatever it says: a refusal is a thing anybody can send
+    -- us, and the wait goes on until one arrives which is the
+    -- upstream's.
     taken ident now mrequestMAC bs = do
         msg <- either (Left . show) Right $ decode bs
         case checkRespM q ident msg of
-            -- Not an answer to what we asked: a late one, or one from
-            -- somebody who never saw the question.  The wait goes on.
             Just e -> Left $ show e
-            Nothing -> checked now mrequestMAC bs msg
+            Nothing -> checked now mrequestMAC bs msg $> msg
 
-    -- The TSIG first, and what the message says afterwards.  A refusal
-    -- is a thing anybody can send us, so with a key set it is read only
-    -- once it has been shown to come from the upstream; what it says is
-    -- then worth a line in the log, and nothing it says is acted on.
     checked now mrequestMAC bs msg = case mkey of
-        Nothing -> answered msg
+        Nothing -> Right ()
         Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
-            TSIGOk _ -> answered msg
+            TSIGOk _ -> Right ()
             TSIGMissing -> Left "the answer is not signed"
             -- RFC 8945 Sec 5.4: an answer which says NOTAUTH carries an
             -- unsigned record naming the error, which is why one that
@@ -273,15 +282,11 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
 
     held key n = if n == tsigKeyName key then Just key else Nothing
 
-    answered msg
-        | rcode msg /= NoErr = Left $ show $ rcode msg
-        | otherwise = serialOf msg
-
     serialOf msg = case answer msg of
-        [] -> Left "no SOA in the answer"
+        [] -> nope "no SOA in the answer"
         soa : _ -> case fromRData $ rdata soa of
-            Nothing -> Left "broken SOA"
-            Just s -> Right $ soa_serial s
+            Nothing -> nope "broken SOA"
+            Just s -> return $ Just $ soa_serial s
 
 -- | How long to wait for the upstream to say what serial it holds, and
 --   how many times to ask.  What the resolver was set to before this
