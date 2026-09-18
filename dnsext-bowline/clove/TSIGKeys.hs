@@ -5,7 +5,9 @@
 module TSIGKeys (
     TSIGKeys,
     loadTSIGKeys,
+    countTSIGKeys,
     lookupTSIGKey,
+    takeTSIGTime,
 ) where
 
 import Control.Monad (when)
@@ -16,6 +18,7 @@ import Data.IORef
 import Data.List (nub, (\\))
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Word (Word64)
 import System.Directory (doesFileExist)
 import qualified System.IO.Error as E
 import System.Posix.Files (fileMode, getFileStatus)
@@ -31,12 +34,43 @@ import Types
 
 ----------------------------------------------------------------
 
--- | The keys clove holds, by the name their peers call them.
-type TSIGKeys = Map Domain TSIGKey
+-- | The keys clove holds, by the name their peers call them, with a
+--   note of the last time a message was taken under each of them.
+--
+--   One note for the whole server: a key is used over UDP and over TCP
+--   alike, and a message put back on either is the same message put
+--   back.
+data TSIGKeys = TSIGKeys
+    { keysByName :: Map Domain TSIGKey
+    , timesTaken :: IORef (Map Domain Word64)
+    }
 
 -- | Finding a key by name.
 lookupTSIGKey :: Domain -> TSIGKeys -> Maybe TSIGKey
-lookupTSIGKey = M.lookup
+lookupTSIGKey name = M.lookup name . keysByName
+
+-- | How many keys there are, for the log to say.
+countTSIGKeys :: TSIGKeys -> Int
+countTSIGKeys = M.size . keysByName
+
+-- | Whether a message signed at this time is one to take under this
+--   key, remembering it where it is (RFC 8945 Sec 5.2.3).
+--
+--   A message which arrives later carrying an earlier time than the last
+--   one taken is an older message put back, or a clock which has gone
+--   backwards, and either way it is refused.  The RFC asks for that and
+--   for no more: the same time over again is taken, so a message which
+--   is put back before anything newer has been seen goes through, and a
+--   peer signing two messages inside one second is not turned away.
+--
+--   The table holds one entry for each key clove was given, since a name
+--   which is not one of those never gets this far.
+takeTSIGTime :: TSIGKeys -> Domain -> Word64 -> IO Bool
+takeTSIGTime TSIGKeys{..} name signed = atomicModifyIORef' timesTaken taking
+  where
+    taking taken = case M.lookup name taken of
+        Just before | signed < before -> (taken, False)
+        _ -> (M.insert name signed taken, True)
 
 ----------------------------------------------------------------
 
@@ -50,7 +84,7 @@ loadTSIGKeys :: Env -> FilePath -> IO TSIGKeys
 loadTSIGKeys env file = do
     there <- doesFileExist file
     if not there
-        then return M.empty
+        then held []
         else do
             checkPrivate env file
             cnf <- loadFile file
@@ -58,7 +92,9 @@ loadTSIGKeys env file = do
             checkNothingBefore before
             keys <- mapM makeKey sections
             checkRepeatedKey $ map tsigKeyName keys
-            return $ M.fromList [(tsigKeyName k, k) | k <- keys]
+            held keys
+  where
+    held keys = TSIGKeys (M.fromList [(tsigKeyName k, k) | k <- keys]) <$> newIORef M.empty
 
 -- | A secret nobody else should be able to read.  A warning rather than
 --   a refusal: the file may be fine and the mode merely untidy, and

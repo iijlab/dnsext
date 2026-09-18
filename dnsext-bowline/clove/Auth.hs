@@ -224,19 +224,34 @@ checkTSIG Env{..} keys proto@Proto{..} sa whole msg
     | otherwise = do
         now <- currentTime
         case verifyTSIG held now Nothing whole msg of
-            TSIGOk mac -> return $ case keyOf msg of
-                Just key -> Right $ SignedWith key mac now
+            TSIGOk mac -> case lastTSIG msg of
+                Just (name, rd)
+                    | Just key <- held name -> do
+                        -- Sec 5.2.3: and it must not be a message from
+                        -- before the last one taken under this key.
+                        fresh <- takeTSIGTime keys name (tsig_time_signed rd)
+                        if fresh
+                            then return $ Right $ SignedWith key mac now
+                            else
+                                refused now $
+                                    TSIGFault
+                                        { faultError = BADTIME
+                                        , faultKeyName = name
+                                        , faultRecord = rd
+                                        , faultKey = Just key
+                                        }
                 -- Unreachable: the check just found that key.
-                Nothing -> Right Unsigned
+                _ -> return $ Right Unsigned
             -- Sec 5.2: exactly one record, and last.  Anything else is
             -- a message to answer FORMERR and no more.
             TSIGMissing -> do
                 envPutLines WARNING Nothing [said "a TSIG which is not one record at the end"]
                 return $ Left $ replyFormErr proto msg
-            TSIGFailed fault -> do
-                envPutLines WARNING Nothing [said $ show fault]
-                return $ Left $ replyNotAuth proto msg fault now
+            TSIGFailed fault -> refused now fault
   where
+    refused now fault = do
+        envPutLines WARNING Nothing [said $ show fault]
+        return $ Left $ replyNotAuth proto msg fault now
     said why =
         "    "
             ++ kind
@@ -250,7 +265,6 @@ checkTSIG Env{..} keys proto@Proto{..} sa whole msg
             ++ why
     carried = any ((== TSIG) . rrtype) $ additional msg
     held n = lookupTSIGKey n keys
-    keyOf m = lastTSIG m >>= \(name, _) -> held name
     kind = case opcode msg of
         OP_NOTIFY -> "notify"
         _ | qtype (question msg) `elem` [AXFR, IXFR] -> "axfr"
