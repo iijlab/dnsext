@@ -398,11 +398,6 @@ readSigning env dom ZoneConf{..}
 
 ----------------------------------------------------------------
 
--- | Finding the zone a name belongs to.  A name below a delegation
---   point belongs to the zone below it, so the most specific of the
---   configured zones wins.  Taking the first match instead made
---   \"www.sub.example.jp\" land in \"example.jp\" whenever that zone
---   happened to be written first in the configuration file.
 -- | Shortest a duration may be, in seconds.  A key is published a whole
 --   rollover duration before it starts signing, so that duration has to
 --   cover the TTL of the DNSKEY RRset for resolvers to have the key by
@@ -540,6 +535,11 @@ checkPreserve preserve
 
 ----------------------------------------------------------------
 
+-- | Finding the zone a name belongs to.  A name below a delegation
+--   point belongs to the zone below it, so the most specific of the
+--   configured zones wins.  Taking the first match instead made
+--   \"www.sub.example.jp\" land in \"example.jp\" whenever that zone
+--   happened to be written first in the configuration file.
 findZoneAlist :: Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
 findZoneAlist dom alist = case filter (\(k, _) -> dom `isSubDomainOf` k) alist of
     [] -> Nothing
