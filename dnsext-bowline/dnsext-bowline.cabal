@@ -10,6 +10,8 @@ data-files:
     bowline/local-example.conf
     bowline/stub-example.conf
     bowline/svcb-example.conf
+    clove/clove.conf
+    clove/tsig.conf
 
 extra-source-files:
     CHANGELOG.md
