@@ -13,6 +13,7 @@ import Data.Bits ((.&.))
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as C8
 import Data.IORef
+import Data.List (nub, (\\))
 import Data.Map (Map)
 import qualified Data.Map as M
 import System.Directory (doesFileExist)
@@ -55,7 +56,9 @@ loadTSIGKeys env file = do
             cnf <- loadFile file
             let (before, sections) = splitConf "key" cnf
             checkNothingBefore before
-            M.fromList . map (\k -> (tsigKeyName k, k)) <$> mapM makeKey sections
+            keys <- mapM makeKey sections
+            checkRepeatedKey $ map tsigKeyName keys
+            return $ M.fromList [(tsigKeyName k, k) | k <- keys]
 
 -- | A secret nobody else should be able to read.  A warning rather than
 --   a refusal: the file may be fine and the mode merely untidy, and
@@ -71,6 +74,15 @@ checkPrivate env file = do
             [file ++ ": readable by others, and it holds shared secrets"]
   where
     groupOrOther = 0o077 :: FileMode
+
+-- | Refusing to hold two keys of the same name.  One of them would
+--   simply not be there, and which of the two is not something to leave
+--   to the order they were written in: a message signed with the other
+--   is answered BADKEY by a server which was told to hold it.
+checkRepeatedKey :: [Domain] -> IO ()
+checkRepeatedKey names = case nub (names \\ nub names) of
+    [] -> return ()
+    ds -> E.ioError $ E.userError $ "duplicate key: " ++ unwords (map toRepresentation ds)
 
 checkNothingBefore :: [Conf] -> IO ()
 checkNothingBefore [] = return ()
@@ -105,11 +117,17 @@ makeKey conf = do
     kc_algorithm <- get "algorithm" kc_algorithm
     kc_secret    <- get "secret"    kc_secret
     checkUnknown (kc_key ++ ": ") ref conf
+    checkRepeated (kc_key ++ ": ") conf
     fromKeyConf KeyConf{..}
 {- FOURMOLU_ENABLE -}
 
 fromKeyConf :: KeyConf -> IO TSIGKey
 fromKeyConf KeyConf{..} = do
+    -- A key with no name would be held under the root, which is nobody's
+    -- idea of a key name and which no zone setting could then name.
+    when (null kc_key) $
+        E.ioError $
+            E.userError "a key section with no name: every key needs a \"key:\" of its own"
     alg <- case algorithmFromName (fromRepresentation kc_algorithm) of
         Just a -> return a
         Nothing -> failWith $ "algorithm " ++ kc_algorithm ++ " is unknown"

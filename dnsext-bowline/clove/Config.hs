@@ -8,6 +8,7 @@ module Config (
     -- * Reading a file in the same shape
     getting,
     checkUnknown,
+    checkRepeated,
     splitConf,
 ) where
 
@@ -127,6 +128,7 @@ makeConfig def conf0 = do
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
     cnf_tsig_file <- get "tsig-file" cnf_tsig_file
     checkUnknown "" ref conf
+    checkRepeated "" conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
@@ -163,6 +165,7 @@ makeZoneConf def conf = do
     cnf_zsk_rollover_duration <- get "zsk-rollover-duration" cnf_zsk_rollover_duration
     cnf_zsk_preserve          <- get "zsk-preserve"          cnf_zsk_preserve
     checkUnknown (cnf_zone ++ ": ") ref conf
+    checkRepeated (cnf_zone ++ ": ") conf
     pure ZoneConf{..}
 
 {- FOURMOLU_ENABLE -}
@@ -187,6 +190,18 @@ checkUnknown label ref conf = do
     case nub (map fst conf) \\ known of
         [] -> pure ()
         ks -> ioError $ userError $ label ++ "unknown setting: " ++ unwords ks
+
+-- | Rejecting a setting which is given more than once.  The first one
+--   is what is read, so a line added below an earlier one to change
+--   something does nothing at all, and says nothing about it -- which is
+--   a poor way to find out that a zone is still transferring to anybody
+--   who asks.
+checkRepeated :: String -> [Conf] -> IO ()
+checkRepeated label conf = case nub (ks \\ nub ks) of
+    [] -> pure ()
+    ks' -> ioError $ userError $ label ++ "setting given more than once: " ++ unwords ks'
+  where
+    ks = map fst conf
 
 loadConfig :: FilePath -> IO (Config, [ZoneConf])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
