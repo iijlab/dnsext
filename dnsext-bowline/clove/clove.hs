@@ -32,6 +32,7 @@ import Exception
 import KeyFile
 import Net
 import Notify
+import TSIGKeys
 import Types
 import Zone
 
@@ -49,7 +50,9 @@ main = reportingError $ do
     setCurrentDirectory cnf_clove_dir
     --
     withLogger Config{..} $ \env reopenLog -> do
-        zones <- newZones env zonelist
+        keys <- loadTSIGKeys env cnf_tsig_file
+        envPutLines env INFO Nothing [show (length keys) ++ " TSIG key(s)"]
+        zones <- newZones env keys zonelist
         zoneAlist <- toZoneAlist zones
         let (_, zonerefs) = unzip zoneAlist
         -- Zone updators.  Each loads its own zone, so a source which is
@@ -61,10 +64,10 @@ main = reportingError $ do
         void $ installHandler sigHUP (Catch onHUP) Nothing
         mapM_ (void . forkIO . syncZone env) zonerefs
         -- AXFR servers: TCP
-        let as = map (tcpServer env zoneAlist (show cnf_tcp_port)) cnf_tcp_addrs
+        let as = map (tcpServer env keys zoneAlist (show cnf_tcp_port)) cnf_tcp_addrs
         -- Authoritative servers: UDP
         ss <- mapM (serverSocket cnf_udp_port) cnf_udp_addrs
-        let cs = map (udpServer env zoneAlist) ss
+        let cs = map (udpServer env keys zoneAlist) ss
         -- Run servers
         case as ++ cs of
             [] -> die "no address to listen on: set tcp-addrs and/or udp-addrs"
@@ -126,14 +129,14 @@ withLogger Config{..} body
 
 ----------------------------------------------------------------
 
-udpServer :: Env -> ZoneAlist -> Socket -> IO ()
-udpServer env zoneAlist s = Auth.server env proto zoneAlist
+udpServer :: Env -> TSIGKeys -> ZoneAlist -> Socket -> IO ()
+udpServer env keys zoneAlist s = Auth.server env keys proto zoneAlist
   where
     proto =
         Proto
             { recvQuery = NSB.recvFrom s 2048
             , sendReply = \sa bs -> void $ NSB.sendTo s bs sa
-            , allowAXFR = \_ _ _ -> return Nothing
+            , allowAXFR = \_ _ _ _ -> return TransferRefused
             , protoName = "UDP"
             , recvErrorFatal = False
             , replyLimit = Just . udpReplyLimit
@@ -151,11 +154,12 @@ udpReplyLimit query = fromIntegral $ case ednsHeader query of
 
 tcpServer
     :: Env
+    -> TSIGKeys
     -> ZoneAlist
     -> ServiceName
     -> HostName
     -> IO ()
-tcpServer env zoneAlist port addr =
+tcpServer env keys zoneAlist port addr =
     runTCPServer 10 (Just addr) port $
         \_tmgr _h s -> do
             let proto =
@@ -171,7 +175,7 @@ tcpServer env zoneAlist port addr =
                         , -- A two byte length prefix: nothing to truncate.
                           replyLimit = const Nothing
                         }
-            Auth.server env proto zoneAlist
+            Auth.server env keys proto zoneAlist
 
 ----------------------------------------------------------------
 
@@ -223,4 +227,5 @@ notifyWithZone env zoneref = do
     -- The name comes from the configuration, not from the database: the
     -- empty database of a zone which failed to load carries the root as
     -- its apex, and we would be notifying our secondaries about ".".
-    when zoneReady $ mapM_ (\ip -> notify env zoneName ip zoneNotifyPort) zoneNotifyAddrs
+    when zoneReady $
+        mapM_ (\ip -> notify env zoneNotifyKey zoneName ip zoneNotifyPort) zoneNotifyAddrs

@@ -704,9 +704,16 @@ pattern IN = CLASS 1
 pattern CH :: CLASS
 pattern CH = CLASS 3
 
+-- | Resource record class matching any class.  Not a class a record is
+--   stored under; TSIG (RFC 8945 Sec 4.2) requires it, among others.
+--   Named apart from the 'ANY' of 'TYPE', which is the same number.
+pattern CL_ANY :: CLASS
+pattern CL_ANY = CLASS 255
+
 instance Show CLASS where
     show IN = "IN"
     show CH = "CH"
+    show CL_ANY = "ANY"
     show (CLASS n) = "CLASS " ++ show n
 
 putCLASS :: CLASS -> Builder ()

@@ -4,6 +4,11 @@ module Config (
     Config (..),
     loadConfig,
     ZoneConf (..),
+
+    -- * Reading a file in the same shape
+    getting,
+    checkUnknown,
+    splitConf,
 ) where
 
 import DNS.Config
@@ -25,6 +30,7 @@ data Config = Config
     , cnf_log_file  :: Maybe FilePath
     , cnf_log_level :: Level
     , cnf_clove_dir :: FilePath
+    , cnf_tsig_file  :: FilePath
     } deriving (Show)
 
 defaultConfig :: Config
@@ -38,6 +44,7 @@ defaultConfig =
         , cnf_log_file  = Nothing
         , cnf_log_level = WARNING
         , cnf_clove_dir = "/var/clove/"
+        , cnf_tsig_file  = "tsig.conf"
         }
 
 ----------------------------------------------------------------
@@ -47,12 +54,16 @@ data ZoneConf = ZoneConf
     , cnf_notify                :: Bool
     , cnf_notify_addrs          :: [String]
     , cnf_notify_port           :: PortNumber
+    , cnf_notify_key            :: String
     , cnf_allow_notify          :: Bool
     , cnf_allow_notify_addrs    :: [String]
+    , cnf_allow_notify_key      :: String
     , cnf_allow_transfer        :: Bool
     , cnf_allow_transfer_addrs  :: [String]
+    , cnf_allow_transfer_key     :: String
     , cnf_source                :: String
     , cnf_source_port           :: PortNumber
+    , cnf_source_key            :: String
     , cnf_signing               :: Bool
     , cnf_nsec3                 :: Bool
     , cnf_ksk_algo              :: String
@@ -74,13 +85,17 @@ defaultZoneConf =
         , cnf_notify                = False
         , cnf_notify_addrs          = []
         , cnf_notify_port           = 53
+        , cnf_notify_key            = ""
         , cnf_allow_notify          = False
         , cnf_allow_notify_addrs    = []
+        , cnf_allow_notify_key      = ""
         , cnf_allow_transfer        = False
         , cnf_allow_transfer_addrs  = []
+        , cnf_allow_transfer_key     = ""
         , cnf_signing               = True
         , cnf_source                = "example.zone"
         , cnf_source_port           = 53
+        , cnf_source_key            = ""
         , cnf_nsec3                 = True
         , cnf_ksk_algo              = "ED25519"
         , cnf_ksk_size              = 0
@@ -110,11 +125,12 @@ makeConfig def conf0 = do
     cnf_log_file  <- get "log-file"  cnf_log_file
     cnf_log_level <- get "log-level" cnf_log_level
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
+    cnf_tsig_file <- get "tsig-file" cnf_tsig_file
     checkUnknown "" ref conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
-    (conf, zones) = splitConfig conf0
+    (conf, zones) = splitConf "zone" conf0
 
 makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
 makeZoneConf def conf = do
@@ -125,12 +141,16 @@ makeZoneConf def conf = do
     cnf_notify                <- get "notify"                cnf_notify
     cnf_notify_addrs          <- get "notify-addrs"          cnf_notify_addrs
     cnf_notify_port           <- get "notify-port"           cnf_notify_port
+    cnf_notify_key            <- get "notify-key"            cnf_notify_key
     cnf_allow_notify          <- get "allow-notify"          cnf_allow_notify
     cnf_allow_notify_addrs    <- get "allow-notify-addrs"    cnf_allow_notify_addrs
+    cnf_allow_notify_key      <- get "allow-notify-key"      cnf_allow_notify_key
     cnf_allow_transfer        <- get "allow-transfer"        cnf_allow_transfer
     cnf_allow_transfer_addrs  <- get "allow-transfer-addrs"  cnf_allow_transfer_addrs
+    cnf_allow_transfer_key     <- get "allow-transfer-key"    cnf_allow_transfer_key
     cnf_source                <- get "source"                cnf_source
     cnf_source_port           <- get "source-port"           cnf_source_port
+    cnf_source_key            <- get "source-key"            cnf_source_key
     cnf_signing               <- get "signing"               cnf_signing
     cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
     cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo
@@ -171,10 +191,14 @@ checkUnknown label ref conf = do
 loadConfig :: FilePath -> IO (Config, [ZoneConf])
 loadConfig file = loadFile file >>= makeConfig defaultConfig
 
-splitConfig :: [Conf] -> ([Conf], [[Conf]])
-splitConfig xs0 = (gs, zss)
+-- | Splitting a configuration into what comes before the first section
+--   and the sections themselves, a section beginning at each occurrence
+--   of the given setting.  Which is why every global setting has to be
+--   written above the first zone.
+splitConf :: String -> [Conf] -> ([Conf], [[Conf]])
+splitConf key xs0 = (gs, zss)
   where
-    p (k, _) = k == "zone"
+    p (k, _) = k == key
     (gs, os) = break p xs0
     zss = loop os
     loop [] = []

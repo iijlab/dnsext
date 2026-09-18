@@ -10,6 +10,7 @@ module DNS.Wire.Builder (
     put8,
     put16,
     put32,
+    put48,
     putInt8,
     putInt16,
     putInt32,
@@ -96,6 +97,13 @@ put16 = write16
 
 put32 :: WriteBuffer -> Word32 -> IO ()
 put32 = write32
+
+-- | Writing the low 48 bits of a 'Word64', most significant octet
+--   first.  DNS uses a 48 bit integer for a time, in TSIG.
+put48 :: WriteBuffer -> Word64 -> IO ()
+put48 wbuf w = do
+    put16 wbuf $ fromIntegral (w `shiftR` 32)
+    put32 wbuf $ fromIntegral w
 
 putInt8 :: WriteBuffer -> Int -> IO ()
 putInt8 wbuf n = write8 wbuf =<< integralCast "putInt8" n

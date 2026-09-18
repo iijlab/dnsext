@@ -28,7 +28,7 @@ module DNS.Types (
 
     -- * Question
     Question (..),
-    CLASS (IN, CH),
+    CLASS (IN, CH, CL_ANY),
     fromCLASS,
 
     -- * Resource record
@@ -148,6 +148,17 @@ module DNS.Types (
     tlsa_matching_type,
     tlsa_assoc_data,
 
+    -- *** TSIG RR
+    RD_TSIG,
+    rd_tsig,
+    tsig_algorithm,
+    tsig_time_signed,
+    tsig_fudge,
+    tsig_mac,
+    tsig_original_id,
+    tsig_error,
+    tsig_other,
+
     -- * OPT resource data
     OData (..),
     odataToOptCode,
@@ -216,6 +227,7 @@ module DNS.Types (
         OPT,
         TLSA,
         CSYNC,
+        TSIG,
         IXFR,
         AXFR,
         ANY,

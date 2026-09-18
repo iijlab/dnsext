@@ -10,6 +10,8 @@ data-files:
     bowline/local-example.conf
     bowline/stub-example.conf
     bowline/svcb-example.conf
+    clove/clove.conf
+    clove/tsig.conf
 
 extra-source-files:
     CHANGELOG.md
@@ -159,6 +161,7 @@ executable clove
                       Net
                       Notify
                       Serial
+                      TSIGKeys
                       Types
                       Zone
 
@@ -169,7 +172,9 @@ executable clove
         base,
         async,
         base16-bytestring,
+        base64-bytestring,
         bytestring,
+        containers,
         directory,
         filepath,
         network,

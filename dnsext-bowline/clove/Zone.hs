@@ -30,6 +30,7 @@ import DNS.Auth.DB
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
+import DNS.TSIG (TSIGKey)
 import DNS.Types
 
 import Algo
@@ -38,14 +39,15 @@ import Config
 import Exception
 import KeyFile
 import Serial
+import TSIGKeys
 import Types
 
 ----------------------------------------------------------------
 
-newZones :: Env -> [ZoneConf] -> IO [Zone]
-newZones env zcs = do
+newZones :: Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
+newZones env keys zcs = do
     checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone env) zcs
+    mapM (newZone env keys) zcs
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -60,14 +62,18 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: Env -> ZoneConf -> IO Zone
-newZone env zoneconf@ZoneConf{..} = do
+newZone :: Env -> TSIGKeys -> ZoneConf -> IO Zone
+newZone env keys zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
     msigning <- withZoneName $ readSigning env zone zoneconf
+    notifyKey <- withZoneName $ namedKey keys "notify-key" cnf_notify_key
+    allowNotifyKey <- withZoneName $ namedKey keys "allow-notify-key" cnf_allow_notify_key
+    sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
+    transferKey <- withZoneName $ namedKey keys "allow-transfer-key" cnf_allow_transfer_key
     -- The source is not read here.  Reading it can block for as long as
     -- an unreachable upstream takes to time out, and nothing is
     -- listening yet at this point, so every other zone would be
@@ -97,6 +103,10 @@ newZone env zoneconf@ZoneConf{..} = do
             , zoneNotifyAddrs = notify_addrs
             , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
+            , zoneNotifyKey = notifyKey
+            , zoneAllowNotifyKey = allowNotifyKey
+            , zoneSourceKey = sourceKey
+            , zoneTransferKey = transferKey
             , zoneAllowTransfer4 = t4
             , zoneAllowTransfer6 = t6
             , zoneName = zone
@@ -111,6 +121,19 @@ newZone env zoneconf@ZoneConf{..} = do
     withZoneName action =
         action `E.catchIOError` \e ->
             E.ioError $ E.ioeSetErrorString e (zoneLabel zone ++ E.ioeGetErrorString e)
+
+-- | Finding the key a setting names.  Naming one which is not in the
+--   key file is a mistake worth stopping for: the alternative is a zone
+--   which quietly goes on without the TSIG somebody asked for.
+namedKey :: TSIGKeys -> String -> String -> IO (Maybe TSIGKey)
+namedKey keys setting name
+    | null name = return Nothing
+    | otherwise = case lookupTSIGKey (fromRepresentation name) keys of
+        Just k -> return $ Just k
+        Nothing ->
+            E.ioError $
+                E.userError $
+                    setting ++ ": no key named " ++ name ++ " in the key file"
 
 fromFile :: Source -> Bool
 fromFile (FromFile _) = True
@@ -138,9 +161,9 @@ initSync = do
 
 updateZone :: Env -> IORef Zone -> IO ()
 updateZone env zoneref = do
-    Zone{..} <- readIORef zoneref
-    handleLogErrIn env WARNING (zoneLabel zoneName) () $ do
-        (db, rrs) <- loadSourceWithSigning env zoneName zoneSource zoneSigning zoneRRs
+    zone <- readIORef zoneref
+    handleLogErrIn env WARNING (zoneLabel $ zoneName zone) () $ do
+        (db, rrs) <- loadSourceWithSigning env zone
         atomicModifyIORef' zoneref $ modify db rrs
   where
     modify db rrs zone = (zone', ())
@@ -181,52 +204,58 @@ zoneDirectory zone = case toRepresentation zone of
 --   are used again when the source turns out to have nothing new, so
 --   that signing again never waits on the source changing.
 --   This function throws 'AuthException'.
-loadSourceWithSigning
-    :: Env
-    -> Domain
-    -> Source
-    -> Maybe Signing
-    -> [ResourceRecord]
-    -> IO (DB, [ResourceRecord])
-loadSourceWithSigning env zone source Nothing oldRRs = do
-    let zoneDir = zoneDirectory zone
-    createDirectoryIfMissing True zoneDir
-    mserial <- loadSerial zoneDir
-    rrs <- reloadSource env zone mserial source oldRRs
-    db <- makeDBforSecondary zone rrs
-    saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-    return (db, rrs)
-loadSourceWithSigning env zone source (Just Signing{..}) oldRRs = do
-    let zoneDir = zoneDirectory zone
-    createDirectoryIfMissing True zoneDir
-    mserial <- loadSerial zoneDir
-    rrs0 <- reloadSource env zone mserial source oldRRs
-    (soa0, soarr0, rrs) <- checkRRs rrs0
-    checkUnsigned rrs
-    let soa
-            | byMySelf source = case mserial of
-                Nothing -> soa0 -- No serial file, serial from zone file
-                Just s -> soa0{soa_serial = s <> Serial 1}
-            | otherwise = soa0
-        soarr = soarr0{rdata = toRData soa}
-        -- TTL of the DNSKEY RRset: the zone's own, taken from the apex
-        -- SOA.  Not the SOA minimum, which RFC 2308 Sec 4 redefined as
-        -- the negative caching TTL and which is commonly a few minutes;
-        -- no rule makes it the TTL of the keys.  NSEC3 does take it,
-        -- and makeDBforPrimary uses it there (RFC 5155 Sec 3).
-        keyTTL = rrttl soarr0
-    let kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
-    (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
-    signKey <- makeSigner kskKeyConfig keyInfoKSK
-    let zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
-    ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
-        loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
-    signZone <- makeSigner zskKeyConfig keyInfoZSK1
-    db <- makeDBforPrimary zone signingN3P signKey signZone (soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2])
-    -- Stored only after the zone has been built successfully so that a
-    -- failure does not inflate the serial.
-    saveSerial zoneDir $ soa_serial soa
-    return (db, rrs0)
+loadSourceWithSigning :: Env -> Zone -> IO (DB, [ResourceRecord])
+loadSourceWithSigning env z = case zoneSigning z of
+    Nothing -> unsigned
+    Just signing -> signed signing
+  where
+    zone = zoneName z
+    source = zoneSource z
+    oldRRs = zoneRRs z
+    key = zoneSourceKey z
+    zoneDir = zoneDirectory zone
+
+    unsigned = do
+        createDirectoryIfMissing True zoneDir
+        mserial <- loadSerial zoneDir
+        rrs <- reloadSource env key zone mserial source oldRRs
+        db <- makeDBforSecondary zone rrs
+        saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
+        return (db, rrs)
+
+    signed Signing{..} = do
+        createDirectoryIfMissing True zoneDir
+        mserial <- loadSerial zoneDir
+        rrs0 <- reloadSource env key zone mserial source oldRRs
+        (soa0, soarr0, rrs) <- checkRRs rrs0
+        checkUnsigned rrs
+        let soa
+                | byMySelf source = case mserial of
+                    Nothing -> soa0 -- No serial file, serial from zone file
+                    Just sr -> soa0{soa_serial = sr <> Serial 1}
+                | otherwise = soa0
+            soarr = soarr0{rdata = toRData soa}
+            -- TTL of the DNSKEY RRset: the zone's own, taken from the
+            -- apex SOA.  Not the SOA minimum, which RFC 2308 Sec 4
+            -- redefined as the negative caching TTL and which is
+            -- commonly a few minutes; no rule makes it the TTL of the
+            -- keys.  NSEC3 does take it, and makeDBforPrimary uses it
+            -- there (RFC 5155 Sec 3).
+            keyTTL = rrttl soarr0
+            kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
+            zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
+        (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
+        signKey <- makeSigner kskKeyConfig keyInfoKSK
+        ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
+            loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
+        signZone <- makeSigner zskKeyConfig keyInfoZSK1
+        db <-
+            makeDBforPrimary zone signingN3P signKey signZone $
+                soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2]
+        -- Stored only after the zone has been built successfully so
+        -- that a failure does not inflate the serial.
+        saveSerial zoneDir $ soa_serial soa
+        return (db, rrs0)
 
 -- | Refusing to sign a zone which is signed already.
 --
@@ -257,13 +286,14 @@ byMySelf _ = False
 --   when the source has nothing new.
 reloadSource
     :: Env
+    -> Maybe TSIGKey
     -> Domain
     -> Maybe Serial
     -> Source
     -> [ResourceRecord]
     -> IO [ResourceRecord]
-reloadSource env zone mserial source oldRRs =
-    fromMaybe oldRRs <$> loadSource env zone sinceSerial source
+reloadSource env key zone mserial source oldRRs =
+    fromMaybe oldRRs <$> loadSource env key zone sinceSerial source
   where
     -- With nothing to fall back on there is nothing to be gained by
     -- asking only for what is newer: fetch the zone whatever the
@@ -274,10 +304,16 @@ reloadSource env zone mserial source oldRRs =
 
 -- | 'Nothing' means the source has nothing newer than the serial given.
 --   This function throws 'AuthException'.
-loadSource :: Env -> Domain -> Maybe Serial -> Source -> IO (Maybe [ResourceRecord])
-loadSource env zone mserial source = case source of
-    FromUpstream4 ip4 port -> Axfr.client env mserial (IPv4 ip4) port zone
-    FromUpstream6 ip6 port -> Axfr.client env mserial (IPv6 ip6) port zone
+loadSource
+    :: Env
+    -> Maybe TSIGKey
+    -> Domain
+    -> Maybe Serial
+    -> Source
+    -> IO (Maybe [ResourceRecord])
+loadSource env key zone mserial source = case source of
+    FromUpstream4 ip4 port -> Axfr.client env key mserial (IPv4 ip4) port zone
+    FromUpstream6 ip6 port -> Axfr.client env key mserial (IPv6 ip6) port zone
     FromFile fn -> Just <$> loadZoneFile zone fn
 
 checkRRs :: [ResourceRecord] -> IO (RD_SOA, ResourceRecord, [ResourceRecord])

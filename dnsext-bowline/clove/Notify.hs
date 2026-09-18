@@ -1,64 +1,102 @@
-{-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Notify where
+module Notify (notify) where
 
+import qualified Control.Exception as E
 import Data.IP
-import Data.List.NonEmpty ()
 import Network.Socket (PortNumber)
-
 import qualified System.IO.Error as E
+import System.Posix.Time (epochTime)
 
 import DNS.Do53.Client
 import DNS.Do53.Internal
 import DNS.Log
+import DNS.TSIG
 import DNS.Types
+import DNS.Types.Decode
+import DNS.Types.Encode
+import DNS.Types.Time (EpochTime)
 
 import Exception
+import Net
 import Types
 
-notify :: Env -> Domain -> IP -> PortNumber -> IO (Maybe DNSMessage)
-notify Env{..} dom ip port = withNotified $ do
-    emsg <- fmap replyDNSMessage <$> resolve renv q qctl
-    case emsg of
-        Left e -> do
-            envPutLines
-                WARNING
-                Nothing
-                ["    NOTIFY " ++ peer ++ ": " ++ show e]
-            return Nothing
-        Right msg -> return $ Just msg
+----------------------------------------------------------------
+
+-- | How long to wait for a secondary to say it heard.
+notifyTimeout :: Int
+notifyTimeout = 3 * 1000000
+
+-- | How many times to say it.  RFC 1996 Sec 3.6 wants a notify
+--   repeated until it is acknowledged; this gives up sooner, since the
+--   secondary asks for the SOA on its own schedule anyway.
+notifyTries :: Int
+notifyTries = 3
+
+----------------------------------------------------------------
+
+-- | Telling a secondary that the zone has moved on.
+notify :: Env -> Maybe TSIGKey -> Domain -> IP -> PortNumber -> IO (Maybe DNSMessage)
+notify Env{..} mkey dom ip port = withNotified $ do
+    now <- currentTime
+    (out, mrequestMAC) <- asked now
+    manswer <- askUDP notifyTries notifyTimeout ip port out
+    case manswer of
+        Nothing -> unanswered "no answer"
+        Just bs -> case decode bs of
+            Left e -> unanswered $ show e
+            Right msg -> checked now mrequestMAC bs msg
   where
-    riActions =
-        defaultResolveActions
-            { ractionTimeoutTime = 3000000
-            , ractionLog = envPutLines
-            }
-    ris =
-        [ defaultResolveInfo
-            { rinfoIP = ip
-            , rinfoPort = port
-            , rinfoActions = riActions
-            , rinfoUDPRetry = 3
-            , rinfoVCLimit = 0
-            }
-        ]
-    renv =
-        ResolveEnv
-            { renvResolver = udpResolver
-            , renvConcurrent = True -- should set True if multiple RIs are provided
-            , renvResolveInfos = ris
-            }
-    peer = "@" ++ show ip ++ "#" ++ show port ++ " \"" ++ toRepresentation dom ++ "\""
     q = Question dom SOA IN
-    -- RFC 5936: DNS Zone Transfer Protocol (AXFR)
+    -- RFC 1996: an opcode of its own, and the question is the zone.
     qctl = rdFlag FlagClear <> doFlag FlagClear <> aaFlag FlagSet <> opCode OP_NOTIFY
-    -- Saying which zone and which secondary a failure belongs to.
+    peer = "@" ++ show ip ++ "#" ++ show port ++ " \"" ++ toRepresentation dom ++ "\""
+
+    asked now = do
+        let bare = encodeQuery 0 q qctl
+        case mkey of
+            Nothing -> return (bare, Nothing)
+            Just key -> case decode bare of
+                Left e -> E.ioError $ E.userError $ show e
+                Right m -> do
+                    -- Signed over what will be sent rather than over
+                    -- what was encoded a moment ago: the two are the
+                    -- same, and the MAC covers octets, so it is better
+                    -- not to have to say that they are.
+                    let body = encode m
+                        (rr, mac) = signTSIG key now defaultFudge Nothing body
+                    return (encode m{additional = additional m ++ [rr]}, Just mac)
+
+    -- The answer is only an acknowledgement, so a bad one is worth
+    -- saying out loud and no more: the zone is not riding on it.
+    checked now mrequestMAC bs msg = case mkey of
+        Nothing -> return $ Just msg
+        Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
+            TSIGOk _ -> return $ Just msg
+            TSIGMissing -> unanswered "the answer is not signed"
+            TSIGFailed fault -> unanswered $ case tsigReported msg of
+                -- Sec 5.4: a refusal comes unsigned, so what it says is
+                -- worth more than what checking it as an answer makes of
+                -- it.
+                Just e -> "the far end says " ++ show e
+                Nothing -> show fault
+
+    held key n = if n == tsigKeyName key then Just key else Nothing
+
+    unanswered why = do
+        envPutLines WARNING Nothing ["    NOTIFY " ++ peer ++ ": " ++ why]
+        return Nothing
+
     withNotified action = do
         er <- trySync action
         case er of
             Right a -> return a
-            Left se ->
-                E.ioError $
-                    E.userError $
-                        "NOTIFY " ++ peer ++ ": " ++ show se
+            Left se -> do
+                envPutLines WARNING Nothing ["    NOTIFY " ++ peer ++ ": " ++ show se]
+                return Nothing
+
+----------------------------------------------------------------
+
+currentTime :: IO EpochTime
+currentTime = fromIntegral . fromEnum <$> epochTime

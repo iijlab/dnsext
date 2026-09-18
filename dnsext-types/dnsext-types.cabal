@@ -26,6 +26,7 @@ library
         DNS.Types.Encode
         DNS.Types.Internal
         DNS.Types.Opaque
+        DNS.Types.TSIG
         DNS.Types.Time
 
     other-modules:
@@ -74,6 +75,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         DomainSpec
+        TSIGSpec
         EncodeSpec
         DecodeSpec
         RoundTripSpec

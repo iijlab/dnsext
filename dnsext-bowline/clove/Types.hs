@@ -12,7 +12,9 @@ import DNS.Auth.Algorithm
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
+import DNS.TSIG (TSIGKey)
 import DNS.Types
+import DNS.Types.Time (EpochTime)
 
 ----------------------------------------------------------------
 
@@ -53,6 +55,17 @@ data Zone = Zone
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
+    , zoneNotifyKey :: Maybe TSIGKey
+    -- ^ Key the notifies we send are signed with
+    , zoneAllowNotifyKey :: Maybe TSIGKey
+    -- ^ Key a notify must be signed with.  When there is one, the
+    --   addresses are not consulted.
+    , zoneSourceKey :: Maybe TSIGKey
+    -- ^ Key the queries to the upstream are signed with
+    , zoneTransferKey :: Maybe TSIGKey
+    -- ^ Key a transfer must be signed with.  When there is one, the
+    --   addresses below are not consulted: holding the key is what
+    --   grants the transfer.
     , zoneAllowTransfer4 :: IPRTable IPv4 Bool
     , zoneAllowTransfer6 :: IPRTable IPv6 Bool
     , zoneTimeoutWait :: TimeoutWait
@@ -69,10 +82,36 @@ data Env = Env
 
 ----------------------------------------------------------------
 
+-- | What the TSIG on a message came to (RFC 8945 Sec 5.2).
+--
+--   Checking the TSIG says who sent a message; it does not say what
+--   they may have.  That second question is answered further on, by
+--   allow-transfer-key and allow-notify-key, on a message we have
+--   already been able to place.  Either way the answer to a signed
+--   message is signed with the same key, which Sec 5.3 requires.
+data Sender
+    = -- | The message carried no TSIG, so the answer carries none
+      Unsigned
+    | -- | The key it was signed with, its MAC, which the answer has to
+      --   be bound to, and the time it was checked at
+      SignedWith TSIGKey Opaque EpochTime
+
+-- | The key a message was signed with, where it was signed at all.
+senderKey :: Sender -> Maybe TSIGKey
+senderKey Unsigned = Nothing
+senderKey (SignedWith key _ _) = Just key
+
+-- | What came of asking whether a transfer may go ahead.
+data Transfer
+    = -- | It may
+      TransferOk Zone
+    | -- | It may not, and there is nothing more to say about it
+      TransferRefused
+
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
     , sendReply :: SockAddr -> ByteString -> IO ()
-    , allowAXFR :: SockAddr -> Domain -> ZoneAlist -> IO (Maybe Zone)
+    , allowAXFR :: SockAddr -> Sender -> DNSMessage -> ZoneAlist -> IO Transfer
     , protoName :: String
     , recvErrorFatal :: Bool
     -- ^ Whether a failing 'recvQuery' means that nothing more can ever
