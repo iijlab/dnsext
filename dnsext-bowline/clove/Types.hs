@@ -88,6 +88,12 @@ data Env = Env
     { envPutLines :: PutLines IO
     }
 
+-- | What a log line is about, for a server which holds several zones:
+--   it says little by reporting that some file or other could not be
+--   read.
+zoneLabel :: Domain -> String
+zoneLabel zone = toRepresentation zone ++ ": "
+
 ----------------------------------------------------------------
 
 -- | What the TSIG on a message came to (RFC 8945 Sec 5.2).

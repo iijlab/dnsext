@@ -8,7 +8,6 @@ module Zone (
     findZoneAlist,
     toZoneAlist,
     zoneDirectory,
-    zoneLabel,
 ) where
 
 import Control.Concurrent.STM
@@ -229,12 +228,6 @@ currentTime = fromIntegral . fromEnum <$> epochTime
 
 ----------------------------------------------------------------
 
--- | What a failure was about, for the log to carry: a server holding
---   several zones says little by reporting that some file or other
---   could not be read.
-zoneLabel :: Domain -> String
-zoneLabel zone = toRepresentation zone ++ ": "
-
 -- | Directory holding the per-zone state, that is the serial file and
 --   the key files.  It must exist before anything is stored into it.
 --
@@ -306,10 +299,13 @@ loadSourceWithSigning env z = case zoneSigning z of
             keyTTL = rrttl soarr0
             kskKeyConfig = signingKSKConfig{keyConfTTL = keyTTL}
             zskKeyConfig = signingZSKConfig{keyConfTTL = keyTTL}
-        (keyInfoKSK, dnskeyrr) <- loadKSKInfo zoneDir kskKeyConfig
+        -- Asked before anything is loaded: a zone starting out has no
+        -- key to be missing, and loading makes one where there is none.
+        fresh <- startingOut zoneDir
+        (keyInfoKSK, dnskeyrr) <- loadKSKInfo env fresh zoneDir kskKeyConfig
         signKey <- makeSigner kskKeyConfig keyInfoKSK
         ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
-            loadZSKInfo zoneDir signingZSKPreserve zskKeyConfig
+            loadZSKInfo env fresh zoneDir signingZSKPreserve zskKeyConfig
         signZone <- makeSigner zskKeyConfig keyInfoZSK1
         db <-
             makeDBforPrimary zone signingN3P signKey signZone $

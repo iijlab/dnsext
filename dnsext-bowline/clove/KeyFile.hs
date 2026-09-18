@@ -19,10 +19,13 @@ import System.Posix.Files
 
 import AtomicFile
 import DNS.Config
+import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
 import DNS.Types
 import qualified DNS.Types.Opaque as Opaque
+
+import Types
 
 ----------------------------------------------------------------
 
@@ -64,18 +67,45 @@ findNonExistingFile zoneDir suffix ut0 = loop ut0
 
 ----------------------------------------------------------------
 
+-- | Whether the zone is starting out, that is whether its directory
+--   holds no key of either kind.  Asked before either kind is loaded,
+--   since loading one makes one where there is none, and a key made a
+--   moment ago says nothing about what was there before.
+startingOut :: FilePath -> IO Bool
+startingOut zoneDir = null <$> ((++) <$> keyFiles zoneDir ".ksk" <*> keyFiles zoneDir ".zsk")
+
+-- | The KSK of the zone, made if there is none.
+--
+--   A zone which has run before has keys, so a missing KSK in a
+--   directory which holds some is a KSK which has gone rather than one
+--   which was never there.  A new one is made -- there is nothing else
+--   to be done with a key whose file is gone -- but it will not match
+--   the DS the parent holds, and until a new DS is published there the
+--   zone is bogus to every validator, not only to those which cached
+--   something.  Hence the warning.
 loadKSKInfo
-    :: FilePath
+    :: Env
+    -> Bool
+    -- ^ whether the zone is starting out, and so has no key to miss
+    -> FilePath
     -> KeyConfig
     -> IO (KeyInfo, ResourceRecord)
-loadKSKInfo zoneDir keyConf = do
-    ksks <- filter (".ksk" `isSuffixOf`) <$> listDirectory zoneDir
+loadKSKInfo env fresh zoneDir keyConf = do
+    ksks <- keyFiles zoneDir ".ksk"
     case sortBy (flip compare) ksks of -- decreasing order
-        [] -> generateKSK zoneDir keyConf
+        [] -> do
+            unless fresh $
+                warn env keyConf $
+                    "the KSK is gone, so a new one is being made."
+                        ++ "  The zone stays bogus until the DS of the new key is published at the parent."
+            generateKSK zoneDir keyConf
         fn : _ -> loadKey zoneDir keyConf fn
 
 loadZSKInfo
-    :: FilePath
+    :: Env
+    -> Bool
+    -- ^ whether the zone is starting out, and so has no keys to miss
+    -> FilePath
     -> Int
     -> KeyConfig
     -> IO
@@ -83,19 +113,39 @@ loadZSKInfo
         , (KeyInfo, ResourceRecord) -- current
         , (KeyInfo, ResourceRecord) -- next
         )
-loadZSKInfo zoneDir preserve keyConf = do
-    ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
-    case sortBy (flip compare) ksks of -- decreasing order
+loadZSKInfo env fresh zoneDir preserve keyConf = do
+    zsks <- keyFiles zoneDir ".zsk"
+    case sortBy (flip compare) zsks of -- decreasing order
         fn2 : fn1 : fn0 : _ -> do
             ki0 <- loadKey zoneDir keyConf fn0
             ki1 <- loadKey zoneDir keyConf fn1
             ki2 <- loadKey zoneDir keyConf fn2
             return (ki0, ki1, ki2)
-        _ -> do
+        -- Fewer than the three which are published: some have gone
+        -- missing, since nothing here leaves one or two.  A whole new
+        -- set is made, which is valid DNSSEC -- the KSK has not changed,
+        -- so the DS still matches -- but a resolver holding the old
+        -- DNSKEY RRset cannot check what the new keys sign until that
+        -- RRset expires from its cache.  Worth a sentence rather than
+        -- the silence it had.
+        found -> do
+            unless fresh $
+                warn env keyConf $
+                    show (length found)
+                        ++ " ZSK(s) where three are published, so a new set of three is being made."
+                        ++ "  Resolvers holding the old DNSKEY RRset cannot validate until it expires from their caches."
             ki0 <- generateZSK zoneDir preserve keyConf
             ki1 <- generateZSK zoneDir preserve keyConf
             ki2 <- generateZSK zoneDir preserve keyConf
             return (ki0, ki1, ki2)
+
+-- | The key files of one kind a zone has.
+keyFiles :: FilePath -> String -> IO [FilePath]
+keyFiles zoneDir suffix = filter (suffix `isSuffixOf`) <$> listDirectory zoneDir
+
+-- | Saying which zone a warning is about, as the rest of the log does.
+warn :: Env -> KeyConfig -> String -> IO ()
+warn env keyConf msg = envPutLines env WARNING Nothing [zoneLabel (keyConfZone keyConf) ++ msg]
 
 -- | Loading an existing key.  A key file which cannot be read is an
 --   error: generating a new key instead would silently roll the key over
@@ -139,7 +189,7 @@ generateZSK zoneDir preserve keyConf = do
 --   age.
 pruneZSK :: FilePath -> Int -> IO ()
 pruneZSK zoneDir keep = do
-    zsks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
+    zsks <- keyFiles zoneDir ".zsk"
     mapM_ (removeFile . (zoneDir </>)) $ take (length zsks - keep) $ sort zsks
 
 ----------------------------------------------------------------
@@ -158,8 +208,8 @@ rolloverMargin duration = duration `shiftR` 6
 --   which is a different thing from how long an RRSIG stays valid.
 rolloverZSK :: FilePath -> Int -> Int -> KeyConfig -> IO ()
 rolloverZSK zoneDir duration preserve keyConf = do
-    ksks <- filter (".zsk" `isSuffixOf`) <$> listDirectory zoneDir
-    case sortBy (flip compare) ksks of -- decreasing order
+    zsks <- keyFiles zoneDir ".zsk"
+    case sortBy (flip compare) zsks of -- decreasing order
     -- No key to roll over yet.  Not an error: loading the zone is
     -- what creates the first set, and it may not have got that far.
         [] -> return ()
