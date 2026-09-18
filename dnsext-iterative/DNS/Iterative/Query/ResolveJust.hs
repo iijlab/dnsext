@@ -321,6 +321,13 @@ getCheckEnabled = noCD <$> asksQP requestCD_
 
 -- | Fill DS for delegation info. The result must be `FilledDS` for success query.
 --
+-- What the parent answers comes from the table below, not from the
+-- network.  These examples used to ask the real @org.@ servers what they
+-- had for @mew.org@, and stopped working the day @mew.org@ got a DS: an
+-- answer which carries one has to be verified, and the DNSKEY here is a
+-- dummy which can verify nothing.  What the parent says is not the
+-- internet's to decide any more.
+--
 -- >>> Right dummyKey = Opaque.fromBase64 "dummykey///dummykey///dummykey///dummykey///"
 -- >>> dummyDNSKEY = RD_DNSKEY [ZONE] 3 RSASHA256 $ toPubKey dummyKey
 -- >>> Right dummyDS_ = Opaque.fromBase16 "0123456789ABCD0123456789ABCD0123456789ABCD0123456789ABCD"
@@ -329,14 +336,38 @@ getCheckEnabled = noCD <$> asksQP requestCD_
 -- >>> parent = withNS2 "org." "a0.org.afilias-nst.info." "199.19.56.1" "a2.org.afilias-nst.info." "199.249.112.1" (FilledDS [dummyDS])
 -- >>> mkChild ds = withNS2 "mew.org." "ns1.mew.org." "202.238.220.92" "ns2.mew.org." "210.155.141.200" ds
 -- >>> isFilled d = case (delegationDS d) of { NotFilledDS {} -> False; FilledDS {} -> True; AnchorSEP {} -> True }
+-- >>> isBogus = either (\e -> case e of { ExtraError ErrorBogus{} _ _ -> True; _ -> False }) (const False)
 -- >>> env <- _newTestEnv _noLogging
--- >>> runChild child = runDNSQuery (fillDelegationDS 0 parent child) env noopWorkerStat (queryParamIN "ns1.mew.org." A mempty)
--- >>> fmap isFilled <$> (runChild $ mkChild $ NotFilledDS CachedDelegation)
+--
+-- The answer section the parent hands back is carried in, so that a
+-- query leaves nothing but this module:
+--
+-- >>> type ParentIO = QueryT (ReaderT [RR] IO)
+-- >>> answerSection = lift $ lift $ lift $ lift $ lift ask
+-- >>> instance MonadQuery ParentIO where { queryNorec _ _ name typ = answerSection <&> \rrs -> Right defaultResponse{question = Question name typ IN, answer = rrs} }
+-- >>> runChild rrs child = runReaderT (evalQueryT (fillDelegationDS 0 parent child) env noopWorkerStat (queryParamIN "ns1.mew.org." A mempty)) (rrs :: [RR])
+-- >>> noDS = []
+-- >>> childDS = ResourceRecord "mew.org." DS IN 3600 $ toRData $ RD_DS 44788 ED25519 SHA256 dummyDS_
+-- >>> childSig = ResourceRecord "mew.org." RRSIG IN 3600 $ toRData $ RD_RRSIG DS RSASHA256 2 3600 (toDNSTime 4000000000) (toDNSTime 1700000000) 25488 "org." dummyDS_
+-- >>> signedDS = [childDS, childSig]
+--
+-- A parent with no DS for the child says the child is insecure, so the
+-- DS is filled with nothing at all -- whichever way it was left
+-- unfilled, and without a query where it was filled already:
+--
+-- >>> fmap isFilled <$> (runChild noDS $ mkChild $ NotFilledDS CachedDelegation)
 -- Right True
--- >>> fmap isFilled <$> (runChild $ mkChild $ NotFilledDS ServsChildZone)
+-- >>> fmap isFilled <$> (runChild noDS $ mkChild $ NotFilledDS ServsChildZone)
 -- Right True
--- >>> fmap isFilled <$> (runChild $ mkChild $ FilledDS [])
+-- >>> fmap isFilled <$> (runChild noDS $ mkChild $ FilledDS [])
 -- Right True
+--
+-- A DS which does not verify is an error.  The parent's key here cannot
+-- verify anything, which is what the real @org.@ DS of a signed
+-- @mew.org@ ran into:
+--
+-- >>> isBogus <$> (runChild signedDS $ mkChild $ NotFilledDS CachedDelegation)
+-- True
 fillDelegationDS :: MonadQuery m => Int -> Delegation -> Delegation -> m Delegation
 fillDelegationDS dc src dest
     | null $ delegationDNSKEY src = fill [] {- no src DNSKEY, not chained -}
