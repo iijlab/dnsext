@@ -2,6 +2,7 @@ module Net where
 
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
+import Data.IORef
 import Data.IP
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
@@ -29,32 +30,48 @@ openSock ai = E.bracketOnError (openSocket ai) close $ \s -> do
 
 ----------------------------------------------------------------
 
--- | Asking one question over UDP and waiting for the answer, a few
---   times over.  A socket of our own rather than the resolver's: a
---   message which has to carry a TSIG has to be ours to build, and the
---   answer to it ours to check against what we sent.
+-- | Asking one question over UDP and waiting for an answer we will
+--   take, a few times over.
+--
+--   One socket for the whole of it, as a resolver does.  An answer to
+--   the first asking is still the answer when it arrives during the
+--   second, and a socket opened afresh for each try cannot hear it.
+--
+--   Whatever arrives and is not the answer -- somebody else's, a stale
+--   one, or somebody's guess at what we asked -- is passed over and the
+--   wait goes on, so that one datagram sent by anyone who can beat the
+--   far end to it cannot stand in for the answer.  RFC 8945 Sec 5.4
+--   asks for exactly that of a message whose TSIG does not check out:
+--   log it and go on waiting.  Why the last one would not do is what
+--   comes back when the time runs out.
 askUDP
     :: Int
     -- ^ how many times to ask before giving up
     -> Int
-    -- ^ how long to wait for each answer, in microseconds
+    -- ^ how long to wait for an answer to each asking, in microseconds
     -> IP
     -> PortNumber
     -> BS.ByteString
     -- ^ the question, encoded
-    -> IO (Maybe BS.ByteString)
-askUDP tries tmo ip port out = go tries
+    -> (BS.ByteString -> Either String a)
+    -- ^ what to make of an answer, or why it is not one
+    -> IO (Either String a)
+askUDP tries tmo ip port out take_ = E.bracket (openUDP ip port) close ask
   where
-    go n
-        | n <= 0 = return Nothing
-        | otherwise = do
-            manswer <- once
-            case manswer of
-                Just bs -> return $ Just bs
-                Nothing -> go (n - 1)
-    once = E.bracket (openUDP ip port) close $ \sock -> do
-        _ <- NSB.send sock out
-        timeout tmo $ NSB.recv sock 2048
+    ask sock = do
+        why <- newIORef "no answer"
+        let waiting = do
+                bs <- NSB.recv sock 2048
+                case take_ bs of
+                    Right a -> return a
+                    Left w -> writeIORef why w >> waiting
+            go n
+                | n <= 0 = Left <$> readIORef why
+                | otherwise = do
+                    _ <- NSB.send sock out
+                    ma <- timeout tmo waiting
+                    maybe (go (n - 1)) (return . Right) ma
+        go tries
 
 -- | A connected datagram socket, so that only the one we asked can be
 --   heard from.

@@ -229,16 +229,8 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
     now <- currentTime
     ident <- singleGenId
     (out, mrequestMAC) <- asked now ident
-    manswer <- askUDP serialTries serialTimeout ip port out
-    case manswer of
-        Nothing -> nope "no answer"
-        Just bs -> case decode bs of
-            Left e -> nope $ show e
-            Right msg -> case checkRespM q ident msg of
-                -- Not an answer to what we asked: a late one, or one
-                -- from somebody who never saw the question.
-                Just e -> nope $ show e
-                Nothing -> checked now mrequestMAC bs msg
+    eserial <- askUDP serialTries serialTimeout ip port out $ taken ident now mrequestMAC
+    either nope (return . Just) eserial
   where
     q = Question dom SOA IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
@@ -255,6 +247,14 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
                         (rr, mac) = signTSIG key now defaultFudge Nothing body
                     return (encode m{additional = additional m ++ [rr]}, Just mac)
 
+    taken ident now mrequestMAC bs = do
+        msg <- either (Left . show) Right $ decode bs
+        case checkRespM q ident msg of
+            -- Not an answer to what we asked: a late one, or one from
+            -- somebody who never saw the question.  The wait goes on.
+            Just e -> Left $ show e
+            Nothing -> checked now mrequestMAC bs msg
+
     -- The TSIG first, and what the message says afterwards.  A refusal
     -- is a thing anybody can send us, so with a key set it is read only
     -- once it has been shown to come from the upstream; what it says is
@@ -263,25 +263,25 @@ serialQuery env mkey ip port dom = withUpstream ip port dom "SOA" $ do
         Nothing -> answered msg
         Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
             TSIGOk _ -> answered msg
-            TSIGMissing -> nope "the answer is not signed"
+            TSIGMissing -> Left "the answer is not signed"
             -- RFC 8945 Sec 5.4: an answer which says NOTAUTH carries an
             -- unsigned record naming the error, which is why one that
             -- does not verify is still worth reading -- for the log.
-            TSIGFailed fault -> nope $ case tsigReported msg of
+            TSIGFailed fault -> Left $ case tsigReported msg of
                 Just e -> "the far end says " ++ show e
                 Nothing -> show fault
 
     held key n = if n == tsigKeyName key then Just key else Nothing
 
     answered msg
-        | rcode msg /= NoErr = nope $ show $ rcode msg
+        | rcode msg /= NoErr = Left $ show $ rcode msg
         | otherwise = serialOf msg
 
     serialOf msg = case answer msg of
-        [] -> nope "no SOA in the answer"
+        [] -> Left "no SOA in the answer"
         soa : _ -> case fromRData $ rdata soa of
-            Nothing -> nope "broken SOA"
-            Just s -> return $ Just $ soa_serial s
+            Nothing -> Left "broken SOA"
+            Just s -> Right $ soa_serial s
 
 -- | How long to wait for the upstream to say what serial it holds, and
 --   how many times to ask.  What the resolver was set to before this

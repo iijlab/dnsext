@@ -4,6 +4,7 @@
 module Notify (notify) where
 
 import qualified Control.Exception as E
+import Data.Functor (($>))
 import Data.IP
 import Network.Socket (PortNumber)
 import qualified System.IO.Error as E
@@ -40,21 +41,18 @@ notifyTries = 3
 notify :: Env -> Maybe TSIGKey -> Domain -> IP -> PortNumber -> IO (Maybe DNSMessage)
 notify Env{..} mkey dom ip port = withNotified $ do
     now <- currentTime
-    (out, mrequestMAC) <- asked now
-    manswer <- askUDP notifyTries notifyTimeout ip port out
-    case manswer of
-        Nothing -> unanswered "no answer"
-        Just bs -> case decode bs of
-            Left e -> unanswered $ show e
-            Right msg -> checked now mrequestMAC bs msg
+    ident <- singleGenId
+    (out, mrequestMAC) <- asked now ident
+    eanswer <- askUDP notifyTries notifyTimeout ip port out $ taken ident now mrequestMAC
+    either unanswered (return . Just) eanswer
   where
     q = Question dom SOA IN
     -- RFC 1996: an opcode of its own, and the question is the zone.
     qctl = rdFlag FlagClear <> doFlag FlagClear <> aaFlag FlagSet <> opCode OP_NOTIFY
     peer = "@" ++ show ip ++ "#" ++ show port ++ " \"" ++ toRepresentation dom ++ "\""
 
-    asked now = do
-        let bare = encodeQuery 0 q qctl
+    asked now ident = do
+        let bare = encodeQuery ident q qctl
         case mkey of
             Nothing -> return (bare, Nothing)
             Just key -> case decode bare of
@@ -70,12 +68,19 @@ notify Env{..} mkey dom ip port = withNotified $ do
 
     -- The answer is only an acknowledgement, so a bad one is worth
     -- saying out loud and no more: the zone is not riding on it.
+    taken ident now mrequestMAC bs = do
+        msg <- either (Left . show) Right $ decode bs
+        case checkRespM q ident msg of
+            -- Not an answer to what we asked, so the wait goes on.
+            Just e -> Left $ show e
+            Nothing -> checked now mrequestMAC bs msg $> msg
+
     checked now mrequestMAC bs msg = case mkey of
-        Nothing -> return $ Just msg
+        Nothing -> Right ()
         Just key -> case verifyTSIG (held key) now mrequestMAC bs msg of
-            TSIGOk _ -> return $ Just msg
-            TSIGMissing -> unanswered "the answer is not signed"
-            TSIGFailed fault -> unanswered $ case tsigReported msg of
+            TSIGOk _ -> Right ()
+            TSIGMissing -> Left "the answer is not signed"
+            TSIGFailed fault -> Left $ case tsigReported msg of
                 -- Sec 5.4: a refusal comes unsigned, so what it says is
                 -- worth more than what checking it as an answer makes of
                 -- it.
