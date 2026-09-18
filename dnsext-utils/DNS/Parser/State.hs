@@ -29,7 +29,12 @@ runParser p in_ = either (Left . runError) Right $ runExcept (evalStateT (runSta
 
 instance CaseCons t s => MonadParser t s (Parser s) where
     getInput = get
+    {-# INLINE getInput #-}
     putInput = put
+    {-# INLINE putInput #-}
     raiseParser = lift . lift . throwE . Last . Just
+    {-# INLINE raiseParser #-}
     getPos = lift get
+    {-# INLINE getPos #-}
     putPos = lift . put
+    {-# INLINE putPos #-}
