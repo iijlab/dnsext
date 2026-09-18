@@ -107,6 +107,7 @@ newZone env keys zoneconf@ZoneConf{..} = do
             , zoneReady = False
             , zoneFromFile = fromFile source
             , zoneAnswered = now
+            , zoneFailing = False
             , zoneNotifyAddrs = notify_addrs
             , zoneNotifyPort = cnf_notify_port
             , zoneAllowNotifyAddrs = allow_notify_addrs
@@ -176,7 +177,8 @@ updateZone env zoneref = do
         -- as it may.
         Left se -> do
             logSomeErrIn env WARNING (zoneLabel $ zoneName zone) se
-            keeping =<< stillOurs now zone
+            ready <- stillOurs now zone
+            store $ \z -> z{zoneReady = ready, zoneFailing = True}
         Right Loaded{..}
             | loadedAnswered ->
                 store $ \z ->
@@ -185,16 +187,16 @@ updateZone env zoneref = do
                         , zoneDB = loadedDB
                         , zoneRRs = loadedRRs
                         , zoneAnswered = now
+                        , zoneFailing = False
                         }
             -- The source said nothing, but what was read last time may
             -- have been signed again, so the database is taken all the
             -- same.
             | otherwise -> do
                 ready <- stillOurs now zone
-                store $ \z -> z{zoneReady = ready, zoneDB = loadedDB, zoneRRs = loadedRRs}
+                store $ \z -> z{zoneReady = ready, zoneDB = loadedDB, zoneRRs = loadedRRs, zoneFailing = True}
   where
     store f = atomicModifyIORef' zoneref $ \z -> (f z, ())
-    keeping ready = store $ \z -> z{zoneReady = ready}
     -- RFC 1035 Sec 3.3.13: the expire is the longest a secondary may
     -- go on answering for a zone whose source has stopped answering.
     -- Past it the zone is not ours to speak for, and it is answered the

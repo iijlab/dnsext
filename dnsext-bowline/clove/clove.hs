@@ -198,6 +198,10 @@ syncZone env zoneref = do
                 -- Source is from file. No timeout.
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
+                -- RFC 1035 Sec 3.3.13: what comes after an attempt which
+                -- failed is the retry interval, which is the shorter of
+                -- the two and is there to get the zone back sooner.
+                | zoneFailing = Just $ fromIntegral $ soa_retry $ dbRD_SOA zoneDB
                 | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
             -- Key rollover.  A signed zone has to wake up for this even
             -- when its source never changes.

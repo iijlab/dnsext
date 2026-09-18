@@ -56,6 +56,10 @@ data Zone = Zone
     -- ^ When the source last answered.  RFC 1035 Sec 3.3.13 counts the
     --   expire of the zone from it: a secondary whose source has said
     --   nothing for that long is no longer authoritative for the zone.
+    , zoneFailing :: Bool
+    -- ^ Whether the last attempt to reach the source failed.  RFC 1035
+    --   Sec 3.3.13 has the retry interval, not the refresh interval,
+    --   come after one that did.
     , zoneNotifyAddrs :: [IP]
     , zoneNotifyPort :: PortNumber
     , zoneAllowNotifyAddrs :: [IP]
