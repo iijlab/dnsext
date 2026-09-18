@@ -44,7 +44,16 @@ notify Env{..} mkey dom ip port = withNotified $ do
     ident <- singleGenId
     (out, mrequestMAC) <- asked now ident
     eanswer <- askUDP notifyTries notifyTimeout ip port out $ taken ident now mrequestMAC
-    either unanswered (return . Just) eanswer
+    case eanswer of
+        Left why -> unanswered why
+        Right msg
+            -- RFC 1996 Sec 4.7: a secondary which takes the notify and
+            -- goes to look at the zone answers NOERROR.  One which says
+            -- anything else has answered, so Sec 4.8 has us stop asking,
+            -- but it has not done what we asked -- which is worth a line
+            -- rather than being taken for an acknowledgement.
+            | rcode msg /= NoErr -> unanswered $ "answered " ++ show (rcode msg)
+            | otherwise -> return $ Just msg
   where
     q = Question dom SOA IN
     -- RFC 1996: an opcode of its own, and the question is the zone.
@@ -66,8 +75,12 @@ notify Env{..} mkey dom ip port = withNotified $ do
                         (rr, mac) = signTSIG key now defaultFudge Nothing body
                     return (encode m{additional = additional m ++ [rr]}, Just mac)
 
-    -- The answer is only an acknowledgement, so a bad one is worth
-    -- saying out loud and no more: the zone is not riding on it.
+    -- Sec 3.6: an answer is one carrying our identifier and our
+    -- question, from the far end we asked -- which the connected socket
+    -- sees to.  Anything else is not an answer and the wait goes on.
+    --
+    -- What the answer says is only an acknowledgement, so a bad one is
+    -- worth saying out loud and no more: the zone is not riding on it.
     taken ident now mrequestMAC bs = do
         msg <- either (Left . show) Right $ decode bs
         case checkRespM q ident msg of
