@@ -779,6 +779,17 @@ getResourceRecords n rbuf ref = go 0 id
                 else go (i + 1) (b . (r :))
 
 {- FOURMOLU_DISABLE -}
+-- | Reading one resource record.
+--
+--   RFC 1035 Sec 3.2.1: RDLENGTH "specifies the length in octets of the
+--   RDATA field".  The parser for a type is handed that length but is
+--   not obliged to use it -- the one for A reads its four octets and
+--   asks nothing -- so the RDATA is measured here instead, and a record
+--   whose RDATA is not the length it announced is refused.  Letting it
+--   through means reading past the end of one record into the next, or
+--   stopping short and reading what is left of it as though it were a
+--   record: either way we see records which the peer did not send and
+--   which another implementation does not see.
 getResourceRecord :: Parser ResourceRecord
 getResourceRecord rbuf ref = do
     rrname  <- getDomainRFC1035 rbuf ref
@@ -786,7 +797,14 @@ getResourceRecord rbuf ref = do
     rrclass <- getCLASS rbuf ref
     rrttl   <- getSeconds rbuf ref
     len     <- getInt16 rbuf
+    start   <- position rbuf
     rdata   <- getRData rrtype len rbuf ref
+    end     <- position rbuf
+    let used = end - start
+    when (used /= len) $
+        failParser $
+            "RDLENGTH of " ++ show rrtype ++ " says " ++ show len
+                ++ " octets, the RDATA is " ++ show used
     return ResourceRecord {..}
 {- FOURMOLU_ENABLE -}
 

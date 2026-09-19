@@ -290,10 +290,21 @@ validateMailbox m@(Mailbox d)
     | isIllegal (wireLabels_ d) = E.throw IllegalDomain
     | otherwise = m
 
+-- | A name which is not a name.
+--
+--   The length counted is what the name takes on the wire, which RFC
+--   1035 Sec 2.3.4 limits to 255: a length octet before each label and
+--   the root label at the end.  Counting the labels alone let a name of
+--   four labels of 63 through -- 252 octets of label, 257 on the wire
+--   -- which is a name this very module then refuses to read back.
 isIllegal :: WireLabels -> Bool
-isIllegal ls = sum is > 255 || any (> 63) is
+isIllegal ls = wireLength (Array.elems ls) > maxNameLength || any (> maxLabelLength) is
   where
     is = foldr (\x -> (Short.length x :)) [] ls
+
+-- | Longest a label may be (RFC 1035 Sec 2.3.4).
+maxLabelLength :: Int
+maxLabelLength = 63
 
 ----------------------------------------------------------------
 
@@ -445,13 +456,38 @@ putMailboxRFC1035 cf (Mailbox d) = putDomainRFC1035 cf d
 
 ----------------------------------------------------------------
 
+-- | Longest a name may be on the wire (RFC 1035 Sec 2.3.4), counting a
+--   length octet before each label and the root label at the end.
+maxNameLength :: Int
+maxNameLength = 255
+
+wireLength :: [Label] -> Int
+wireLength = foldr (\l a -> Short.length l + 1 + a) 1
+
+-- | Refusing a name which is longer than a name may be.
+--
+--   A name built from its representation has been refused for being too
+--   long since there was a 'Domain'; one read off the wire was not
+--   looked at, so a peer could hand us a name of any length, which we
+--   would hold, hand on and write back out.
+checkNameLength :: [Label] -> IO ()
+checkNameLength ls
+    | len <= maxNameLength = pure ()
+    | otherwise =
+        failParser $
+            "domain name of " ++ show len ++ " octets is over the limit of " ++ show maxNameLength
+  where
+    len = wireLength ls
+
 -- | Getting a domain name.
 --   An error is thrown if name compression is used.
 getDomain :: Parser Domain
 getDomain rbuf ref =
     domainFromWireLabels . listWireLabels <$> do
         n <- position rbuf
-        getDomain' False n rbuf ref
+        ls <- getDomain' False n rbuf ref
+        checkNameLength ls
+        pure ls
 
 -- | Getting a domain name.
 -- Pointers MUST point back into the packet per RFC1035 Section 4.1.4.  This
@@ -467,7 +503,9 @@ getDomainRFC1035 :: Parser Domain
 getDomainRFC1035 rbuf ref =
     domainFromWireLabels . listWireLabels <$> do
         n <- position rbuf
-        getDomain' True n rbuf ref
+        ls <- getDomain' True n rbuf ref
+        checkNameLength ls
+        pure ls
 
 -- | Getting a mailbox.
 --   An error is thrown if name compression is used.
@@ -475,14 +513,18 @@ getMailbox :: Parser Mailbox
 getMailbox rbuf ref =
     mailboxFromWireLabels . listWireLabels <$> do
         n <- position rbuf
-        getDomain' False n rbuf ref
+        ls <- getDomain' False n rbuf ref
+        checkNameLength ls
+        pure ls
 
 -- | Getting a mailbox.
 getMailboxRFC1035 :: Parser Mailbox
 getMailboxRFC1035 rbuf ref =
     mailboxFromWireLabels . listWireLabels <$> do
         n <- position rbuf
-        getDomain' True n rbuf ref
+        ls <- getDomain' True n rbuf ref
+        checkNameLength ls
+        pure ls
 
 -- $
 --
