@@ -50,23 +50,49 @@ fromCString = map (chr . fromIntegral) . Short.unpack
 -- character-string, character-string with escaped info, or longer opaque-string
 type EString = [Word8E]
 
-data CS' = CS' {cs_cs :: CString, cs_es :: EString} deriving (Eq)
+-- | A character-string: its bytes, and which of them the file wrote as
+--   an escape.
+--
+--   Which bytes were escaped is asked about twice -- by 'show', and by
+--   the SVCB parameter parser, where a @\\,@ is not a separator -- and
+--   both are rare.  Keeping it as the 'EString' the lexer read cost a
+--   cons cell and a boxed 'Word8E' for every byte of every
+--   character-string in the file, which is most of a zone file: reading
+--   sixty thousand records held twenty megabytes of them.  The bytes
+--   are already in 'cs_cs', so all that is left to keep is a flag each,
+--   and nothing at all for a string with no escape in it, which is
+--   nearly every one.
+data CS' = CS' {cs_cs :: CString, cs_escaped :: Maybe CString} deriving (Eq)
+
+-- | The character-string as the lexer read it, byte by byte.
+cs_es :: CS' -> EString
+cs_es CS'{cs_cs = s, cs_escaped = mfs} = case mfs of
+    Nothing -> [C w | w <- Short.unpack s]
+    Just fs -> zipWith mark (Short.unpack fs) (Short.unpack s)
+  where
+    mark 0 w = C w
+    mark _ w = E w
 
 {- FOURMOLU_DISABLE -}
 instance Show CS' where
-    show (CS'{cs_cs = s, cs_es = es})
-        | any isEscaped es  = show es
-        | otherwise         = show s
+    show cs@(CS'{cs_cs = s, cs_escaped = mfs})
+        | Just _ <- mfs  = show $ cs_es cs
+        | otherwise      = show s
 {- FOURMOLU_ENABLE -}
 
 instance IsString CS' where
     -- naive instance for tests
-    fromString s = CS'{cs_cs = cstringW8 ws, cs_es = [C w | w <- ws]}
+    fromString s = CS'{cs_cs = cstringW8 ws, cs_escaped = Nothing}
       where
         ws = [fromIntegral $ ord c | c <- s]
 
 estringToCS' :: EString -> CS'
-estringToCS' es = CS'{cs_cs = cstringW8 [unEscW8 e | e <- es], cs_es = es}
+estringToCS' es = CS'{cs_cs = cstringW8 ws, cs_escaped = mfs}
+  where
+    ws = [unEscW8 e | e <- es]
+    mfs
+        | any isEscaped es = Just $ Short.pack [if isEscaped e then 1 else 0 | e <- es]
+        | otherwise = Nothing
 
 data Token
     = Directive Directive
