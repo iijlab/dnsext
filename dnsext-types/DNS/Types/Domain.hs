@@ -290,10 +290,21 @@ validateMailbox m@(Mailbox d)
     | isIllegal (wireLabels_ d) = E.throw IllegalDomain
     | otherwise = m
 
+-- | A name which is not a name.
+--
+--   The length counted is what the name takes on the wire, which RFC
+--   1035 Sec 2.3.4 limits to 255: a length octet before each label and
+--   the root label at the end.  Counting the labels alone let a name of
+--   four labels of 63 through -- 252 octets of label, 257 on the wire
+--   -- which is a name this very module then refuses to read back.
 isIllegal :: WireLabels -> Bool
-isIllegal ls = sum is > 255 || any (> 63) is
+isIllegal ls = wireLength (Array.elems ls) > maxNameLength || any (> maxLabelLength) is
   where
     is = foldr (\x -> (Short.length x :)) [] ls
+
+-- | Longest a label may be (RFC 1035 Sec 2.3.4).
+maxLabelLength :: Int
+maxLabelLength = 63
 
 ----------------------------------------------------------------
 
