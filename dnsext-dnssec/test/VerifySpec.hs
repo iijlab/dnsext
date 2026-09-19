@@ -8,16 +8,21 @@ import Crypto.Number.Serialize
 import qualified Crypto.PubKey.RSA as RSA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as Short
 import Data.Either (fromRight)
 import Data.List (sortOn)
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Word
+import Data.Word8 (isLower)
 import Test.Hspec
 
 import DNS.SEC
 import DNS.SEC.Internal
 import DNS.SEC.Verify
 import DNS.Types
+import DNS.Types.Internal (CanonicalFlag (..), putDomain, runBuilder)
 import qualified DNS.Types.Opaque as Opaque
 
 spec :: Spec
@@ -55,6 +60,32 @@ spec = do
         -- missed about four times in a thousand.
         it "pads a signature of P-256" $ signaturesAreWide ECDSAP256SHA256 64 500
         it "pads a signature of P-384" $ signaturesAreWide ECDSAP384SHA384 96 500
+    -- A name which kept the case it arrived in (RFC 4343 Sec 3) must
+    -- verify against a signature made over the folded one: RFC 4034
+    -- Sec 6.2 has every name in the canonical form of an RR folded to
+    -- lower case.  These are the same cases as below with every name
+    -- -- the owners, the signer in the RRSIG, the target in the RDATA
+    -- -- shouted, so anything which reached a digest unfolded would
+    -- fail them.
+    describe "verify RRSIG whatever case the names are in" $ do
+        it "RSA/SHA256" $ caseRRSIG (shouted rsaSHA256)
+        it "Ed25519" $ caseRRSIG (shouted ed25519)
+        it "ECDSA/P256" $ caseRRSIG (shouted ecdsaP256)
+
+    describe "canonical ordering" $ do
+        -- The ordering of an RRset is by the canonical RDATA, which has
+        -- its names folded.  Ordered by the bytes as they arrived, an
+        -- upper case "B" (0x42) would come before a lower case "a"
+        -- (0x61).
+        it "goes by the folded name, not by the bytes as they came" $ do
+            map (originalWireLabels . mx) (canonicalOrder [shout "B.example.", "a.example."])
+                `shouldBe` [["a", "example"], ["B", "EXAMPLE"]]
+            map (originalWireLabels . mx) (canonicalOrder ["a.example.", shout "B.example."])
+                `shouldBe` [["a", "example"], ["B", "EXAMPLE"]]
+
+        it "does not depend on the case at all" $
+            map (canonical . mx) (canonicalOrder [shout "B.example.", "a.example."])
+                `shouldBe` map (canonical . mx) (canonicalOrder ["b.example.", "A.example."])
 
     describe "verify RRSIG" $ do
         it "RSA/SHA1 alias NSEC3_SHA1" $ caseRRSIG rsaSHA1NSEC3SHA1
@@ -335,6 +366,44 @@ signaturesAreWide alg width times = case getRRSIGImpl alg of
             case rrsigIDecodeSignature bs of
                 Left e -> expectationFailure e
                 Right _ -> return ()
+
+-- | The same case with every name shouted.  What a name is does not
+--   change with its case, so the signature in it is still the
+--   signature over these records.
+shouted :: RRSIG_CASE -> RRSIG_CASE
+shouted RRSIG_CASE{..} =
+    RRSIG_CASE
+        { rrsig_dnskey = loud rrsig_dnskey
+        , rrsig_targets = map loud rrsig_targets
+        , rrsig_rrsig = loud rrsig_rrsig{rdata = toRData sig{rrsig_zone = shout (rrsig_zone sig)}}
+        , rrsig_prikey = rrsig_prikey
+        , rrsig_pubkey = rrsig_pubkey
+        }
+  where
+    sig = fromJust (fromRData (rdata rrsig_rrsig)) :: RD_RRSIG
+    loud rr = rr{rrname = shout (rrname rr), rdata = loudRData (rdata rr)}
+    -- Only the RDATA which holds a name has anything to shout.
+    loudRData rd = case fromRData rd :: Maybe RD_MX of
+        Just m -> rd_mx (mx_preference m) (shout (mx_exchange m))
+        Nothing -> rd
+
+-- | The same name in upper case, kept that way -- which is what a name
+--   read off the wire does.
+shout :: Domain -> Domain
+shout d = fromWireLabels (map up (wireLabels d) :: [ShortByteString])
+  where
+    up = Short.pack . map (\w -> if isLower w then w - 32 else w) . Short.unpack
+
+mx :: ResourceRecord -> Domain
+mx rr = mx_exchange (fromJust (fromRData (rdata rr)) :: RD_MX)
+
+canonicalOrder :: [Domain] -> [ResourceRecord]
+canonicalOrder ds = [rr | (_, rr) <- sortRDataCanonical [mxRR d | d <- ds]]
+  where
+    mxRR d = ResourceRecord{rrname = "example.", rrttl = 3600, rrclass = IN, rrtype = MX, rdata = rd_mx 10 d}
+
+canonical :: Domain -> ByteString
+canonical d = runBuilder (domainSize d) $ putDomain Canonical d
 
 {- FOURMOLU_DISABLE -}
 rsaSHA1NSEC3SHA1 :: RRSIG_CASE
