@@ -8,6 +8,7 @@ import Control.Concurrent.Async (concurrently_)
 import qualified Control.Exception as E
 import Control.Monad
 import DNS.Do53.Internal
+import qualified Data.ByteString as BS
 import Network.Run.TCP.Timeout
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -179,6 +180,12 @@ udpReplyLimit query = fromIntegral $ case ednsHeader query of
 tcpIdleTimeout :: Int
 tcpIdleTimeout = 30
 
+-- | Largest query clove will read off a connection, in octets.  A DNS
+--   message over TCP can announce up to 65535, and nothing we answer
+--   needs anywhere near that much asked of us.
+tcpMessageLimit :: Int
+tcpMessageLimit = 32 * 1024
+
 -- | How long the far end is given to take what has already been written
 --   to it, once clove is done with the connection, in milliseconds.
 --
@@ -236,10 +243,18 @@ tcpServer
 tcpServer env keys zoneAlist port limit addr =
     runTCPServerWithSettings settings tcpIdleTimeout (Just addr) port $
         \_tmgr alive s -> do
+            -- What a read brought back beyond the message it was
+            -- asked for.  It belongs to the next one and has to be
+            -- kept, or a peer which sends its next query without
+            -- waiting -- which RFC 7766 Sec 6.2.1.1 asks clients to do
+            -- -- is never answered for it.
+            ahead <- newIORef BS.empty
             let proto =
                     Proto
                         { recvQuery = do
-                            bs <- recvVC (32 * 1024) $ recvTCP s
+                            rest <- readIORef ahead
+                            (bs, rest') <- recvMessage tcpMessageLimit s rest
+                            writeIORef ahead rest'
                             T.tickle alive
                             sa <- getPeerName s
                             return (bs, sa)
