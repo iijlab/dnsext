@@ -135,7 +135,7 @@ transfer Env{..} Proto{..} zone sender sa query = do
             ++ " message(s)"
             ++ maybe "" (const ", signed") mkey
         ]
-    case sender of
+    duringTransfer $ case sender of
         Unsigned -> mapM_ (sendReply sa . encode . withAnswer) batches
         SignedWith key requestMAC now -> signAndSend now key (AtFirst $ Just requestMAC) batches
   where

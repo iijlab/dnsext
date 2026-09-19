@@ -32,6 +32,7 @@ data Config = Config
     , cnf_log_level :: Level
     , cnf_clove_dir :: FilePath
     , cnf_tsig_file  :: FilePath
+    , cnf_transfer_time_limit :: Int
     } deriving (Show)
 
 defaultConfig :: Config
@@ -46,6 +47,7 @@ defaultConfig =
         , cnf_log_level = WARNING
         , cnf_clove_dir = "/var/clove/"
         , cnf_tsig_file  = "tsig.conf"
+        , cnf_transfer_time_limit = 3600 -- 1 hour
         }
 
 ----------------------------------------------------------------
@@ -127,12 +129,22 @@ makeConfig def conf0 = do
     cnf_log_level <- get "log-level" cnf_log_level
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
     cnf_tsig_file <- get "tsig-file" cnf_tsig_file
+    cnf_transfer_time_limit <- get "transfer-time-limit" cnf_transfer_time_limit
+    checkTimeLimit cnf_transfer_time_limit
     checkUnknown "" ref conf
     checkRepeated "" conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
     (conf, zones) = splitConf "zone" conf0
+
+-- | A limit of no time at all would refuse every transfer, and a
+--   negative one is not a limit.  Asking for one is the way to say how
+--   patient to be, so there is no value which means "never give up".
+checkTimeLimit :: Int -> IO ()
+checkTimeLimit n
+    | n > 0 = pure ()
+    | otherwise = ioError $ userError $ "transfer-time-limit: must be a positive number of seconds, not " ++ show n
 
 makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
 makeZoneConf def conf = do

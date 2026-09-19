@@ -144,4 +144,9 @@ data Proto = Proto
     , replyLimit :: DNSMessage -> Maybe Int
     -- ^ Largest reply which may be sent in answer to this query, if the
     --   transport limits it at all.
+    , duringTransfer :: IO () -> IO ()
+    -- ^ Handing a zone over, which is not governed by the same clock as
+    --   waiting for a query: see 'Network.Run.TCP.Timeout' and the
+    --   note on the TCP server.  Identity where no zone is ever handed
+    --   over, which is every transport but TCP.
     }
