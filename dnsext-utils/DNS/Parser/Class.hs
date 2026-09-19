@@ -129,6 +129,31 @@ spanning p = do
             putInput s'
             pure ts
 
+-- | A parser run for as long as it goes on succeeding, and what it
+--   gave each time.
+--
+--   'Control.Applicative.many' is this, and cannot be used where the
+--   input is long.  It is @some p \<|\> pure []@ with @some p = (:)
+--   \<$\> p \<*\> many p@, so the alternatives nest one inside another,
+--   one per turn, and each of them is holding the input it would go
+--   back to if what came after it failed.  None of that is let go until
+--   the whole thing ends, so reading a file keeps every token of the
+--   file, and the stack to match.  A zone of a hundred and eighty
+--   thousand records held 307 MB that way and 117 MB this way.
+--
+--   Here the alternative covers one turn, so what it holds is dropped
+--   as soon as that turn succeeds, and the next turn is in the
+--   continuation of a bind rather than inside the alternative.
+{-# INLINEABLE repeatedly #-}
+repeatedly :: MonadParser t s m => m a -> m [a]
+repeatedly p = go id
+  where
+    go acc = do
+        m <- optional p
+        case m of
+            Nothing -> pure (acc [])
+            Just x -> go (acc . (x :))
+
 {-# INLINEABLE token #-}
 token :: MonadParser t s m => m t
 token = caseCons cons nil =<< getInput

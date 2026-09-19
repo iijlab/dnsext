@@ -79,6 +79,7 @@ instance MonadParser Token [Token] Parser where
 {-# SPECIALIZE these :: [Token] -> Parser [Token] #-}
 {-# SPECIALIZE choice :: [Parser a] -> Parser a #-}
 {-# SPECIALIZE lookAhead :: Parser a -> Parser a #-}
+{-# SPECIALIZE repeatedly :: Parser a -> Parser [a] #-}
 {-# SPECIALIZE readable :: Read a => String -> String -> Parser a #-}
 {-# SPECIALIZE dot :: Parser Token #-}
 {-# SPECIALIZE blank :: Parser Token #-}
@@ -349,7 +350,7 @@ record =
 
 {- FOURMOLU_DISABLE -}
 file :: Parser [Record]
-file = many $ do
+file = repeatedly $ do
     r <- record <* this RSep
     r `seq` pure r
 {- FOURMOLU_ENABLE -}
