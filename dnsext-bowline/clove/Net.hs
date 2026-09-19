@@ -4,7 +4,16 @@ import qualified Control.Exception as E
 import Control.Monad (when)
 import qualified Data.ByteString as BS
 import Data.IORef
-import Data.IP (IP)
+import Data.IP (
+    AddrRange,
+    IP (..),
+    IPv4,
+    IPv6,
+    addrRangePair,
+    fromIPv6w,
+    makeAddrRange,
+    toIPv4w,
+ )
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
@@ -98,3 +107,34 @@ openUDP ip port = do
             { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV]
             , addrSocketType = Datagram
             }
+
+-- | The address a peer really is.  What a socket reports for an IPv4
+--   peer is an IPv4-mapped IPv6 address -- @::ffff:192.0.2.1@ -- if it
+--   ever reports one at all, and that peer is the IPv4 peer
+--   @192.0.2.1@: the two spellings name one host.  'Eq' on 'IP' says so
+--   already, which is why a list of addresses compares right; a route
+--   table cannot, since it is asked for one family or the other, and
+--   asking the wrong one is a silent miss.
+--
+--   As things stand nothing reaches us that way: 'openSock' sets
+--   IPV6_V6ONLY and network-run sets it for TCP, so both transports are
+--   of one family, and this changes nothing.  It is here for the day
+--   one of them is dual stack again, because of what the miss looks
+--   like when it happens -- a peer the configuration allows is refused,
+--   and nothing anywhere says why.
+unmap :: IP -> IP
+unmap (IPv6 ip6)
+    | (0, 0, 0xffff, w) <- fromIPv6w ip6 = IPv4 $ toIPv4w w
+unmap ip = ip
+
+-- | The same for a range from the configuration: @::ffff:192.0.2.0/120@
+--   is @192.0.2.0/24@ written the long way.  'Nothing' for a range
+--   which is not inside the mapped block, and for one wider than it,
+--   which covers addresses that are not mapped anything.
+unmapRange :: AddrRange IPv6 -> Maybe (AddrRange IPv4)
+unmapRange r
+    | (a6, len) <- addrRangePair r
+    , len >= 96
+    , (0, 0, 0xffff, w) <- fromIPv6w a6 =
+        Just $ makeAddrRange (toIPv4w w) (len - 96)
+    | otherwise = Nothing
