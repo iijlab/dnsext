@@ -16,8 +16,8 @@ import System.Directory
 import System.Environment (getArgs, getProgName)
 import System.Exit (exitFailure)
 import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hPutStrLn, hSetBuffering, openFile, stderr)
-import System.IO.Error (ioeGetErrorString, isUserError)
-import System.Posix (Handler (Catch), installHandler, sigHUP)
+import System.IO.Error (ioeGetErrorString, isFullError, isUserError)
+import System.Posix (Handler (Catch), epochTime, installHandler, sigHUP)
 import qualified System.TimeManager as T
 import System.Timeout (timeout)
 
@@ -27,6 +27,7 @@ import qualified DNS.SEC as DNS
 import qualified DNS.SVCB as DNS
 import DNS.Types
 import qualified DNS.Types as DNS
+import DNS.Types.Time (EpochTime)
 import Data.IORef
 
 import qualified Auth
@@ -72,12 +73,14 @@ main = reportingError $ do
         -- be as many times the limit as there are addresses.
         clients <- newSlots cnf_tcp_clients
         transfers <- newSlots cnf_transfers_out
+        seldom <- newSeldom
         let tcpConf =
                 TCPConf
                     { tcpClientTimeout = cnf_tcp_client_timeout
                     , tcpTransferLimit = cnf_transfer_time_limit
                     , tcpClients = clients
                     , tcpTransfers = transfers
+                    , tcpSeldom = seldom
                     }
             as = map (tcpServer env keys zoneAlist (show cnf_tcp_port) tcpConf) cnf_tcp_addrs
         -- Authoritative servers: UDP
@@ -257,6 +260,8 @@ data TCPConf = TCPConf
     -- ^ tcp-clients
     , tcpTransfers :: Slots
     -- ^ transfers-out
+    , tcpSeldom :: Seldom
+    -- ^ Holding back the complaint which repeats.
     }
 
 tcpServer
@@ -298,7 +303,60 @@ tcpServer env keys zoneAlist port TCPConf{..} addr =
                         }
             Auth.server env keys proto zoneAlist
   where
-    settings = defaultServerSettings{settingsGracefulCloseTimeout = tcpDrainTimeout}
+    settings =
+        defaultServerSettings
+            { settingsGracefulCloseTimeout = tcpDrainTimeout
+            , settingsOnException = mishap env tcpSeldom
+            }
+
+-- | A complaint made at most once in a while, with a count of the ones
+--   it stood in for.  What it holds is when it was last made and how
+--   many have been held back since.
+newtype Seldom = Seldom (IORef (EpochTime, Int))
+
+newSeldom :: IO Seldom
+newSeldom = Seldom <$> newIORef (0, 0)
+
+-- | Longest clove will go on saying nothing about something which is
+--   still happening, in seconds.
+seldomInterval :: EpochTime
+seldomInterval = 60
+
+seldomly :: Env -> Seldom -> (Int -> String) -> IO ()
+seldomly env (Seldom ref) line = do
+    now <- fromIntegral . fromEnum <$> epochTime
+    msaid <- atomicModifyIORef' ref $ \(said, held) ->
+        if now - said >= seldomInterval
+            then ((now, 0), Just held)
+            else ((said, held + 1), Nothing)
+    case msaid of
+        Nothing -> return ()
+        Just held -> envPutLines env WARNING Nothing ["    " ++ line held]
+
+-- | What the TCP server catches for us and would otherwise drop.
+--
+--   Running out of file descriptors is the one that matters.  accept
+--   fails, network-run waits a tenth of a second and tries it again,
+--   and clove goes on running while answering nobody over TCP.  Left
+--   to the default hook, which does nothing, that is entirely silent.
+--   It is also the one which repeats -- ten times a second for as long
+--   as it lasts -- so it is said and then not said again for a minute,
+--   with a count of the ones held back.
+--
+--   The others are an exception which escaped a connection's handler
+--   and a failure to close a connection.  Neither is expected: what a
+--   connection does wrong is dealt with and reported where it happens,
+--   so anything arriving here is worth a line as it comes.
+mishap :: Env -> Seldom -> Maybe SockAddr -> E.SomeException -> IO ()
+mishap env seldom mpeer se = case E.fromException se of
+    Just ioe
+        | isFullError ioe ->
+            seldomly env seldom $ \held ->
+                "out of file descriptors, so a connection could not be taken"
+                    ++ (if held > 0 then " (and " ++ show held ++ " more since the last of these)" else "")
+    _ -> envPutLines env WARNING Nothing ["    " ++ about ++ show se]
+  where
+    about = maybe "" (\peer -> "connection " ++ show peer ++ ": ") mpeer
 
 -- | Serving a connection if clove is not already holding as many as
 --   tcp-clients allows, and dropping it at once if it is.
