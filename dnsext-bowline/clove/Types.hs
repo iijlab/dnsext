@@ -47,6 +47,13 @@ data Zone = Zone
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
     , zoneDB :: DB
+    , zoneBatches :: IORef (Maybe [[ResourceRecord]])
+    -- ^ How the zone is cut into messages for a transfer, once
+    --   somebody has asked for one.  Working it out costs a pass over
+    --   the zone with a good deal of encoding in it, and the answer is
+    --   the same for every peer, so it is kept.  A new one of these is
+    --   made wherever 'zoneDB' is, and never anywhere else, so the two
+    --   cannot come apart.
     , zoneRRs :: [ResourceRecord]
     -- ^ Records last obtained from the source, kept so that the zone
     --   can be signed again without transferring it again.

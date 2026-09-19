@@ -100,9 +100,11 @@ newZone env keys zoneconf@ZoneConf{..} = do
     -- source which never answers must not leave the zone waiting for a
     -- refresh which already happened.
     now <- currentTime
+    batches <- newIORef Nothing
     return $
         Zone
             { zoneDB = emptyDB
+            , zoneBatches = batches
             , zoneRRs = []
             , zoneReady = False
             , zoneFromFile = fromFile source
@@ -185,6 +187,7 @@ updateZone env zoneref = do
                     z
                         { zoneReady = True
                         , zoneDB = loadedDB
+                        , zoneBatches = loadedBatches
                         , zoneRRs = loadedRRs
                         , zoneAnswered = now
                         , zoneFailing = False
@@ -194,7 +197,14 @@ updateZone env zoneref = do
             -- same.
             | otherwise -> do
                 ready <- stillOurs now zone
-                store $ \z -> z{zoneReady = ready, zoneDB = loadedDB, zoneRRs = loadedRRs, zoneFailing = True}
+                store $ \z ->
+                    z
+                        { zoneReady = ready
+                        , zoneDB = loadedDB
+                        , zoneBatches = loadedBatches
+                        , zoneRRs = loadedRRs
+                        , zoneFailing = True
+                        }
   where
     store f = atomicModifyIORef' zoneref $ \z -> (f z, ())
     -- RFC 1035 Sec 3.3.13: the expire is the longest a secondary may
@@ -248,6 +258,9 @@ zoneDirectory zone = case toRepresentation zone of
 -- | What reading the source came to.
 data Loaded = Loaded
     { loadedDB :: DB
+    , loadedBatches :: IORef (Maybe [[ResourceRecord]])
+    -- ^ Empty for a database just built, and the one the zone already
+    --   has where the database is the one it already has.
     , loadedRRs :: [ResourceRecord]
     , loadedAnswered :: Bool
     -- ^ Whether the source answered.  False when it could not be reached
@@ -265,6 +278,11 @@ loadSourceWithSigning env z = case zoneSigning z of
     Nothing -> unsigned
     Just signing -> signed signing
   where
+    -- A database just built has nothing cut up yet.
+    loadedWith db rrs answered = do
+        batches <- newIORef Nothing
+        return $ Loaded db batches rrs answered
+
     zone = zoneName z
     source = zoneSource z
     oldRRs = zoneRRs z
@@ -287,9 +305,9 @@ loadSourceWithSigning env z = case zoneSigning z of
             Transferred rrs -> do
                 db <- makeDBforSecondary zone rrs
                 saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-                return $ Loaded db rrs True
-            Unchanged -> return $ Loaded (zoneDB z) oldRRs True
-            Unreachable -> return $ Loaded (zoneDB z) oldRRs False
+                loadedWith db rrs True
+            Unchanged -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs True
+            Unreachable -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs False
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
@@ -326,7 +344,7 @@ loadSourceWithSigning env z = case zoneSigning z of
         -- Stored only after the zone has been built successfully so
         -- that a failure does not inflate the serial.
         saveSerial zoneDir $ soa_serial soa
-        return $ Loaded db rrs0 answered
+        loadedWith db rrs0 answered
 
 -- | Refusing to sign a zone which is signed already.
 --
