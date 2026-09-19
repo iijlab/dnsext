@@ -10,6 +10,8 @@ import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peek, peekByteOff, poke)
 import Test.Hspec
 
+import Data.Either (isLeft)
+
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
@@ -72,8 +74,38 @@ test_root_ns =
 
 ----------------------------------------------------------------
 
+-- | An answer holding one A record, whose RDLENGTH is whatever is
+--   given rather than the four octets an address takes.
+oneA :: Int -> ByteString
+oneA rdlength =
+    BS.pack [0, 1, 0x80, 0, 0, 1, 0, 1, 0, 0, 0, 0]
+        <> name
+        <> BS.pack [0, 1, 0, 1]
+        <> BS.pack [0xc0, 0x0c]
+        <> BS.pack [0, 1, 0, 1, 0, 0, 0, 60]
+        <> BS.pack [fromIntegral (rdlength `div` 256), fromIntegral (rdlength `mod` 256)]
+        <> BS.pack [1, 2, 3, 4]
+  where
+    name = BS.pack [3] <> "www" <> BS.pack [7] <> "example" <> BS.pack [0]
+
 spec :: Spec
 spec = do
+    -- RFC 1035 Sec 3.2.1: RDLENGTH "specifies the length in octets of
+    -- the RDATA field".  A decoder which does not hold the RDATA parse
+    -- to it reads past the end of one record into the next, or stops
+    -- short and leaves the rest to be read as though it were a record
+    -- -- and sees records which another implementation does not.
+    describe "RDLENGTH" $ do
+        it "is what the RDATA of an A record is" $
+            fmap (map rdata . answer) (decode (oneA 4)) `shouldBe` Right [rd_a "1.2.3.4"]
+
+        it "is refused when it is shorter than the RDATA" $
+            decode (oneA 2) `shouldSatisfy` isLeft
+
+        it "is refused when it is longer than the RDATA" $ do
+            decode (oneA 6) `shouldSatisfy` isLeft
+            decode (oneA 100) `shouldSatisfy` isLeft
+
     describe "decode" $ do
         it "decodes double pointers correctly" $
             tripleDecodeTest test_doublePointer
