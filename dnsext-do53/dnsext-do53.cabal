@@ -96,14 +96,18 @@ test-suite spec
     other-modules:
         LookupSpec
         IOSpec
+        VCSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
         base,
+        async,
+        bytestring,
         dnsext-do53,
         dnsext-types,
         hspec,
+        iproute >=1.3.2,
         network
 
     if (os(windows) && impl(ghc >=9.0))
