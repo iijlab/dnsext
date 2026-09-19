@@ -26,6 +26,7 @@ module DNS.SEC.Verify.Verify (
     detectWildcardExpansionNSEC3,
     hashNSEC3,
     hashNSEC3PARAM,
+    maxNSEC3Iterations,
     detectNSEC3,
 
     -- * NSEC
@@ -273,6 +274,23 @@ verifyDS owner dnskey ds =
 
 ---
 
+-- | Most iterations of the NSEC3 hash this will do for a proof
+--   somebody else sent us.
+--
+--   Each iteration is a hash of the one before, the count in the record
+--   is a Word16, and proving that a name does not exist needs several
+--   names hashed.  Ten names at the 65535 a zone may ask for take 860
+--   ms of processor here, against 0.85 ms at a hundred: a zone which
+--   asks for the maximum buys 86 ms of somebody else's time for every
+--   name it makes them prove does not exist, which is a cheap way to
+--   spend a validator.
+--
+--   RFC 9276 Sec 3.2 (BCP 236) has a validating resolver stop believing
+--   a proof which asks for more than a hundred, and Sec 3.1 tells a
+--   zone to ask for none at all.
+maxNSEC3Iterations :: Word16
+maxNSEC3Iterations = 100
+
 hashNSEC3with' :: NSEC3Impl -> Word16 -> Opaque -> Domain -> Opaque
 hashNSEC3with' NSEC3Impl{..} iter osalt domain =
     Opaque.fromByteString $ recurse iter
@@ -296,8 +314,21 @@ hashNSEC3PARAMwith impl RD_NSEC3PARAM{..} domain =
 
 ---
 
+-- | Refusing to spend the processor a proof asks for when it asks for
+--   too much.  Checked before anything is hashed, which is the point.
+checkNSEC3Iterations :: Word16 -> Either String ()
+checkNSEC3Iterations iterations =
+    unless (iterations <= maxNSEC3Iterations) $
+        Left $
+            "NSEC3: "
+                ++ show iterations
+                ++ " iterations asked for, more than the "
+                ++ show maxNSEC3Iterations
+                ++ " which will be done"
+
 hashNSEC3 :: RD_NSEC3 -> Domain -> Either String Opaque
-hashNSEC3 nsec3 domain =
+hashNSEC3 nsec3 domain = do
+    checkNSEC3Iterations $ nsec3_iterations nsec3
     maybe (Left $ "hashNSEC3: unsupported algorithm: " ++ show alg) (Right . hash) $
         getNSEC3Impl alg
   where
@@ -349,6 +380,9 @@ getNSEC3Result hl zone cs qname =
   where
     withImpls h = h =<< mapM addImpl cs
     addImpl r@(_, nsec3) = do
+        -- Before a name is hashed, not after: what this refuses is the
+        -- work, not the answer.
+        checkNSEC3Iterations $ nsec3_iterations nsec3
         let alg = nsec3_hashalg nsec3
         impl <- maybe (Left $ "NSEC3: unsupported algorithm: " ++ show alg) Right $ getNSEC3Impl alg
         return (impl, r)
