@@ -111,6 +111,13 @@ newline =
       byte _cr              <|>
       byte _lf )
 
+-- | A byte a character-string holds as it stands, needing no escape.
+isSimple :: Word8 -> Bool
+isSimple c =
+    c `notElem` [_period, _at, _semicolon, _parenleft, _parenright, _backslash, _quotedbl] &&
+    not (isSpc c) &&
+    not (isNewline c) && isPrint c && isAscii c
+
 -- | not escaped, not quoted, byte
 -- >>> runParser cstringbSimple "abc"
 -- Right (97,"bc")
@@ -123,13 +130,9 @@ newline =
 -- True
 {-# INLINEABLE cstringbSimple #-}
 cstringbSimple :: MonadParser W8 s m => m Word8
-cstringbSimple = satisfy (notchars ++ " && not `space` && not `newline` && isPrint && isAscii") check
+cstringbSimple = satisfy (notchars ++ " && not `space` && not `newline` && isPrint && isAscii") isSimple
   where
     notchars = "not (" ++ foldr1 (\x y -> x ++ " || " ++ y) [['`', c, '`'] | c <- ".@;()\\\"" ] ++ ")"
-    check c =
-        c `notElem` [_period, _at, _semicolon, _parenleft, _parenright, _backslash, _quotedbl] &&
-        not (isSpc c) &&
-        not (isNewline c) && isPrint c && isAscii c
 {- FOURMOLU_ENABLE -}
 
 {-# INLINEABLE backslash #-}
@@ -186,16 +189,20 @@ cstringByte =
 quote :: MonadParser W8 s m => m ()
 quote = void $ byte _quotedbl
 
+-- | A byte a quoted character-string holds as it stands.  Everything a
+--   bare one holds, and the rest of what is printable besides -- a dot,
+--   a space, a semicolon -- since the quotes are what ends it.
+isQuotedPlain :: Word8 -> Bool
+isQuotedPlain c =
+    c `notElem` [_backslash, _quotedbl] &&
+    not (isNewline c) && isPrint c && isAscii c
+    || c == _tab
+
 {-# INLINEABLE quotedByte #-}
 quotedByte :: MonadParser W8 s m => m Word8E
 quotedByte =
     cstringByte  <|>
-    C <$> satisfy "not (`\\` || `\"`) && not newline && isPrint || tab" check
-  where
-    check c =
-        c `notElem` [_backslash, _quotedbl] &&
-        not (isNewline c) && isPrint c && isAscii c
-        || c == _tab
+    C <$> satisfy "not (`\\` || `\"`) && not newline && isPrint || tab" isQuotedPlain
 {- FOURMOLU_ENABLE -}
 
 {-# INLINEABLE directive #-}
@@ -203,6 +210,27 @@ directive :: MonadParser W8 s m => m Directive
 directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 
 {- FOURMOLU_DISABLE -}
+-- | An escaped byte, which has to be read one at a time whichever kind
+--   of character-string it is in.
+{-# INLINEABLE cstringbEscape #-}
+cstringbEscape :: MonadParser W8 s m => m Word8E
+cstringbEscape = E <$> cstringbOct <|> E <$> cstringbEscaped
+
+-- | What is left of a character-string: every byte which stands for
+--   itself, taken in one go, then an escape, then the same again.
+--
+--   It used to be a byte at a time -- @host12345@ is nine turns of the
+--   parser where it could be one scan -- which is most of what reading a
+--   zone file did.
+{-# INLINEABLE cstringRest #-}
+cstringRest :: MonadParser W8 s m => (Word8 -> Bool) -> m EString
+cstringRest plain = go
+  where
+    go = do
+        ws <- spanning plain
+        let taken = map C ws
+        ((taken ++) <$> ((:) <$> cstringbEscape <*> go)) <|> pure taken
+
 -- |
 --
 -- >>> runParser lex_cstring "abc"
@@ -213,8 +241,10 @@ directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 lex_cstring :: MonadParser W8 s m => m CS'
 lex_cstring =
     estringToCS' <$>
-    ( some cstringByte                  <|>
-      quote *> many quotedByte <* quote )
+    -- The first byte is read as it always was, so that a thing which is
+    -- no character-string at all is refused where and how it was.
+    ( (:) <$> cstringByte <*> cstringRest isSimple  <|>
+      quote *> cstringRest isQuotedPlain <* quote   )
 {- FOURMOLU_ENABLE -}
 
 {-# INLINEABLE comment #-}
