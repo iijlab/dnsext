@@ -166,7 +166,14 @@ executable clove
                       Zone
 
     default-language: Haskell2010
-    ghc-options:      -Wall -threaded
+    -- A zone is a large structure which is built once and then barely
+    -- changes, and the copying collector wants room for a second copy
+    -- of it every time it collects the oldest generation.  Compacting
+    -- that generation instead moves what is live within the memory it
+    -- is already in.  Reading a zone of a hundred and eighty thousand
+    -- records takes 2.4 GB rather than 3.7 GB and is no slower.
+    ghc-options:
+        -Wall -threaded -rtsopts "-with-rtsopts=-c"
     build-depends:
         -- GHC bundled
         base,
