@@ -9,6 +9,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LB
 import Data.Char (chr)
 import Data.Functor
+import Data.List (foldl')
 import Data.Word (Word8)
 
 {- FOURMOLU_DISABLE -}
@@ -19,6 +20,18 @@ class ParserToken t where
 
 class ParserToken t => CaseCons t s | s -> t where
     caseCons :: (t -> s -> a) -> a -> s -> a
+    -- | The longest run of tokens the predicate takes, and what is left
+    --   after it.  One at a time unless the input knows better, which a
+    --   ByteString does.
+    spanCons :: (t -> Bool) -> s -> ([t], s)
+    spanCons p = loop
+      where
+        loop s = caseCons taken ([], s) s
+          where
+            taken t ts
+                | p t = let (us, s') = loop ts in (t : us, s')
+                | otherwise = ([], s)
+    {-# INLINEABLE spanCons #-}
 
 class (Monad m, Alternative m, CaseCons t s) => MonadParser t s m | m -> s where
     getInput     :: m s
@@ -54,11 +67,13 @@ instance CaseCons Word8 BS.ByteString where
     caseCons c n bs
         | BS.null bs  = n
         | otherwise   = c (BS.head bs) (BS.tail bs)
+    spanCons p bs = case BS.span p bs of (run, rest) -> (BS.unpack run, rest)
 
 instance CaseCons Word8 LB.ByteString where
     caseCons c n bs
         | LB.null bs  = n
         | otherwise   = c (LB.head bs) (LB.tail bs)
+    spanCons p bs = case LB.span p bs of (run, rest) -> (LB.unpack run, rest)
 
 instance ParserToken a => CaseCons a [a] where
     caseCons c n xxs = case xxs of
@@ -95,6 +110,24 @@ peek = caseCons cons nil =<< getInput
   where
     cons t _ = pure t
     nil = parseError "peek: eof"
+
+-- | As many tokens in a row as the predicate takes, taken at once.
+--
+--   'satisfy' reads the input, reads and writes the position and writes
+--   the input back for every token; a run of a hundred bytes is a
+--   hundred of each.  The input finds the end of the run by itself --
+--   for a ByteString that is a scan and no allocation -- and the
+--   position moves once for the lot.
+{-# INLINEABLE spanning #-}
+spanning :: MonadParser t s m => (t -> Bool) -> m [t]
+spanning p = do
+    s <- getInput
+    case spanCons p s of
+        (ts, s') -> do
+            pos <- getPos
+            putPos $ foldl' (flip proceed) pos ts
+            putInput s'
+            pure ts
 
 {-# INLINEABLE token #-}
 token :: MonadParser t s m => m t
