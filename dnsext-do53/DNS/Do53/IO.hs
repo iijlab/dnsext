@@ -6,6 +6,7 @@ module DNS.Do53.IO (
     -- * Receiving DNS messages
     recvTCP,
     recvVC,
+    makeRecvVC,
 
     -- * Sending pre-encoded messages
     sendTCP,
@@ -68,9 +69,30 @@ makeAddrInfo a p =
 -- | Receiving data from a virtual circuit.
 -- This function returns exactly-necessary-length data.
 -- If necessary-length data is not received, an exception is thrown.
+--
+-- A reader is made for the one message and thrown away with it, so
+-- whatever the socket handed over beyond that message goes too.  That
+-- is only safe where nothing else is coming: for a connection which
+-- carries more than one message, use 'makeRecvVC' and keep the reader
+-- it gives.
 recvVC :: VCLimit -> IO BS -> IO BS
 recvVC lim rcv = do
     recvN <- makeRecvN "" rcv
+    recvVCwith lim recvN
+
+-- | A reader for a virtual circuit, made once for the connection.
+--
+-- What a read brings back beyond the message being asked for belongs to
+-- the next one, and the reader is what holds it.  Made afresh for each
+-- message, as 'recvVC' does, it takes those octets with it when it
+-- goes: a peer which sends its next answer without waiting -- which is
+-- what answering a pipelined query looks like -- has everything after
+-- the first message in a read dropped.
+makeRecvVC :: VCLimit -> IO BS -> IO (IO BS)
+makeRecvVC lim rcv = recvVCwith lim <$> makeRecvN "" rcv
+
+recvVCwith :: VCLimit -> (Int -> IO BS) -> IO BS
+recvVCwith lim recvN = do
     b2 <- recvN 2
     let len = decodeVCLength b2
     when (fromIntegral len > lim) $

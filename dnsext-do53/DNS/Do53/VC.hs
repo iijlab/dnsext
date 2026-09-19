@@ -34,7 +34,9 @@ type RVar = MVar (Either DNSError Reply)
 tcpPersistentResolver :: PersistentResolver
 tcpPersistentResolver ri@ResolveInfo{..} body = E.bracket open close $ \sock -> do
     let send = sendVC $ sendTCP sock
-        recv = recvVC rinfoVCLimit $ recvTCP sock
+    -- One reader for the connection, not one for each message: see
+    -- 'makeRecvVC'.
+    recv <- makeRecvVC rinfoVCLimit $ recvTCP sock
     vcPersistentResolver tag send recv ri body
   where
     tag = nameTag ri "TCP"
