@@ -2,6 +2,7 @@
 
 module Types where
 
+import Control.Concurrent.STM
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.IP
@@ -139,6 +140,29 @@ data Transfer
     | -- | It may not, and there is nothing more to say about it
       TransferRefused
 
+-- | How many of something may be going on at once.  A connection and a
+--   transfer each hold one of these for as long as they last, so that a
+--   peer, or a hundred of them, cannot have as many as it likes.
+newtype Slots = Slots (TVar Int)
+
+newSlots :: Int -> IO Slots
+newSlots n = Slots <$> newTVarIO n
+
+-- | One of them, and the action which gives it back, or 'Nothing'
+--   where they are all taken.
+takeSlot :: Slots -> IO (Maybe (IO ()))
+takeSlot (Slots var) = atomically $ do
+    free <- readTVar var
+    if free <= 0
+        then return Nothing
+        else do
+            writeTVar var $ free - 1
+            return $ Just $ atomically $ modifyTVar' var (+ 1)
+
+-- | Closing off an answer: encoding it for the transport it goes over,
+--   and signing it where the query it answers was signed.
+type Seal = DNSMessage -> ByteString
+
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
     , sendReply :: SockAddr -> ByteString -> IO ()
@@ -156,4 +180,8 @@ data Proto = Proto
     --   waiting for a query: see 'Network.Run.TCP.Timeout' and the
     --   note on the TCP server.  Identity where no zone is ever handed
     --   over, which is every transport but TCP.
+    , transferSlot :: IO (Maybe (IO ()))
+    -- ^ Room to hand a zone over, and the action which gives the room
+    --   back.  'Nothing' when as many transfers are already going on as
+    --   the configuration allows.
     }

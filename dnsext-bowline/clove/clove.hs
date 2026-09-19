@@ -67,7 +67,19 @@ main = reportingError $ do
         void $ installHandler sigHUP (Catch onHUP) Nothing
         mapM_ (void . forkIO . syncZone env) zonerefs
         -- AXFR servers: TCP
-        let as = map (tcpServer env keys zoneAlist (show cnf_tcp_port) cnf_transfer_time_limit) cnf_tcp_addrs
+        -- Counted across every address clove listens on, not once per
+        -- address: a limit which each listener kept for itself would
+        -- be as many times the limit as there are addresses.
+        clients <- newSlots cnf_tcp_clients
+        transfers <- newSlots cnf_transfers_out
+        let tcpConf =
+                TCPConf
+                    { tcpClientTimeout = cnf_tcp_client_timeout
+                    , tcpTransferLimit = cnf_transfer_time_limit
+                    , tcpClients = clients
+                    , tcpTransfers = transfers
+                    }
+            as = map (tcpServer env keys zoneAlist (show cnf_tcp_port) tcpConf) cnf_tcp_addrs
         -- Authoritative servers: UDP
         ss <- mapM (serverSocket cnf_udp_port) cnf_udp_addrs
         let cs = map (udpServer env keys zoneAlist) ss
@@ -144,6 +156,9 @@ udpServer env keys zoneAlist s = Auth.server env keys proto zoneAlist
             , recvErrorFatal = False
             , replyLimit = Just . udpReplyLimit
             , duringTransfer = id
+            , -- A zone is never handed over on a datagram: allowAXFR
+              -- above refuses every one of them.
+              transferSlot = return $ Just $ return ()
             }
 
 -- | RFC 1035 Sec 4.2.1 limits a UDP message to 512 bytes.  RFC 6891
@@ -155,30 +170,6 @@ udpReplyLimit query = fromIntegral $ case ednsHeader query of
     _ -> minUdpSize
 
 ----------------------------------------------------------------
-
--- | How long a TCP connection may sit idle before it is closed.
---
---   RFC 7766 Sec 6.2.3 asks for an idle period "on the order of
---   seconds" and for at least a few of them, so that a client can make
---   the SOA and the AXFR of one refresh on one connection -- which RFC
---   1035 Sec 4.2.2 asked for first, along with not closing a connection
---   until what was asked for has been answered.
---
---   Idle is the word.  The same value used to run from the moment the
---   connection was accepted, whatever was happening on it, because the
---   timeout handle the server is handed was never touched: a transfer to
---   a far end which read it slowly was cut in half, and a client asking
---   a question every few seconds was cut off in the middle of a
---   conversation.  Every message received and every message sent now
---   puts the deadline off.
---
---   Thirty seconds rather than the ten it was, which is also what BIND
---   uses.  A send which blocks because the far end is reading slowly
---   cannot say so until it completes, and a peer whose window updates
---   come in large steps can hold one send for a good many seconds; ten
---   was inside that range.
-tcpIdleTimeout :: Int
-tcpIdleTimeout = 30
 
 -- | Largest query clove will read off a connection, in octets.  A DNS
 --   message over TCP can announce up to 65535, and nothing we answer
@@ -203,7 +194,8 @@ tcpDrainTimeout = 30 * 1000
 -- | Handing a zone over, with the idle timeout of the connection out
 --   of the way and a limit of its own in its place.
 --
---   'tcpIdleTimeout' is how long to wait for the peer to say something.
+--   'tcpClientTimeout' is how long to wait for the peer to say
+--   something.
 --   A transfer is not a wait for the peer: it is us writing, and a
 --   write which blocks cannot say that it is making progress until it
 --   returns.  The kernel takes the first few hundred kilobytes at once
@@ -232,17 +224,52 @@ handingOver limit alive body = do
                 userError $
                     "transfer unfinished after transfer-time-limit of " ++ show limit ++ " seconds"
 
+-- | What the configuration says about connections and the transfers
+--   over them.
+data TCPConf = TCPConf
+    { tcpClientTimeout :: Int
+    -- ^ tcp-client-timeout: how long a connection may say nothing
+    --   before it is closed.
+    --
+    --   RFC 7766 Sec 6.2.3 asks for an idle period "on the order of
+    --   seconds" and for at least a few of them, so that a client can
+    --   make the SOA and the AXFR of one refresh on one connection --
+    --   which RFC 1035 Sec 4.2.2 asked for first, along with not
+    --   closing a connection until what was asked for has been
+    --   answered.
+    --
+    --   Idle is the word.  The same value used to run from the moment
+    --   the connection was accepted, whatever was happening on it,
+    --   because the timeout handle the server is handed was never
+    --   touched: a transfer to a far end which read it slowly was cut
+    --   in half, and a client asking a question every few seconds was
+    --   cut off in the middle of a conversation.  Every message
+    --   received and every message sent now puts the deadline off.
+    --
+    --   Thirty seconds by default rather than the ten it was, which is
+    --   also what BIND uses.  A send which blocks because the far end
+    --   is reading slowly cannot say so until it completes, and a peer
+    --   whose window updates come in large steps can hold one send for
+    --   a good many seconds; ten was inside that range.
+    , tcpTransferLimit :: Int
+    -- ^ transfer-time-limit
+    , tcpClients :: Slots
+    -- ^ tcp-clients
+    , tcpTransfers :: Slots
+    -- ^ transfers-out
+    }
+
 tcpServer
     :: Env
     -> TSIGKeys
     -> ZoneAlist
     -> ServiceName
-    -> Int
+    -> TCPConf
     -> HostName
     -> IO ()
-tcpServer env keys zoneAlist port limit addr =
-    runTCPServerWithSettings settings tcpIdleTimeout (Just addr) port $
-        \_tmgr alive s -> do
+tcpServer env keys zoneAlist port TCPConf{..} addr =
+    runTCPServerWithSettings settings tcpClientTimeout (Just addr) port $
+        \_tmgr alive s -> withClientSlot env tcpClients s $ do
             -- What a read brought back beyond the message it was
             -- asked for.  It belongs to the next one and has to be
             -- kept, or a peer which sends its next query without
@@ -266,11 +293,37 @@ tcpServer env keys zoneAlist port limit addr =
                         , recvErrorFatal = True
                         , -- A two byte length prefix: nothing to truncate.
                           replyLimit = const Nothing
-                        , duringTransfer = handingOver limit alive
+                        , duringTransfer = handingOver tcpTransferLimit alive
+                        , transferSlot = takeSlot tcpTransfers
                         }
             Auth.server env keys proto zoneAlist
   where
     settings = defaultServerSettings{settingsGracefulCloseTimeout = tcpDrainTimeout}
+
+-- | Serving a connection if clove is not already holding as many as
+--   tcp-clients allows, and dropping it at once if it is.
+--
+--   Dropped rather than left unaccepted: a listening socket cannot be
+--   told to stop accepting without stopping altogether, so the choice
+--   is to take the connection and end it.  The write side is shut down
+--   first so that the peer hears immediately, rather than waiting out
+--   the close grace of a connection which is not going to say
+--   anything.
+withClientSlot :: Env -> Slots -> Socket -> IO () -> IO ()
+withClientSlot env clients s body = do
+    got <- takeSlot clients
+    case got of
+        Just release -> body `E.finally` release
+        Nothing -> do
+            peer <- trySync $ getPeerName s
+            envPutLines
+                env
+                WARNING
+                Nothing
+                [ "    connections are all taken, so one was dropped"
+                    ++ either (const "") (\sa -> ", from " ++ show sa) peer
+                ]
+            void $ trySync $ shutdown s ShutdownSend
 
 ----------------------------------------------------------------
 
