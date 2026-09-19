@@ -17,7 +17,7 @@ import Network.Socket
 import System.Timeout (timeout)
 
 -- import System.IO.Error (annotateIOError)
--- import qualified DNS.Log as Log
+import qualified DNS.Log as Log
 
 import DNS.Do53.Do53 hiding (vcResolver)
 import DNS.Do53.IO
@@ -63,6 +63,9 @@ vcPersistentResolver tag send recv ResolveInfo{..} body = do
         atomicModifyIORef' ref (\m -> (IM.insert key var m, ()))
         atomically $ writeTQueue inpQ qry
         mres <- timeout (ractionTimeoutTime rinfoActions) $ takeMVar var
+        -- Nobody will take this one now, and what is left in the table
+        -- is what the answers are matched against.
+        when (isNothing mres) $ atomicModifyIORef' ref (\m -> (IM.delete key m, ()))
         return $ case mres of
             Nothing -> Left TimeoutExpired
             Just (Left e) -> Left e
@@ -87,8 +90,19 @@ vcPersistentResolver tag send recv ResolveInfo{..} body = do
                 E.throwIO e
             Right msg -> do
                 let key = fromIntegral $ identifier msg
-                Just var <- atomicModifyIORef' ref $ del key
-                putMVar var $ Right $ Reply tag msg 0 {- dummy -} $ BS.length bs
+                mvar <- atomicModifyIORef' ref $ del key
+                case mvar of
+                    Just var -> putMVar var $ Right $ Reply tag msg 0 {- dummy -} $ BS.length bs
+                    -- An answer nobody is waiting for: one which came
+                    -- twice, or one which came after its query gave up.
+                    -- It used to be a pattern match failure here, which
+                    -- took this thread and the whole connection with it.
+                    Nothing ->
+                        ractionLog
+                            rinfoActions
+                            Log.DEBUG
+                            Nothing
+                            ["vcPersistentResolver: an answer for ", show (identifier msg), " which nobody is waiting for"]
 
     cleanup ref e = do
         vars <- IM.elems <$> readIORef ref
