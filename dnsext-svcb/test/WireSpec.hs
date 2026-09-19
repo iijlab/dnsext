@@ -37,6 +37,9 @@ alpn p = param 1 $ BS.pack [fromIntegral (BS.length p)] <> p
 port :: ByteString
 port = param 3 $ BS.pack [1, 187]
 
+key16 :: Int -> ByteString
+key16 k = BS.pack [fromIntegral (k `div` 256), fromIntegral (k `mod` 256)]
+
 spec :: Spec
 spec = describe "SvcParams off the wire" $ do
     runIO $ runInitIO addResourceDataForSVCB
@@ -56,3 +59,33 @@ spec = describe "SvcParams off the wire" $ do
 
     it "are fine when there are none at all" $
         decode (svcbWith []) `shouldSatisfy` isRight
+
+    -- RFC 9460 Sec 7.1.1: an alpn with nothing in it is malformed, and
+    -- Sec 8 says the same of mandatory.  Both used to read back as an
+    -- empty list, which a caller cannot tell from a key which is not
+    -- there at all.
+    describe "an empty value" $ do
+        it "is refused for alpn" $
+            decode (svcbWith [param 1 ""]) `shouldSatisfy` isLeft
+
+        it "is refused for mandatory" $
+            decode (svcbWith [param 0 ""]) `shouldSatisfy` isLeft
+
+        it "is what no-default-alpn is" $
+            decode (svcbWith [alpn "h2", param 2 ""]) `shouldSatisfy` isRight
+
+    -- RFC 9460 Sec 8: mandatory "MUST NOT" name itself, MUST NOT name a
+    -- key which is not in the record, and MUST NOT repeat a key.  A
+    -- record which breaks any of those is malformed.
+    describe "mandatory" $ do
+        it "names keys which are there" $
+            decode (svcbWith [param 0 (key16 1), alpn "h2"]) `shouldSatisfy` isRight
+
+        it "is refused when it names a key which is not there" $
+            decode (svcbWith [param 0 (key16 3), alpn "h2"]) `shouldSatisfy` isLeft
+
+        it "is refused when it names itself" $
+            decode (svcbWith [param 0 (key16 0 <> key16 1), alpn "h2"]) `shouldSatisfy` isLeft
+
+        it "is refused when it names a key twice" $
+            decode (svcbWith [param 0 (key16 1 <> key16 1), alpn "h2"]) `shouldSatisfy` isLeft
