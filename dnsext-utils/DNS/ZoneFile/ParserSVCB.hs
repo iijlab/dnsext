@@ -42,7 +42,30 @@ rdatasSVCB dom =
 rdataSVCB :: MonadParser Token s m => m Domain -> m RData
 rdataSVCB dom = rd_svcb <$> svcPriority <*> (blank *> dom) <*> params
   where
-    params = toSvcParams <$> many (blank *> svcParam)
+    params = toSvcParams <$> svcParams
+
+-- | The SvcParams of one record.
+--
+--   RFC 9460 Sec 2.1: in presentation format they may be written in any
+--   order, but "SvcParamKeys SHALL NOT be repeated".  They are held in
+--   a map, so a repeated key used to lose one of its two values without
+--   a word: a zone file saying @alpn=h2 alpn=h3@ loaded and served one
+--   of them.
+--
+--   A repeated key ends the list here rather than being refused where
+--   it is found, so what the reader is shown is the token left over --
+--   which is the second of the pair -- in the same way as every other
+--   thing wrong with a SvcParam.
+svcParams :: MonadParser Token s m => m [(SvcParamKey, SvcParamValue)]
+svcParams = go []
+  where
+    go seen = next seen <|> pure []
+    next seen = do
+        kv@(key, _) <- blank *> svcParam
+        when (key `elem` seen) $
+            parseError $
+                "zone-svcb: SvcParamKey given more than once: " ++ show key
+        (kv :) <$> go (key : seen)
 
 ---
 

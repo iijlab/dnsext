@@ -60,7 +60,7 @@ get_svcb len rbuf ref = do
     priority <- get16 rbuf
     target <- getDomain rbuf ref
     pos <- position rbuf
-    params <- newSvcParams <$> sGetMany "SVCB Param" (end - pos) svcparam rbuf ref
+    params <- inOrder =<< sGetMany "SVCB Param" (end - pos) svcparam rbuf ref
     return $ RD_SVCB priority target params
   where
     svcparam _ _ = do
@@ -68,6 +68,23 @@ get_svcb len rbuf ref = do
         lng <- getInt16 rbuf
         val <- getOpaque lng rbuf ref
         return (key, SvcParamValue val)
+
+-- | RFC 9460 Sec 2.2: "SvcParamKeys SHALL appear in increasing numeric
+--   order", which also says each one appears at most once.
+--
+--   The parameters are held in a map, so out of order and repeated keys
+--   used to be taken and quietly put right: the record was accepted
+--   where other implementations refuse it, one of a repeated pair was
+--   dropped without a word, and what went back out was not what came
+--   in.
+inOrder :: [(Int, SvcParamValue)] -> IO SvcParams
+inOrder kvs
+    | and (zipWith (<) keys (drop 1 keys)) = pure $ newSvcParams kvs
+    | otherwise =
+        failParser $
+            "SVCB: SvcParamKeys are not in strictly increasing order: " ++ show keys
+  where
+    keys = map fst kvs
 
 rd_svcb :: Word16 -> Domain -> SvcParams -> RData
 rd_svcb p d s = toRData $ RD_SVCB p d s
