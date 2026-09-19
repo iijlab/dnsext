@@ -14,7 +14,7 @@ module DNS.ZoneFile.Parser where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State.Strict
 import Data.Functor
 
 -- dnsext-* packages
