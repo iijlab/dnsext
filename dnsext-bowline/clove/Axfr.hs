@@ -122,7 +122,7 @@ minRRSize = 12
 --   the transfer or whether an address did.
 transfer :: Env -> Proto -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
 transfer Env{..} Proto{..} zone sender sa query = do
-    batches <- axfrBatches asSent $ dbAll $ zoneDB zone
+    batches <- zoneCutUp zone reply
     sent <- newIORef (0 :: Int)
     let send bs = sendReply sa bs >> modifyIORef' sent (+ 1)
         -- What was written, once it has been written.  Said before the
@@ -142,11 +142,6 @@ transfer Env{..} Proto{..} zone sender sa query = do
   where
     zoneRep = toRepresentation $ zoneName zone
     signedly = maybe "" (const ", signed") mkey
-    asSent batch = case mkey of
-        Nothing -> withAnswer batch
-        -- Of the size and the names the real record will have,
-        -- which is all the measuring needs of it.
-        Just key -> (withAnswer batch){additional = [tsigPlaceholder key]}
     reply = fromQuery query
     mkey = senderKey sender
     client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
@@ -174,6 +169,50 @@ transfer Env{..} Proto{..} zone sender sa query = do
                 AfterFirst prior _ -> signTSIGCont key now defaultFudge prior [body]
         send $ encode (withAnswer batch){additional = [rr]}
         signAndSend send now key (AfterFirst mac []) rest
+
+-- | A TSIG of the largest a TSIG can be: a key name of the longest a
+--   name may be, the longest algorithm name there is, and an untruncated
+--   SHA-512 MAC.
+--
+--   The cut below is measured with this rather than with the key the
+--   request came with, so that it does not depend on who is asking and
+--   can be worked out once for the zone.  A real signature is never
+--   larger, so a message which fits with this fits with that; what it
+--   costs is the few hundred octets of slack in each message, out of
+--   'axfrLimit'.
+widestTSIG :: ResourceRecord
+widestTSIG = tsigPlaceholder $ TSIGKey longestName HMAC_SHA512 BS.empty
+  where
+    -- 255 octets on the wire: four labels, three of the 63 a label may
+    -- hold and one of 61, and the root.
+    longestName = fromRepresentation $ intercalate "." [label 63, label 63, label 63, label 61] ++ "."
+    label n = replicate n 'a'
+
+-- | The zone cut into messages, worked out once and kept.
+--
+--   It used to be worked out for every request.  The cut is decided by
+--   asking the encoder what fits, which for each message is a handful
+--   of encodings of up to 'axfrLimit' octets, so the zone is encoded
+--   something like ten times over: 0.31 s of processor for a zone of
+--   sixty thousand records and 1.07 s for one of a hundred and eighty
+--   thousand, every time anybody asked.  Fifty requests at once left an
+--   ordinary query waiting eleven seconds behind them.
+zoneCutUp :: Zone -> DNSMessage -> IO [[ResourceRecord]]
+zoneCutUp zone reply = do
+    cached <- readIORef $ zoneBatches zone
+    case cached of
+        Just batches -> return batches
+        Nothing -> do
+            batches <- axfrBatches asSent $ dbAll $ zoneDB zone
+            -- Two transfers starting together may both do this, and
+            -- both get the same answer; the second write is the same
+            -- as the first.
+            writeIORef (zoneBatches zone) $ Just batches
+            return batches
+  where
+    -- Of the size and the names the real record will have, which is
+    -- all the measuring needs of it.
+    asSent batch = (reply{answer = batch}){additional = [widestTSIG]}
 
 -- | Spreading the records of a zone over as many messages as they need.
 --   RFC 5936 Sec 2.2 lets a transfer be split anywhere so long as it
