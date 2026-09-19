@@ -146,7 +146,7 @@ resolveExactDC dc n typ
     mdc = maxNotSublevelDelegation
     getAnchor = do
         stub <- asksEnv stubZones_
-        maybe refreshRoot pure $ Stub.lookupStub stub n
+        maybe refreshRoot (fillDelegationDNSKEY 0) $ Stub.lookupStub stub n
     request nss@Delegation{..} = do
         checkEnabled <- getCheckEnabled
         short <- asksEnv shortLog_
