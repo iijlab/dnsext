@@ -115,7 +115,7 @@ server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
                                         mx <- allowAXFR sa sender query zoneAlist
                                         case mx of
                                             TransferOk zone ->
-                                                transfer env proto zone sender sa query
+                                                transfer env proto seal zone sender sa query
                                             TransferRefused ->
                                                 sendReply sa $ seal $ refusal query
                                     else response proto seal zoneAlist sa query dom
@@ -196,10 +196,6 @@ replyFormErr :: Proto -> DNSMessage -> ByteString
 replyFormErr proto query = encodeReply proto query $ (fromQuery query){rcode = FormatErr}
 
 ----------------------------------------------------------------
-
--- | Closing off an answer: encoding it for the transport it goes over,
---   and signing it where the query it answers was signed.
-type Seal = DNSMessage -> ByteString
 
 -- | Looking at the TSIG on a message, where it has one (RFC 8945 Sec
 --   5.2).  What comes back is either the key it was signed with, for

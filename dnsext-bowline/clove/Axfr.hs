@@ -120,26 +120,48 @@ minRRSize = 12
 --   with the key the request came with, where it came with one: RFC
 --   8945 Sec 5.3 asks that of us whether the key is also what granted
 --   the transfer or whether an address did.
-transfer :: Env -> Proto -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
-transfer Env{..} Proto{..} zone sender sa query = do
-    batches <- zoneCutUp zone reply
-    sent <- newIORef (0 :: Int)
-    let send bs = sendReply sa bs >> modifyIORef' sent (+ 1)
-        -- What was written, once it has been written.  Said before the
-        -- transfer began, it was a count of what we meant to send, and
-        -- a transfer which did not finish -- a slow peer, a peer which
-        -- stopped reading -- left a line saying it had.
-        told what = do
-            n <- readIORef sent
-            envPutLines NOTICE Nothing ["    axfr @" ++ client' ++ "/TCP \"" ++ zoneRep ++ "\": " ++ what n]
-        finished n = show n ++ " message(s)" ++ signedly
-        unfinished n = "unfinished, " ++ show n ++ " of " ++ show (length batches) ++ " message(s)" ++ signedly
-    (`E.onException` told unfinished) $ do
-        duringTransfer $ case sender of
-            Unsigned -> mapM_ (send . encode . withAnswer) batches
-            SignedWith key requestMAC now -> signAndSend send now key (AtFirst $ Just requestMAC) batches
-        told finished
+transfer :: Env -> Proto -> Seal -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
+transfer Env{..} Proto{..} seal zone sender sa query = do
+    room <- transferSlot
+    case room of
+        Nothing -> tooMany
+        Just release -> handOver `E.finally` release
   where
+    -- RFC 5936 has nothing to say for "not now", and this is not a
+    -- refusal: the peer is allowed the zone and should come back for
+    -- it, which is what a secondary does with a SERVFAIL at its retry
+    -- interval.  Worth a line, since it is the configuration speaking.
+    tooMany = do
+        envPutLines
+            NOTICE
+            Nothing
+            [ "    axfr @"
+                ++ client'
+                ++ "/TCP \""
+                ++ zoneRep
+                ++ "\": as many transfers as transfers-out allows are already going on"
+            ]
+        sendReply sa $ seal $ (fromQuery query){rcode = ServFail}
+
+    handOver = do
+        batches <- zoneCutUp zone reply
+        sent <- newIORef (0 :: Int)
+        let send bs = sendReply sa bs >> modifyIORef' sent (+ 1)
+            -- What was written, once it has been written.  Said before
+            -- the transfer began, it was a count of what we meant to
+            -- send, and a transfer which did not finish -- a slow peer,
+            -- a peer which stopped reading -- left a line saying it had.
+            told what = do
+                n <- readIORef sent
+                envPutLines NOTICE Nothing ["    axfr @" ++ client' ++ "/TCP \"" ++ zoneRep ++ "\": " ++ what n]
+            finished n = show n ++ " message(s)" ++ signedly
+            unfinished n = "unfinished, " ++ show n ++ " of " ++ show (length batches) ++ " message(s)" ++ signedly
+        (`E.onException` told unfinished) $ do
+            duringTransfer $ case sender of
+                Unsigned -> mapM_ (send . encode . withAnswer) batches
+                SignedWith key requestMAC now -> signAndSend send now key (AtFirst $ Just requestMAC) batches
+            told finished
+
     zoneRep = toRepresentation $ zoneName zone
     signedly = maybe "" (const ", signed") mkey
     reply = fromQuery query
