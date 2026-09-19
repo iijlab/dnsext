@@ -2,7 +2,7 @@
 
 module VCSpec (spec) where
 
-import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
 import qualified Control.Exception as E
 import Control.Monad (forever, void)
@@ -35,6 +35,21 @@ spec = describe "a persistent connection" $ do
         withAnswering 1 $ \port -> do
             rs <- resolveAll port [name i | i <- [1 .. 3]]
             map (fmap replied) rs `shouldBe` map (Right . Just) [name i | i <- [1 .. 3]]
+
+    -- An answer nobody is waiting for -- a duplicate, or one which comes
+    -- after its query gave up -- used to be a pattern match failure in
+    -- the thread which reads, and that thread taking the resolver with
+    -- it.
+    it "carries on when an answer arrives twice" $
+        withDuplicating $ \port -> do
+            out <- newIORef []
+            tcpPersistentResolver (resolveInfo port) $ \ask -> do
+                a <- ask (Question (name 1) A IN) mempty
+                threadDelay 300000 {- let the second copy arrive -}
+                b <- ask (Question (name 2) A IN) mempty
+                writeIORef out [a, b]
+            rs <- readIORef out
+            map (fmap replied) rs `shouldBe` [Right (Just (name 1)), Right (Just (name 2))]
 
 name :: Int -> Domain
 name i = fromRepresentation $ "h" ++ show i ++ ".example."
@@ -75,6 +90,18 @@ withAnswering batch = withServer $ \conn ->
                 (bs, rest') <- oneMessage conn rest
                 go rest' (answerTo bs : held)
      in go BS.empty []
+
+-- | A server which answers, and then answers the same thing again.
+withDuplicating :: (PortNumber -> IO a) -> IO a
+withDuplicating = withServer $ \conn ->
+    let go rest = do
+            (bs, rest') <- oneMessage conn rest
+            let out = encodeVCLength (BS.length (answerTo bs)) <> answerTo bs
+            NSB.sendAll conn out
+            threadDelay 100000
+            NSB.sendAll conn out
+            go rest'
+     in go BS.empty
 
 answerTo :: ByteString -> ByteString
 answerTo bs = case decode bs of
