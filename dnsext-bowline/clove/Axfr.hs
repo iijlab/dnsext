@@ -18,7 +18,6 @@ import Data.List as List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
-import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 import System.Posix.Time (epochTime)
 import System.Timeout (timeout)
@@ -352,7 +351,7 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
     -- The records come back reversed, so the head is the last one seen:
     -- the transfer is over once that is the closing SOA.
     collect now sock rest chain racc = do
-        (bs, rest') <- recvMessage sock rest
+        (bs, rest') <- recvMessage vcLimitMax sock rest
         msg <- case decode bs of
             Left e -> E.ioError $ E.userError $ show e
             Right m -> return m
@@ -428,21 +427,3 @@ checkChain (Just key) now chain bs msg final = case chain of
         TSIGFailed e -> failed $ show e
     held n = if n == tsigKeyName key then Just key else Nothing
     failed why = E.ioError $ E.userError $ "TSIG: " ++ why
-
--- | Reading one length-prefixed message, keeping whatever was read past
---   it for the next one.
-recvMessage :: Socket -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
-recvMessage sock rest0 = do
-    (lenbs, rest1) <- recvExactly sock 2 rest0
-    recvExactly sock (fromIntegral $ decodeVCLength lenbs) rest1
-
-recvExactly :: Socket -> Int -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
-recvExactly sock n rest0 = go [rest0] (BS.length rest0)
-  where
-    go acc len
-        | len >= n = return $ BS.splitAt n $ BS.concat $ reverse acc
-        | otherwise = do
-            bs <- NSB.recv sock $ max 2048 (n - len)
-            if BS.null bs
-                then E.ioError $ E.userError "the connection closed in mid message"
-                else go (bs : acc) (len + BS.length bs)
