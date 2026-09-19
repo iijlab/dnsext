@@ -18,6 +18,7 @@ import System.IO (BufferMode (LineBuffering), IOMode (AppendMode), hClose, hPutS
 import System.IO.Error (ioeGetErrorString, isUserError)
 import System.Posix (Handler (Catch), installHandler, sigHUP)
 import qualified System.TimeManager as T
+import System.Timeout (timeout)
 
 import DNS.Auth.Algorithm
 import DNS.Log
@@ -65,7 +66,7 @@ main = reportingError $ do
         void $ installHandler sigHUP (Catch onHUP) Nothing
         mapM_ (void . forkIO . syncZone env) zonerefs
         -- AXFR servers: TCP
-        let as = map (tcpServer env keys zoneAlist (show cnf_tcp_port)) cnf_tcp_addrs
+        let as = map (tcpServer env keys zoneAlist (show cnf_tcp_port) cnf_transfer_time_limit) cnf_tcp_addrs
         -- Authoritative servers: UDP
         ss <- mapM (serverSocket cnf_udp_port) cnf_udp_addrs
         let cs = map (udpServer env keys zoneAlist) ss
@@ -141,6 +142,7 @@ udpServer env keys zoneAlist s = Auth.server env keys proto zoneAlist
             , protoName = "UDP"
             , recvErrorFatal = False
             , replyLimit = Just . udpReplyLimit
+            , duringTransfer = id
             }
 
 -- | RFC 1035 Sec 4.2.1 limits a UDP message to 512 bytes.  RFC 6891
@@ -191,14 +193,47 @@ tcpIdleTimeout = 30
 tcpDrainTimeout :: Int
 tcpDrainTimeout = 30 * 1000
 
+-- | Handing a zone over, with the idle timeout of the connection out
+--   of the way and a limit of its own in its place.
+--
+--   'tcpIdleTimeout' is how long to wait for the peer to say something.
+--   A transfer is not a wait for the peer: it is us writing, and a
+--   write which blocks cannot say that it is making progress until it
+--   returns.  The kernel takes the first few hundred kilobytes at once
+--   and then one send waits for the peer to make room, and a peer which
+--   reads slowly does not announce the room it has freed until a good
+--   part of its buffer is empty -- tens of seconds at a few kilobytes a
+--   second, whatever the size of the zone.  Measured against clove: a
+--   peer reading 8 kB a second was cut off after 850 kB of a 1.5 MB
+--   zone, not because anything was lost but because the connection
+--   looked idle for thirty seconds while a single send was blocked.
+--
+--   So the clock is stopped for as long as the zone is going out, and
+--   what bounds the transfer instead is how long the whole of it may
+--   take.  Something has to: a peer which asks for a zone and then
+--   stops reading altogether would otherwise hold a thread for ever.
+--   That is transfer-time-limit, an hour by default, which is long
+--   enough for a zone of a few megabytes to reach a peer on a very poor
+--   link and short enough to be a limit.
+handingOver :: Int -> T.Handle -> IO () -> IO ()
+handingOver limit alive body = do
+    done <- E.bracket_ (T.pause alive) (T.resume alive) $ timeout (limit * 1000000) body
+    case done of
+        Just () -> pure ()
+        Nothing ->
+            E.throwIO $
+                userError $
+                    "transfer unfinished after transfer-time-limit of " ++ show limit ++ " seconds"
+
 tcpServer
     :: Env
     -> TSIGKeys
     -> ZoneAlist
     -> ServiceName
+    -> Int
     -> HostName
     -> IO ()
-tcpServer env keys zoneAlist port addr =
+tcpServer env keys zoneAlist port limit addr =
     runTCPServerWithSettings settings tcpIdleTimeout (Just addr) port $
         \_tmgr alive s -> do
             let proto =
@@ -216,6 +251,7 @@ tcpServer env keys zoneAlist port addr =
                         , recvErrorFatal = True
                         , -- A two byte length prefix: nothing to truncate.
                           replyLimit = const Nothing
+                        , duringTransfer = handingOver limit alive
                         }
             Auth.server env keys proto zoneAlist
   where
