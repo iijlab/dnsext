@@ -194,6 +194,7 @@ module DNS.Types (
     consDomain,
     unconsDomain,
     wireLabels,
+    originalWireLabels,
     revLabels,
     superDomains',
     superDomains,

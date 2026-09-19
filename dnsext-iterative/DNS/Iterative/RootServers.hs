@@ -67,12 +67,18 @@ rootServers =
             , rdata = rd
             }
 
--- |
+-- | Reading a hints file.
+--
+--   A hints file writes the names of the root servers in upper case,
+--   as the published one does, and what comes back is the same names
+--   folded -- which is how a name is written whatever case it arrived
+--   in.
+--
 -- >>> (ns, ad) <- getRootServers "root.hints.test"
 -- >>> map ((,) <$> rrname <*> rdata) ns
--- [(".",M.ROOT-SERVERS.NET.)]
+-- [(".",m.root-servers.net.)]
 -- >>> map ((,) <$> rrname <*> rdata) ad
--- [("M.ROOT-SERVERS.NET.",202.12.27.33),("M.ROOT-SERVERS.NET.",2001:dc3::35)]
+-- [("m.root-servers.net.",202.12.27.33),("m.root-servers.net.",2001:dc3::35)]
 getRootServers :: FilePath -> IO ([ResourceRecord], [ResourceRecord])
 getRootServers hintPath = do
     rs <- Zone.parseFile hintPath "."
