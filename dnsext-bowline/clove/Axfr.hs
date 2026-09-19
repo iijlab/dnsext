@@ -84,10 +84,16 @@ tcpAllowAXFR sa sender msg zoneAlist = case List.lookup dom zoneAlist of -- exac
                     | otherwise -> TransferRefused
   where
     dom = qname $ question msg
-    byAddress zone = case fromSockAddr sa of
-        Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
-        Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
-        _ -> False
+    -- A route table is asked for one family or the other, so which
+    -- one the peer is has to be decided first, and an IPv4 peer seen
+    -- through a v6 socket is an IPv4 peer.  Without 'unmap' the
+    -- address ::ffff:192.0.2.1 is looked for among the IPv6 ranges,
+    -- where "allow-transfer-addrs: 192.0.2.1" is not, and the transfer
+    -- is refused without a word about why.
+    byAddress zone = case unmap . fst <$> fromSockAddr sa of
+        Just (IPv4 ip4) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
+        Just (IPv6 ip6) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
+        Nothing -> False
       where
         t4 = zoneAllowTransfer4 zone
         t6 = zoneAllowTransfer6 zone

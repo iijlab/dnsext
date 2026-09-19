@@ -39,6 +39,7 @@ import qualified Axfr
 import Config
 import Exception
 import KeyFile
+import Net (unmapRange)
 import Serial
 import TSIGKeys
 import Types
@@ -391,12 +392,18 @@ checkRRs (soarr : rrs) = case fromRData $ rdata soarr of
 readIP :: [String] -> [IP]
 readIP ss = mapMaybe readMaybe ss
 
+-- | The configuration's addresses, sorted into the two families the
+--   route tables are kept in.  A range written as IPv4-mapped goes with
+--   the IPv4 ones, since that is what it is and that is the table an
+--   IPv4 peer is looked for in.
 readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
 readIPRange ss0 = loop id id ss0
   where
     loop b4 b6 [] = (b4 [], b6 [])
     loop b4 b6 (s : ss)
-        | Just a6 <- readMaybe s = loop b4 (b6 . (a6 :)) ss
+        | Just a6 <- readMaybe s = case unmapRange a6 of
+            Just a4 -> loop (b4 . (a4 :)) b6 ss
+            Nothing -> loop b4 (b6 . (a6 :)) ss
         | Just a4 <- readMaybe s = loop (b4 . (a4 :)) b6 ss
         | otherwise = loop b4 b6 ss
 
