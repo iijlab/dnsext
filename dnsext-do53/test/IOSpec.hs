@@ -7,40 +7,33 @@ import Control.Exception (throwIO)
 import DNS.Do53.Internal
 import DNS.Types
 import Data.List.NonEmpty (NonEmpty (..))
+import Network.Socket (PortNumber)
 import Test.Hspec
+
+import FakeServer (withAnswering, withSilent)
 
 q :: Question
 q = Question "www.mew.org" A IN
 
-google :: ResolveInfo
-google =
+-- | A server on the loopback which answers, and one which does not.
+--   Both used to be somebody else's: the answering ones were 8.8.8.8
+--   and 1.1.1.1, so the suite needed the internet, and the silent ones
+--   were 192.0.2.1 and 192.0.2.2, so it needed those to be a black
+--   hole rather than an error.
+good :: PortNumber -> ResolveInfo
+good port =
     defaultResolveInfo
-        { rinfoIP = "8.8.8.8"
+        { rinfoIP = "127.0.0.1"
+        , rinfoPort = port
         , rinfoUDPRetry = 1
         , rinfoVCLimit = 8 * 1024
         }
 
-cloudflare :: ResolveInfo
-cloudflare =
+quiet :: PortNumber -> ResolveInfo
+quiet port =
     defaultResolveInfo
-        { rinfoIP = "1.1.1.1"
-        , rinfoUDPRetry = 1
-        , rinfoVCLimit = 8 * 1024
-        }
-
-bad0 :: ResolveInfo
-bad0 =
-    defaultResolveInfo
-        { rinfoIP = "192.0.2.1"
-        , rinfoActions = defaultResolveActions{ractionTimeoutTime = 100000}
-        , rinfoUDPRetry = 1
-        , rinfoVCLimit = 8 * 1024
-        }
-
-bad1 :: ResolveInfo
-bad1 =
-    defaultResolveInfo
-        { rinfoIP = "192.0.2.2"
+        { rinfoIP = "127.0.0.1"
+        , rinfoPort = port
         , rinfoActions = defaultResolveActions{ractionTimeoutTime = 100000}
         , rinfoUDPRetry = 1
         , rinfoVCLimit = 8 * 1024
@@ -48,35 +41,35 @@ bad1 =
 
 spec :: Spec
 spec = describe "solvers" $ do
-    it "resolves well with UDP" $ do
-        r <- udpResolver google q mempty
+    it "resolves well with UDP" $ withAnswering $ \port -> do
+        r <- udpResolver (good port) q mempty
         checkNoErr r
 
-    it "resolves well with TCP" $ do
-        r <- tcpResolver google q mempty
+    it "resolves well with TCP" $ withAnswering $ \port -> do
+        r <- tcpResolver (good port) q mempty
         checkNoErr r
 
-    it "resolves well concurrently (0)" $ do
-        let resolver = udpResolver
-            renv = ResolveEnv resolver True $ google :| [cloudflare]
+    it "resolves well concurrently (0)" $ withAnswering $ \p0 -> withAnswering $ \p1 -> do
+        let renv = ResolveEnv udpResolver True $ good p0 :| [good p1]
         r <- resolve renv q mempty
         checkNoErr r
 
-    it "resolves well concurrently (1)" $ do
-        let resolver = udpResolver
-            renv = ResolveEnv resolver True $ cloudflare :| [bad0]
+    it "resolves well concurrently (1)" $ withAnswering $ \p0 -> withSilent $ \p1 -> do
+        let renv = ResolveEnv udpResolver True $ good p0 :| [quiet p1]
         r <- resolve renv q mempty
         checkNoErr r
 
-    it "resolves well concurrently (2)" $ do
-        let resolver = udpResolver
-            renv = ResolveEnv resolver True $ bad0 :| [bad1]
+    -- Nobody answers, so every server runs out of tries.  This used to
+    -- depend on 192.0.2.1 and 192.0.2.2 swallowing a datagram; where
+    -- the kernel answers "network is unreachable" for them instead, it
+    -- got a NetworkFailure and failed.
+    it "resolves well concurrently (2)" $ withSilent $ \p0 -> withSilent $ \p1 -> do
+        let renv = ResolveEnv udpResolver True $ quiet p0 :| [quiet p1]
         r <- resolve renv q mempty
         either (Left . fst . unwrapDNSErrorInfo) Right r `shouldBe` Left RetryLimitExceeded
 
-dnsException :: Selector DNSError
-dnsException = const True
-
 checkNoErr :: Either DNSError Reply -> Expectation
 checkNoErr (Left e) = throwIO e
-checkNoErr (Right Reply{..}) = rcode replyDNSMessage `shouldBe` NoErr
+checkNoErr (Right Reply{..}) = do
+    rcode replyDNSMessage `shouldBe` NoErr
+    answer replyDNSMessage `shouldNotBe` []
