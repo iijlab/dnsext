@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Axfr (
     transfer,
@@ -123,22 +124,25 @@ minRRSize = 12
 transfer :: Env -> Proto -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
 transfer Env{..} Proto{..} zone sender sa query = do
     batches <- axfrBatches asSent $ dbAll $ zoneDB zone
-    envPutLines
-        NOTICE
-        Nothing
-        [ "    axfr @"
-            ++ client'
-            ++ "/TCP \""
-            ++ toRepresentation (zoneName zone)
-            ++ "\": "
-            ++ show (length batches)
-            ++ " message(s)"
-            ++ maybe "" (const ", signed") mkey
-        ]
-    duringTransfer $ case sender of
-        Unsigned -> mapM_ (sendReply sa . encode . withAnswer) batches
-        SignedWith key requestMAC now -> signAndSend now key (AtFirst $ Just requestMAC) batches
+    sent <- newIORef (0 :: Int)
+    let send bs = sendReply sa bs >> modifyIORef' sent (+ 1)
+        -- What was written, once it has been written.  Said before the
+        -- transfer began, it was a count of what we meant to send, and
+        -- a transfer which did not finish -- a slow peer, a peer which
+        -- stopped reading -- left a line saying it had.
+        told what = do
+            n <- readIORef sent
+            envPutLines NOTICE Nothing ["    axfr @" ++ client' ++ "/TCP \"" ++ zoneRep ++ "\": " ++ what n]
+        finished n = show n ++ " message(s)" ++ signedly
+        unfinished n = "unfinished, " ++ show n ++ " of " ++ show (length batches) ++ " message(s)" ++ signedly
+    (`E.onException` told unfinished) $ do
+        duringTransfer $ case sender of
+            Unsigned -> mapM_ (send . encode . withAnswer) batches
+            SignedWith key requestMAC now -> signAndSend send now key (AtFirst $ Just requestMAC) batches
+        told finished
   where
+    zoneRep = toRepresentation $ zoneName zone
+    signedly = maybe "" (const ", signed") mkey
     asSent batch = case mkey of
         Nothing -> withAnswer batch
         -- Of the size and the names the real record will have,
@@ -154,16 +158,23 @@ transfer Env{..} Proto{..} zone sender sa query = do
     -- name too many with it.
     -- RFC 8945 Sec 5.3.1 allows most messages of a transfer to go
     -- unsigned; signing all of them is simpler and is what it asks for.
-    signAndSend _ _ _ [] = return ()
-    signAndSend now key chain (batch : rest) = do
+    signAndSend
+        :: (BS.ByteString -> IO ())
+        -> EpochTime
+        -> TSIGKey
+        -> Chain
+        -> [[ResourceRecord]]
+        -> IO ()
+    signAndSend _ _ _ _ [] = return ()
+    signAndSend send now key chain (batch : rest) = do
         let body = encode $ withAnswer batch
             (rr, mac) = case chain of
                 -- The first message answers the request and is bound to
                 -- it; every one after is bound to the one before.
                 AtFirst mrequest -> signTSIG key now defaultFudge mrequest body
                 AfterFirst prior _ -> signTSIGCont key now defaultFudge prior [body]
-        sendReply sa $ encode (withAnswer batch){additional = [rr]}
-        signAndSend now key (AfterFirst mac []) rest
+        send $ encode (withAnswer batch){additional = [rr]}
+        signAndSend send now key (AfterFirst mac []) rest
 
 -- | Spreading the records of a zone over as many messages as they need.
 --   RFC 5936 Sec 2.2 lets a transfer be split anywhere so long as it
