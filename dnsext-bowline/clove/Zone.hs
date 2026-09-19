@@ -271,13 +271,25 @@ loadSourceWithSigning env z = case zoneSigning z of
     key = zoneSourceKey z
     zoneDir = zoneDirectory zone
 
+    -- An unsigned zone whose source has nothing new for us has nothing
+    -- new to build, so the database it is already answering from is
+    -- kept.  Building it again would give the same database, and for a
+    -- large zone that is seconds of work and a second copy of it in
+    -- memory beside the one in use, once every refresh interval, for
+    -- nothing.  A signed zone is the other case: its signatures age
+    -- whether the records do or not, which is what 'signed' below
+    -- rebuilds for.
     unsigned = do
         createDirectoryIfMissing True zoneDir
         mserial <- loadSerial zoneDir
-        (answered, rrs) <- reloadSource env key zone mserial source oldRRs
-        db <- makeDBforSecondary zone rrs
-        saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-        return $ Loaded db rrs answered
+        got <- loadSource env key zone (sinceSerial oldRRs mserial) source
+        case got of
+            Transferred rrs -> do
+                db <- makeDBforSecondary zone rrs
+                saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
+                return $ Loaded db rrs True
+            Unchanged -> return $ Loaded (zoneDB z) oldRRs True
+            Unreachable -> return $ Loaded (zoneDB z) oldRRs False
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
@@ -354,17 +366,19 @@ reloadSource
     -> [ResourceRecord]
     -> IO (Bool, [ResourceRecord])
 reloadSource env key zone mserial source oldRRs =
-    said <$> loadSource env key zone sinceSerial source
+    said <$> loadSource env key zone (sinceSerial oldRRs mserial) source
   where
     said (Transferred rrs) = (True, rrs)
     said Unchanged = (True, oldRRs)
     said Unreachable = (False, oldRRs)
-    -- With nothing to fall back on there is nothing to be gained by
-    -- asking only for what is newer: fetch the zone whatever the
-    -- stored serial says.
-    sinceSerial
-        | null oldRRs = Nothing
-        | otherwise = mserial
+
+-- | With nothing to fall back on there is nothing to be gained by
+--   asking only for what is newer: fetch the zone whatever the stored
+--   serial says.
+sinceSerial :: [ResourceRecord] -> Maybe Serial -> Maybe Serial
+sinceSerial oldRRs mserial
+    | null oldRRs = Nothing
+    | otherwise = mserial
 
 -- | Going to the source for the zone.  A file is always there to be
 --   read; an upstream may have nothing newer, or nothing to say.
