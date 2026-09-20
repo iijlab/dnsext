@@ -55,6 +55,7 @@ module DNS.Iterative.Server (
     enableVcTimeout,
     addVcPending,
     delVcPending,
+    handleTC,
     module DNS.Iterative.Server.CtlRecv,
 ) where
 

@@ -124,6 +124,7 @@ test-suite spec
         QuerySpec
         SessionPropSpec
         SessionSpec
+        TCSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
@@ -141,6 +142,7 @@ test-suite spec
         dnsext-utils,
         hspec,
         hspec-expectations,
+        network,
         stm
 
     if (os(windows) && impl(ghc >=9.0))
