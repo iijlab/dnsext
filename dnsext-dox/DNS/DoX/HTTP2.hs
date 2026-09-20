@@ -38,8 +38,10 @@ http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentRes
     -- TLS SNI
     settings <- makeSettings ri tag
     ident <- ractionGenId rinfoActions
-    H2TLS.runWithConfig config settings ipstr rinfoPort $
-        doHTTP tag ident ri body
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runWithConfig config settings ipstr rinfoPort $
+            onceUp established $
+                doHTTP tag ident ri body
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -50,8 +52,10 @@ http2Resolver :: OneshotResolver
 http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
     settings <- makeSettings ri tag
     ident <- ractionGenId rinfoActions
-    H2TLS.runWithConfig config settings ipstr rinfoPort $
-        doHTTPOneshot tag ident ri q qctl
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runWithConfig config settings ipstr rinfoPort $
+            onceUp established $
+                doHTTPOneshot tag ident ri q qctl
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -61,8 +65,10 @@ http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
 http2cPersistentResolver :: PersistentResolver
 http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $ do
     ident <- ractionGenId rinfoActions
-    H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-        doHTTP tag ident ri body
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
+            onceUp established $
+                doHTTP tag ident ri body
   where
     tag = nameTag ri "H2C"
     ipstr = show rinfoIP
@@ -73,8 +79,10 @@ http2cResolver :: OneshotResolver
 http2cResolver ri@ResolveInfo{..} q qctl = toDNSError "http2cResolver" $ do
     let tag = nameTag ri "H2C"
     ident <- ractionGenId rinfoActions
-    H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-        doHTTPOneshot tag ident ri q qctl
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
+            onceUp established $
+                doHTTPOneshot tag ident ri q qctl
   where
     ipstr = show rinfoIP
     -- HTTP :authority
@@ -105,6 +113,11 @@ resolv tag ident ResolveInfo{..} sendRequest q qctl = do
         Nothing -> "/dns-query"
         Just p -> fromShort $ Short.takeWhile (/= 0x7b) p -- '{'
     req = requestBuilder methodPost path hdr $ BB.byteString wire
+
+-- | Telling 'withHandshakeTimeout' that the connection is up, which is
+--   what being called at all means for a 'Client'.
+onceUp :: IO () -> Client a -> Client a
+onceUp established client sendRequest aux = established >> client sendRequest aux
 
 recvHTTP2 :: Response -> IO ByteString
 recvHTTP2 rsp = go id
