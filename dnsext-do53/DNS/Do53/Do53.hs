@@ -118,7 +118,7 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
     go qctl = bracket open close $ \sock -> do
         ractionSetSockOpt sock
         let send = NSB.send sock
-            recv = NSB.recv sock 2048
+            recv = NSB.recv sock
         ident <- ractionGenId
         loop rinfoUDPRetry ident qctl send recv
 
@@ -135,10 +135,15 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
 
     sendQueryRecvAnswer ident qctl send recv = do
         let qry = encodeQuery ident q qctl
+            -- Room for the answer the query says it can take.  2048 is
+            -- what this used to read whatever the query said, and it is
+            -- kept as a floor so that a peer which sends a little more
+            -- than it was offered is still heard out.
+            room = max 2048 $ fromIntegral $ queryUdpSize ident q qctl
         timeout ractionTimeoutTime $ do
             _ <- send qry
             let tx = BS.length qry
-            recvAnswer ident recv tx
+            recvAnswer ident (recv room) tx
 
     recvAnswer ident recv tx = do
         ans <- recv

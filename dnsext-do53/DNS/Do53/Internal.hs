@@ -40,6 +40,7 @@ module DNS.Do53.Internal (
 
     -- * Query
     encodeQuery,
+    queryUdpSize,
     modifyQuery,
     queryControls,
     CodeControls (..),

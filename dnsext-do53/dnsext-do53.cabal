@@ -97,6 +97,7 @@ test-suite spec
         FakeServer
         LookupSpec
         IOSpec
+        UDPSpec
         VCSpec
 
     default-language:   Haskell2010
