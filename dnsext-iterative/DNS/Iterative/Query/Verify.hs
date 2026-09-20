@@ -13,6 +13,7 @@ module DNS.Iterative.Query.Verify (
     cases,
     casesCanoicalize,
     casesVerify,
+    withVerifiedRRset,
 
     -- * RRSIG, sep DNSKEY verification, for tests
     rrWithRRSIG,
@@ -160,9 +161,12 @@ withVerifiedRRset reqCD now dnskeys0 wildcard RRset{..} sortedRDatas sigs0 vk =
   where
     mayVerified_ NoCheckDisabled  = notValidNoSig
     mayVerified_ CheckDisabled    = notValidCheckDisabled
-    noverify = (rrsTTL, mayVerified_ reqCD)
-    invalid err = (rrsTTL, notValidInvalid err)
-    valid goodSigs = (minimum $ rrsTTL : sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)
+    {- RFC 2181 Sec 8: what arrived with the top bit set counts as zero,
+       and each TTL is taken that way before the smallest is chosen -}
+    ttl = receivedTTL rrsTTL
+    noverify = (ttl, mayVerified_ reqCD)
+    invalid err = (ttl, notValidInvalid err)
+    valid goodSigs = (minimum $ ttl : map receivedTTL sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)
       where
         (sigrds, sigTTLs) = unzip goodSigs
         expireTTLs = [exttl | sig <- sigrds, let exttl = fromDNSTime (rrsig_expiration sig) - now, exttl > 0]
