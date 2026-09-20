@@ -18,6 +18,14 @@ on:
 env:
   GITHUB_PR_NUMBER: ${{github.event.pull_request.number}}
 
+# Pushing again to a branch which is still building leaves the earlier run
+# holding runners -- macOS slots in particular, where there are only five --
+# to produce a result nobody will read.  Not on main: that is where the cache
+# is written from, and a run cancelled partway never reaches the save step.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build-deb-and-tests:
     runs-on: ${{ matrix.os }}

@@ -8,6 +8,14 @@ on:
   release:
     types:
       - created
+# Pushing again to a branch which is still building leaves the earlier run
+# holding runners -- macOS slots in particular, where there are only five --
+# to produce a result nobody will read.  Not on main: that is where the cache
+# is written from, and a run cancelled partway never reaches the save step.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
