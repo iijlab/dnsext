@@ -30,7 +30,11 @@ tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolve
             let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
                 -- connection timeout, not query timeout
                 to = ractionTimeoutTime rinfoActions * 10
-                recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            -- One reader for the connection: recvTLS hands over a whole TLS
+            -- record, so two answers written together arrive together and
+            -- a reader made for each message would drop the second.
+            recvVC' <- makeRecvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            let recvDoT = withTimeout' to recvVC'
             vcPersistentResolver tag sendDoT recvDoT ri body
   where
     tag = nameTag ri "TLS"

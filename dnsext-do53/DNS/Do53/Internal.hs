@@ -7,6 +7,7 @@ module DNS.Do53.Internal (
     -- * Virtual circuit
     sendVC,
     recvVC,
+    makeRecvVC,
     BS,
 
     -- * Resolver
