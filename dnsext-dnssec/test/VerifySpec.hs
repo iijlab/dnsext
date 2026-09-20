@@ -9,7 +9,8 @@ import qualified Crypto.PubKey.RSA as RSA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Either (fromRight)
-import Data.List (sortOn)
+import Data.List (isInfixOf, sortOn)
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Word
 import Test.Hspec
@@ -67,6 +68,21 @@ spec = do
         it "Ed25519" $ caseRRSIG ed25519
         it "Ed448" $ caseRRSIG ed448
         it "some RData length" $ caseRRSIG someRDataLength
+
+    -- RFC 4035 Sec 5.3.2: an RRset which is a wildcard expansion was
+    -- signed under the name it was expanded from, and the name to put
+    -- in the signed data is "*." and the rightmost RRSIG Labels labels
+    -- of the owner name -- not the name the answer arrived under.
+    -- Nothing reconstructed it, so such an RRset could not be verified
+    -- through verifyRRSIG at all.
+    describe "verify RRSIG of a wildcard expansion" $ do
+        it "verifies against the name it was signed under" $
+            wildcardRRSIG 2 "a.example.net." `shouldReturn` Right ()
+        it "verifies a name expanded from further down" $
+            wildcardRRSIG 2 "a.b.example.net." `shouldReturn` Right ()
+        it "will not take an RRSIG which counts more labels than there are" $ do
+            r <- wildcardRRSIG 4 "a.example.net."
+            r `shouldSatisfy` either ("nlabel" `isInfixOf`) (const False)
     describe "NSEC3 hash" $ do
         it "RFC7129 section5" $ caseNSEC3Hash nsec3HashRFC7129
     describe "verify NSEC3" $ do
@@ -253,6 +269,26 @@ dsSHA384 =
             \ 6df983d6 "
 
 -----
+-- wildcard expansion
+
+-- | Signing an RRset under a wildcard name, then verifying it as it
+--      would be answered: expanded to @owner@, with the RRSIG saying how
+--      many labels were signed.
+wildcardRRSIG :: Word8 -> Domain -> IO (Either String ())
+wildcardRRSIG nlabels owner = do
+    signed <- sign' (rsaEncodePriKey rfc5702Pri) template [signedRR]
+    pure $ verifyRRSIG (toDNSTime 1000000000) "example.net." dnskey owner signed [expandedRR]
+  where
+    rd = rd_a "192.0.2.91"
+    signedRR = ResourceRecord "*.example.net." A IN 3600 rd
+    expandedRR = ResourceRecord owner A IN 3600 rd
+    dnskey = fromMaybe (error "wildcardRRSIG DNSKEY") $ fromRData rfc5702KeyRD
+    template =
+        fromMaybe (error "wildcardRRSIG RRSIG") $
+            fromRData $
+                rd_rrsig' A 8 nlabels 3600 "20300101000000" "20000101000000" 9033 "example.net." ""
+
+-----
 -- RRSIG cases
 
 data RRSIG_CASE = RRSIG_CASE
@@ -426,14 +462,7 @@ rsaSHA256 =
         , rrsig_prikey = Just $ rsaEncodePriKey pri
         }
   where
-    key_rd =
-        rd_dnskey'
-            256
-            3
-            8
-            " AwEAAcFcGsaxxdgiuuGmCkVI \
-            \ my4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8P \
-            \ kxUdp6p/DlUmObdk= "
+    key_rd = rfc5702KeyRD
     sig_rd =
         rd_rrsig'
             A
@@ -447,26 +476,44 @@ rsaSHA256 =
             " kRCOH6u7l0QGy9qpC9 \
             \ l1sLncJcOKFLJ7GhiUOibu4teYp5VE9RncriShZNz85mwlMgNEa \
             \ cFYK/lPtPiVYP4bwg== "
-    pub =
-        RSA.PublicKey
-            { RSA.public_size = 64 -- bytes, 512 bits
-            , RSA.public_n =
-                toI
-                    "wVwaxrHF2CK64aYKRUibLiH30KpPuPBjel7E8ZydQW1HYWHfoGmidzC2RnhwCC293hCzw+TFR2nqn8OVSY5t2Q=="
-            , RSA.public_e = toI "AQAB"
-            }
-    pri =
-        RSA.PrivateKey
-            { RSA.private_pub = pub
-            , RSA.private_d =
-                toI
-                    "UR44xX6zB3eaeyvTRzmskHADrPCmPWnr8dxsNwiDGHzrMKLN+i/HAam+97HxIKVWNDH2ba9Mf1SA8xu9dcHZAQ=="
-            , RSA.private_p = toI "4c8IvFu1AVXGWeFLLFh5vs7fbdzdC6U82fduE6KkSWk="
-            , RSA.private_q = toI "2zZpBE8ZXVnL74QjG4zINlDfH+EOEtjJJ3RtaYDugvE="
-            , RSA.private_dP = toI "G2xAPFfK0KGxGANDVNxd1K1c9wOmmJ51mGbzKFFNMFk="
-            , RSA.private_dQ = toI "GYxP1Pa7CAwtHm8SAGX594qZVofOMhgd6YFCNyeVpKE="
-            , RSA.private_qinv = toI "icQdNRjlZGPmuJm2TIadubcO8X7V4y07aVhX464tx8Q="
-            }
+    pub = rfc5702Pub
+    pri = rfc5702Pri
+
+-- | The key of the RFC 5702 Sec 6.1 example, which more than one case
+--   here signs and verifies with.
+rfc5702KeyRD :: RData
+rfc5702KeyRD =
+    rd_dnskey'
+        256
+        3
+        8
+        " AwEAAcFcGsaxxdgiuuGmCkVI \
+        \ my4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8P \
+        \ kxUdp6p/DlUmObdk= "
+
+rfc5702Pub :: RSA.PublicKey
+rfc5702Pub =
+    RSA.PublicKey
+        { RSA.public_size = 64 -- bytes, 512 bits
+        , RSA.public_n =
+            toI
+                "wVwaxrHF2CK64aYKRUibLiH30KpPuPBjel7E8ZydQW1HYWHfoGmidzC2RnhwCC293hCzw+TFR2nqn8OVSY5t2Q=="
+        , RSA.public_e = toI "AQAB"
+        }
+
+rfc5702Pri :: RSA.PrivateKey
+rfc5702Pri =
+    RSA.PrivateKey
+        { RSA.private_pub = rfc5702Pub
+        , RSA.private_d =
+            toI
+                "UR44xX6zB3eaeyvTRzmskHADrPCmPWnr8dxsNwiDGHzrMKLN+i/HAam+97HxIKVWNDH2ba9Mf1SA8xu9dcHZAQ=="
+        , RSA.private_p = toI "4c8IvFu1AVXGWeFLLFh5vs7fbdzdC6U82fduE6KkSWk="
+        , RSA.private_q = toI "2zZpBE8ZXVnL74QjG4zINlDfH+EOEtjJJ3RtaYDugvE="
+        , RSA.private_dP = toI "G2xAPFfK0KGxGANDVNxd1K1c9wOmmJ51mGbzKFFNMFk="
+        , RSA.private_dQ = toI "GYxP1Pa7CAwtHm8SAGX594qZVofOMhgd6YFCNyeVpKE="
+        , RSA.private_qinv = toI "icQdNRjlZGPmuJm2TIadubcO8X7V4y07aVhX464tx8Q="
+        }
 
 toI :: ByteString -> Integer
 toI = os2ip . B64.decodeLenient
