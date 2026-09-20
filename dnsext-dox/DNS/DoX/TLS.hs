@@ -4,6 +4,7 @@
 module DNS.DoX.TLS where
 
 import Codec.Serialise
+import Control.Concurrent
 import qualified Control.Exception as E
 import Data.ByteString.Char8 ()
 import qualified Data.ByteString.Lazy as BL
@@ -23,12 +24,14 @@ tlsPersistentResolver :: PersistentResolver
 tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolver" $ do
     settings <- makeSettings ri tag
     -- Using a fresh connection
-    H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-            -- connection timeout, not query timeout
-            to = ractionTimeoutTime rinfoActions * 10
-            recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
-        vcPersistentResolver tag sendDoT recvDoT ri body
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
+            established
+            let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
+                -- connection timeout, not query timeout
+                to = ractionTimeoutTime rinfoActions * 10
+                recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            vcPersistentResolver tag sendDoT recvDoT ri body
   where
     tag = nameTag ri "TLS"
 
@@ -71,11 +74,13 @@ tlsResolver :: OneshotResolver
 tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
     settings <- makeSettings ri tag
     -- Using a fresh connection
-    H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-            to = ractionTimeoutTime rinfoActions
-            recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
-        vcResolver tag sendDoT recvDoT ri q qctl
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
+            established
+            let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
+                to = ractionTimeoutTime rinfoActions
+                recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+            vcResolver tag sendDoT recvDoT ri q qctl
   where
     tag = nameTag ri "TLS"
 
@@ -92,3 +97,24 @@ withTimeout' to action = do
     case mres of
         Nothing -> E.throwIO TimeoutExpired
         Just res -> return res
+
+-- | Running an action which has to set a connection up before it can do
+--   anything.
+--
+--   Setting the connection up is outside the query timeout, which only
+--   covers reading an answer once there is somewhere to read it from.
+--   A peer which accepts the connection and then says nothing therefore
+--   used to leave us in the TLS handshake for as long as it cared to
+--   hold the socket open.  The timer here is stopped by the action
+--   itself, with the @IO ()@ it is handed, as soon as the connection is
+--   up, so that a connection which is meant to last is not cut off.
+withHandshakeTimeout :: ResolveInfo -> (IO () -> IO a) -> IO a
+withHandshakeTimeout ResolveInfo{..} action = do
+    up <- newEmptyMVar
+    caller <- myThreadId
+    E.bracket (forkIO $ watch caller up) killThread $ \_ ->
+        action $ void $ tryPutMVar up ()
+  where
+    watch caller up = do
+        got <- timeout (ractionTimeoutTime rinfoActions) $ takeMVar up
+        when (isNothing got) $ E.throwTo caller TimeoutExpired

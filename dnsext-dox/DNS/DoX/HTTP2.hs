@@ -37,9 +37,10 @@ http2PersistentResolver :: PersistentResolver
 http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentResolver" $ do
     -- TLS SNI
     settings <- makeSettings ri tag
-    ident <- ractionGenId rinfoActions
-    H2TLS.runWithConfig config settings ipstr rinfoPort $
-        doHTTP tag ident ri body
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runWithConfig config settings ipstr rinfoPort $
+            onceUp established $
+                doHTTP tag ri body
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -49,9 +50,10 @@ http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentRes
 http2Resolver :: OneshotResolver
 http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
     settings <- makeSettings ri tag
-    ident <- ractionGenId rinfoActions
-    H2TLS.runWithConfig config settings ipstr rinfoPort $
-        doHTTPOneshot tag ident ri q qctl
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runWithConfig config settings ipstr rinfoPort $
+            onceUp established $
+                doHTTPOneshot tag ri q qctl
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -59,10 +61,11 @@ http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
     config = H2.defaultClientConfig{H2.authority = fromMaybe ipstr rinfoServerName}
 
 http2cPersistentResolver :: PersistentResolver
-http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $ do
-    ident <- ractionGenId rinfoActions
-    H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-        doHTTP tag ident ri body
+http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
+            onceUp established $
+                doHTTP tag ri body
   where
     tag = nameTag ri "H2C"
     ipstr = show rinfoIP
@@ -72,33 +75,46 @@ http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentR
 http2cResolver :: OneshotResolver
 http2cResolver ri@ResolveInfo{..} q qctl = toDNSError "http2cResolver" $ do
     let tag = nameTag ri "H2C"
-    ident <- ractionGenId rinfoActions
-    H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-        doHTTPOneshot tag ident ri q qctl
+    withHandshakeTimeout ri $ \established ->
+        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
+            onceUp established $
+                doHTTPOneshot tag ri q qctl
   where
     ipstr = show rinfoIP
     -- HTTP :authority
     config = H2.defaultClientConfig{H2.authority = fromMaybe ipstr rinfoServerName}
 
+-- | RFC 8484 Sec 4.1: "In order to maximize HTTP cache friendliness,
+--   DoH clients using media type application\/dns-message SHOULD use a
+--   DNS ID of 0 in every DNS request."  The HTTP exchange is what pairs
+--   a query with its answer, so there is nothing left for an identifier
+--   to do.
+dohIdentifier :: Identifier
+dohIdentifier = 0
+
 resolv
     :: NameTag
-    -> Word16
     -> ResolveInfo
     -> SendRequest
     -> Resolver
-resolv tag ident ResolveInfo{..} sendRequest q qctl = do
-    sendRequest req $ \rsp -> do
-        when (responseStatus rsp /= Just ok200) $ E.throwIO OperationRefused
-        bs <- recvHTTP2 rsp
-        now <- getTime
-        case decodeAt now bs of
-            Left e -> E.throwIO e
-            Right msg -> case checkRespM q ident msg of -- fixme
-                Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
-                Just err -> return $ Left err
+resolv tag ResolveInfo{..} sendRequest q qctl = reportFailure $
+    sendRequest req $ \rsp ->
+        if responseStatus rsp /= Just ok200
+            then return $ Left OperationRefused
+            else do
+                bs <- recvHTTP2 rinfoVCLimit rsp
+                now <- getTime
+                case decodeAt now bs of
+                    Left e -> return $ Left e
+                    Right msg -> case checkRespM q dohIdentifier msg of
+                        Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
+                        Just err -> return $ Left err
   where
+    -- A Resolver does not throw: what goes wrong with this one answer
+    -- is this one answer's business and not the connection's.
+    reportFailure action = action `E.catch` \e -> return $ Left (e :: DNSError)
     getTime = ractionGetTime rinfoActions
-    wire = encodeQuery ident q qctl
+    wire = encodeQuery dohIdentifier q qctl
     tx = BS.length wire
     hdr = clientDoHHeaders tx
     path = case rinfoPath of
@@ -106,38 +122,54 @@ resolv tag ident ResolveInfo{..} sendRequest q qctl = do
         Just p -> fromShort $ Short.takeWhile (/= 0x7b) p -- '{'
     req = requestBuilder methodPost path hdr $ BB.byteString wire
 
-recvHTTP2 :: Response -> IO ByteString
-recvHTTP2 rsp = go id
+-- | Telling 'withHandshakeTimeout' that the connection is up, which is
+--   what being called at all means for a 'Client'.
+onceUp :: IO () -> Client a -> Client a
+onceUp established client sendRequest aux = established >> client sendRequest aux
+
+-- | Reading the body of an answer, and no more of it than a DNS message
+--   is allowed to be.
+--
+--   Every other transport bounds what it reads with the same limit.
+--   This one read the body to its end whatever its length, so a server
+--   which kept writing was answered by a client which kept reading.
+recvHTTP2 :: VCLimit -> Response -> IO ByteString
+recvHTTP2 lim rsp = go 0 id
   where
-    go build = do
+    go len build = do
         bs <- getResponseBodyChunk rsp
         if BS.null bs
             then
                 return $ BS.concat $ build []
-            else
-                go (build . (bs :))
+            else do
+                let len' = len + BS.length bs
+                when (fromIntegral len' > lim) $
+                    E.throwIO $
+                        DecodeError $
+                            "length is over the limit: should be len <= lim, but (len: "
+                                ++ show len'
+                                ++ ") > (lim: "
+                                ++ show lim
+                                ++ ") "
+                go len' (build . (bs :))
 
 doHTTP
     :: NameTag
-    -> Word16
     -> ResolveInfo
     -> (Resolver -> IO a)
     -> Client a
-doHTTP tag ident ri body sendRequest _aux =
-    body $ \q ctl -> withTimeout' to $ resolv tag ident ri sendRequest q ctl
-  where
-    to = ractionTimeoutTime $ rinfoActions ri
+doHTTP tag ri body sendRequest _aux =
+    body $ \q ctl -> withTimeout ri $ resolv tag ri sendRequest q ctl
 
 doHTTPOneshot
     :: NameTag
-    -> Identifier
     -> ResolveInfo
     -> Question
     -> QueryControls
     -> Client (Either DNSError Reply)
-doHTTPOneshot tag ident ri@ResolveInfo{..} q qctl sendRequest _aux = do
+doHTTPOneshot tag ri@ResolveInfo{..} q qctl sendRequest _aux = do
     ractionLog rinfoActions Log.DEMO Nothing [qtag]
-    withTimeout ri $ resolv tag ident ri sendRequest q qctl
+    withTimeout ri $ resolv tag ri sendRequest q qctl
   where
     ~qtag = queryTag q tag qctl
 

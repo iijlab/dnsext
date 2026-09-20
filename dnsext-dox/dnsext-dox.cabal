@@ -61,7 +61,11 @@ test-suite spec
     main-is:            Spec.hs
     build-tool-depends: hspec-discover:hspec-discover
     hs-source-dirs:     test
-    other-modules:      ResolverSpec
+    other-modules:
+        HTTP2Spec
+        ResolverSpec
+        SetupSpec
+
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
@@ -70,7 +74,11 @@ test-suite spec
         dnsext-do53,
         dnsext-dox,
         dnsext-types,
-        hspec
+        hspec,
+        http-types,
+        http2,
+        http2-tls,
+        network
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
