@@ -25,6 +25,26 @@ jobs:
       matrix:
         os:  [ 'ubuntu-latest', 'macOS-latest' ]
         ghc: [ '9.2', '9.4', '9.6', '9.8', '9.10', '9.12' ]
+        # GitHub runs at most five macOS jobs at once, and the five are the
+        # whole account's rather than this workflow's.  Six here meant one
+        # waited for another to finish within the run -- on the last run on
+        # main it started 744 s in, which is most of the difference between
+        # the longest job at 919 s and the run at 1545 s -- and it also meant
+        # that two runs at once had twelve jobs after five slots.  The second
+        # is the one which bites in practice: merging starts a run on main
+        # while the next branch is still building.
+        #
+        # Two, so that a run on main and a run on a branch fit in the five
+        # together.  9.6 is the one whose steps build the release binaries
+        # and the dug-mac-arm64 the Homebrew formula is pointed at, and 9.12
+        # is the newest.  What the other four were covering is the compiler,
+        # which Linux still runs all six of; what only macOS covers is the
+        # platform, and either job does that.
+        exclude:
+          - { os: macOS-latest, ghc: '9.2'  }
+          - { os: macOS-latest, ghc: '9.4'  }
+          - { os: macOS-latest, ghc: '9.8'  }
+          - { os: macOS-latest, ghc: '9.10' }
         include:
           - os: ubuntu-latest
             arch: amd64
