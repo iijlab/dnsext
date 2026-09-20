@@ -94,17 +94,22 @@ resolv
     -> ResolveInfo
     -> SendRequest
     -> Resolver
-resolv tag ident ResolveInfo{..} sendRequest q qctl = do
-    sendRequest req $ \rsp -> do
-        when (responseStatus rsp /= Just ok200) $ E.throwIO OperationRefused
-        bs <- recvHTTP2 rinfoVCLimit rsp
-        now <- getTime
-        case decodeAt now bs of
-            Left e -> E.throwIO e
-            Right msg -> case checkRespM q ident msg of -- fixme
-                Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
-                Just err -> return $ Left err
+resolv tag ident ResolveInfo{..} sendRequest q qctl = reportFailure $
+    sendRequest req $ \rsp ->
+        if responseStatus rsp /= Just ok200
+            then return $ Left OperationRefused
+            else do
+                bs <- recvHTTP2 rinfoVCLimit rsp
+                now <- getTime
+                case decodeAt now bs of
+                    Left e -> return $ Left e
+                    Right msg -> case checkRespM q ident msg of -- fixme
+                        Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
+                        Just err -> return $ Left err
   where
+    -- A Resolver does not throw: what goes wrong with this one answer
+    -- is this one answer's business and not the connection's.
+    reportFailure action = action `E.catch` \e -> return $ Left (e :: DNSError)
     getTime = ractionGetTime rinfoActions
     wire = encodeQuery ident q qctl
     tx = BS.length wire
@@ -152,9 +157,7 @@ doHTTP
     -> (Resolver -> IO a)
     -> Client a
 doHTTP tag ident ri body sendRequest _aux =
-    body $ \q ctl -> withTimeout' to $ resolv tag ident ri sendRequest q ctl
-  where
-    to = ractionTimeoutTime $ rinfoActions ri
+    body $ \q ctl -> withTimeout ri $ resolv tag ident ri sendRequest q ctl
 
 doHTTPOneshot
     :: NameTag
