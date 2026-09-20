@@ -41,11 +41,18 @@ quicResolver ri q qctl = do
   where
     tag = nameTag ri "QUIC"
 
+-- | RFC 9250 Sec 4.2.1: "When sending queries over a QUIC connection,
+--   the DNS Message ID MUST be set to 0."  The stream is what pairs a
+--   query with its answer, so there is nothing left for an identifier
+--   to do, and a peer which keeps to the RFC answers with zero whatever
+--   we sent.
+doqIdentifier :: Word16
+doqIdentifier = 0
+
 resolv :: Connection -> ResolveInfo -> Resolver
 resolv conn ri@ResolveInfo{..} q qctl = do
     strm <- stream conn
-    ident <- ractionGenId rinfoActions
-    let qry = encodeQuery ident q qctl
+    let qry = encodeQuery doqIdentifier q qctl
         tx = BS.length qry
     sendVC (sendStreamMany strm) qry
     shutdownStream strm
@@ -53,7 +60,7 @@ resolv conn ri@ResolveInfo{..} q qctl = do
     now <- getTime
     case decodeAt now bs of
         Left e -> return $ Left e
-        Right msg -> case checkRespM q ident msg of -- fixme
+        Right msg -> case checkRespM q doqIdentifier msg of
             Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
             Just err -> return $ Left err
   where
