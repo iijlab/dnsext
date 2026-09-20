@@ -8,8 +8,10 @@ import Control.Monad
 import DNS.Do53.Internal
 import DNS.DoX.Internal
 import DNS.Types
+import DNS.Types.Decode (decode)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteString)
+import Data.Either (isRight)
 import Data.IORef
 import Network.HTTP.Types
 import Network.HTTP2.Server
@@ -48,6 +50,28 @@ spec = describe "an answer over HTTP/2" $ do
                 [Left refused, Right _] -> show refused `shouldContain` "OperationRefused"
                 _ -> expectationFailure $ "two answers were expected, got " ++ show got
 
+    -- RFC 8484 Sec 4.1: "In order to maximize HTTP cache friendliness,
+    -- DoH clients using media type application/dns-message SHOULD use a
+    -- DNS ID of 0 in every DNS request."  A random one went out
+    -- instead, drawn once for the whole connection and then put on
+    -- every question asked over it.
+    it "asks with the identifier RFC 8484 asks for" $ do
+        seen <- newIORef []
+        withH2CServer (echoKeeping seen) $ \port -> do
+            r <- http2cResolver (resolveInfo port) theQuestion mempty
+            r `shouldSatisfy` isRight
+            reverse <$> readIORef seen `shouldReturn` [0]
+
+    it "asks with it on every question of a connection" $ do
+        seen <- newIORef []
+        withH2CServer (echoKeeping seen) $ \port -> do
+            _ <- outcomeOf $
+                http2cPersistentResolver (resolveInfo port) $ \resolver -> do
+                    _ <- resolver theQuestion mempty
+                    _ <- resolver theQuestion mempty
+                    pure ()
+            reverse <$> readIORef seen `shouldReturn` [0, 0]
+
 keep :: IORef [a] -> a -> IO ()
 keep ref x = modifyIORef' ref (x :)
 
@@ -77,6 +101,20 @@ bodyOf len _req _aux sendResponse = sendResponse rsp []
   where
     rsp = responseBuilder ok200 hdr $ byteString $ BS.replicate len 0
     hdr = [(hContentType, "application/dns-message")]
+
+-- | A server which answers by handing the question back, which is
+--   enough to be taken for an answer, and keeps the identifier it was
+--   asked with.
+echoKeeping :: IORef [Identifier] -> Server
+echoKeeping seen req _aux sendResponse = do
+    wire <- wholeBody req
+    case decode wire of
+        Left _ -> pure ()
+        Right msg -> keep seen $ identifier msg
+    sendResponse (responseBuilder ok200 dnsHeaders $ byteString wire) []
+
+dnsHeaders :: ResponseHeaders
+dnsHeaders = [(hContentType, "application/dns-message")]
 
 -- | A server which refuses the first question and echoes the second
 --   back as its own answer, which is enough to be taken for one.
