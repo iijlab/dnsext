@@ -79,6 +79,7 @@ test-suite spec
         EncodeSpec
         DecodeSpec
         RoundTripSpec
+        TypeSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall

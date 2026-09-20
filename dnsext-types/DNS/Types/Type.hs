@@ -33,7 +33,7 @@ module DNS.Types.Type (
     allTYPEs,
 ) where
 
-import Data.Char (toUpper)
+import Data.Char (isDigit, toUpper)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
@@ -219,9 +219,26 @@ instance Read TYPE where
             dict = unsafePerformIO $ readIORef globalTypeReadDict
         case M.lookup str dict of
             Just t -> return t
-            Nothing
-                | "TYPE" `isPrefixOf` str -> return $ toTYPE $ read $ drop 4 str
-                | otherwise -> fail "Read TYPE"
+            Nothing -> case stripPrefix "TYPE" str >>= typeNumber of
+                Just t -> return t
+                Nothing -> fail "Read TYPE"
+
+-- | RFC 3597 Sec 5: what a type with no mnemonic of its own is written
+--   as is \"TYPE\" and the decimal value.
+--
+--   The value used to be taken with 'read' into a 'Word16'.  That threw
+--   on anything which is not a number -- an ErrorCall out of pure
+--   code, which neither 'reads' nor 'readMaybe' can catch -- while
+--   'fromInteger' quietly wrapped a number too large to hold, so
+--   TYPE99999 read as TYPE34463 and TYPE-1 as TYPE65535.  The Haskell
+--   lexer also reads 0x10 as sixteen, which made TYPE0X10 another way
+--   of writing TXT.
+typeNumber :: String -> Maybe TYPE
+typeNumber ds = do
+    guard $ not (null ds) && all isDigit ds
+    n <- readMaybe ds
+    guard $ n <= 65535
+    pure $ toTYPE $ fromInteger n
 
 type TypeReadDict = Map String TYPE
 
