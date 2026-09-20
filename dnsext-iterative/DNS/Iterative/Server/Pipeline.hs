@@ -39,6 +39,7 @@ module DNS.Iterative.Server.Pipeline (
     logLn,
     retryUntil,
     exceptionCase,
+    handleTC,
 ) where
 
 -- GHC packages
@@ -223,7 +224,7 @@ encodeWithTC env peer reqEH res = handleUdpLimit (udpLimit_ env) reqEH res (hand
 handleTC :: Peer -> (DNSMessage -> BS -> a) -> Word16 -> DNSMessage -> a
 handleTC (PeerInfoUDP {}) h lim' r0
     | lim < BS.length bs1            = h tc (DNS.encode tc)  {- case: lim < len r1                               -}
-    | BS.length bs0 < lim            = h r0 bs0              {- case:                              len r0 <= lim -}
+    | BS.length bs0 <= lim           = h r0 bs0              {- case:                              len r0 <= lim -}
     | otherwise                      = h r1 bs1              {- case:       len r1 <= lim && lim < len r0        -}
   where
     ~bs0 = DNS.encode r0
