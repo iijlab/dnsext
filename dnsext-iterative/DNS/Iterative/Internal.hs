@@ -21,9 +21,12 @@ module DNS.Iterative.Internal (
     --
     rrWithRRSIG,
     sepDNSKEY,
+    withVerifiedRRset,
+    cacheSection,
 ) where
 
 import DNS.Iterative.Query.API
+import DNS.Iterative.Query.Cache (cacheSection)
 import DNS.Iterative.Query.Class
 import DNS.Iterative.Query.Env
 import DNS.Iterative.Query.Helpers

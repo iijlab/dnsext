@@ -237,7 +237,10 @@ cacheNoRRSIG rrs0 rank = do
         logLines Log.WARN $ prefix "no caching RR set:" : map (("\t" ++) . show) rrs0
     insert hrrs = do
         insertRRSet <- asksEnv insert_
-        hrrs $ \dom typ cls ttl rds -> do
+        maxTTL <- asksEnv maxCacheTTL_
+        hrrs $ \dom typ cls ttl0 rds -> do
+            {- RFC 2181 Sec 8: what arrived with the top bit set counts as zero -}
+            let ttl = min maxTTL $ receivedTTL ttl0
             plogLn Log.DEBUG $ unwords ["RRset:", show (((dom, typ, cls), ttl), rank), ' ' : show rds]
             liftIO $ Cache.noSig rds (pure ()) $ \crs -> insertRRSet (DNS.Question dom typ cls) ttl crs rank
     (_, sortedRRs) = unzip $ SEC.sortRDataCanonical rrs0

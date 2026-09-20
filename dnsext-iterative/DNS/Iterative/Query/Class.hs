@@ -119,6 +119,7 @@ data Env = Env
     , stubZones_ :: StubZones
     , negativeTrustAnchors_ :: NegTrustAnchors
     , maxNegativeTTL_ :: TTL
+    , maxCacheTTL_ :: TTL
     , failureRcodeTTL_ :: TTL
     , maxQueryCount_ :: Int
     , udpLimit_ :: Word16

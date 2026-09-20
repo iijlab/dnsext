@@ -9,6 +9,7 @@ module DNS.Iterative.Query.Env (
     newReloadInfo,
     --
     cropMaxNegativeTTL,
+    cropMaxCacheTTL,
     cropFailureRcodeTTL,
     --
     setRRCacheOps,
@@ -68,9 +69,9 @@ import DNS.RRCache (RRCacheOps (..))
 import qualified DNS.RRCache as Cache
 import DNS.SEC
 import DNS.TimeCache (TimeCache (..), getTime, noneTimeCache)
+import DNS.Transport.Types (Synthesis)
 import DNS.Types
 import DNS.Types.Time (getCurrentTimeUsec)
-import DNS.Transport.Types (Synthesis)
 import DNS.ZoneFile (Record (R_RR))
 import qualified DNS.ZoneFile as Zone
 
@@ -114,6 +115,7 @@ newEmptyEnv = do
         , stubZones_ = mempty
         , negativeTrustAnchors_ = mempty
         , maxNegativeTTL_ = 3600
+        , maxCacheTTL_ = 86400
         , failureRcodeTTL_ = 180
         , maxQueryCount_ = 64
         , udpLimit_ = 1200
@@ -199,6 +201,18 @@ cropMaxNegativeTTL nttl
     | nttl > 21600  = 21600
     | nttl <    30  =    30
     | otherwise     = fromIntegral nttl
+{- FOURMOLU_ENABLE -}
+
+{- FOURMOLU_DISABLE -}
+cropMaxCacheTTL :: Integral a => a -> TTL
+cropMaxCacheTTL ttl
+    {- RFC 2181 - 8. Time to Live (TTL)
+       https://datatracker.ietf.org/doc/html/rfc2181#section-8
+       "the TTL is a 31 bit unsigned number"  -}
+    | ttl > 0x7fffffff  = 0x7fffffff
+    {- keeping an answer for less than this is hardly keeping it -}
+    | ttl <         30  =         30
+    | otherwise         = fromIntegral ttl
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
