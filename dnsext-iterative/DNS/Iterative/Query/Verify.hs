@@ -138,7 +138,8 @@ casesVerify
     -> m b
 casesVerify reqCD dnskeys sigs rank wildcard crrset sortedRDatas rightK0 = do
     now <- liftIO =<< asksEnv currentSeconds_
-    withVerifiedRRset reqCD now dnskeys wildcard crrset sortedRDatas sigs verifiedK
+    maxTTL <- asksEnv maxCacheTTL_
+    withVerifiedRRset reqCD now maxTTL dnskeys wildcard crrset sortedRDatas sigs verifiedK
   where
     verifiedK vrrset@(RRset dom typ cls minTTL rds sigrds) = rightK0 vrrset logInv cache
       where
@@ -152,18 +153,22 @@ casesVerify reqCD dnskeys sigs rank wildcard crrset sortedRDatas rightK0 = do
 withVerifiedRRset
     :: RequestCD
     -> EpochTime
+    -> TTL
+    -- ^ the longest this RRset may be kept for
     -> [RD_DNSKEY]
     -> Domain -> RRset -> [(Int, DNS.Builder ())] -> [(RD_RRSIG, TTL)]
     -> (RRset -> a)
     -> a
-withVerifiedRRset reqCD now dnskeys0 wildcard RRset{..} sortedRDatas sigs0 vk =
+withVerifiedRRset reqCD now maxTTL dnskeys0 wildcard RRset{..} sortedRDatas sigs0 vk =
     vk $ RRset rrsName rrsType rrsClass minTTL rrsRDatas mayVerified
   where
     mayVerified_ NoCheckDisabled  = notValidNoSig
     mayVerified_ CheckDisabled    = notValidCheckDisabled
     {- RFC 2181 Sec 8: what arrived with the top bit set counts as zero,
-       and each TTL is taken that way before the smallest is chosen -}
-    ttl = receivedTTL rrsTTL
+       and each TTL is taken that way before the smallest is chosen.
+       maxTTL is the ceiling, and since only the smallest is taken from
+       here on it holds for whichever case wins -}
+    ttl = min maxTTL $ receivedTTL rrsTTL
     noverify = (ttl, mayVerified_ reqCD)
     invalid err = (ttl, notValidInvalid err)
     valid goodSigs = (minimum $ ttl : map receivedTTL sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)
@@ -500,21 +505,22 @@ nsecxWithRanges
 {- FOURMOLU_ENABLE -}
 nsecxWithRanges withZippedSigs dnskeys getRanked msg nullK leftK rightK = do
     now <- liftIO =<< asksEnv currentSeconds_
-    withSection getRanked msg $ runSection now
+    maxTTL <- asksEnv maxCacheTTL_
+    withSection getRanked msg $ runSection maxTTL now
   where
-    runSection now srrs rank = withZippedSigs srrs leftK $ runSigned now rank
+    runSection maxTTL now srrs rank = withZippedSigs srrs leftK $ runSigned maxTTL now rank
 
-    runSigned _now _rank [] = nullK
-    runSigned now rank rs@(_ : _) = either leftK (runVerified rank) $ mapM (verify now) rs
+    runSigned _maxTTL _now _rank [] = nullK
+    runSigned maxTTL now rank rs@(_ : _) = either leftK (runVerified rank) $ mapM (verify maxTTL now) rs
 
     runVerified rank vs = rightK vs $ doCache rank vs
 
     {- TODO: interval search psq cache -}
     doCache _rank vs = mapM_ (\(_range, _rrset@(RRset{})) -> pure ()) vs
 
-    verify now (rr, range, sigs) =
+    verify maxTTL now (rr, range, sigs) =
         canonicalRRset [rr] Left $ \rrset sortedRDatas ->
-            Right $ withVerifiedRRset NoCheckDisabled now dnskeys (rrsName rrset) rrset sortedRDatas sigs ((,) range)
+            Right $ withVerifiedRRset NoCheckDisabled now maxTTL dnskeys (rrsName rrset) rrset sortedRDatas sigs ((,) range)
 
 ---
 

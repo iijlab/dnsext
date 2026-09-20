@@ -20,7 +20,7 @@ import System.Posix (GroupID, UserID)
 import DNS.Config
 import DNS.Iterative.Internal (Address, LocalZoneType (..))
 import qualified DNS.Log as Log
-import DNS.Transport.Types (Synthesis (SynthNone, SynthDNS64))
+import DNS.Transport.Types (Synthesis (SynthDNS64, SynthNone))
 import DNS.Types (DNSError, Domain, OD_NSID (..), ResourceRecord (..), isSubDomainOf, maxUdpSize, minUdpSize)
 import DNS.ZoneFile (Context (cx_name, cx_zone), defaultContext, parseLineRR)
 
@@ -92,6 +92,7 @@ data Config = Config
     , cnf_webapi_addrs :: [String]
     , cnf_webapi_port :: PortNumber
     , cnf_cache_max_negative_ttl :: Int
+    , cnf_cache_max_ttl :: Int
     , cnf_cache_failure_rcode_ttl :: Int
     , cnf_interface_automatic :: Bool
     }
@@ -172,6 +173,7 @@ defaultConfig =
         , cnf_webapi_addrs = ["127.0.0.1"]
         , cnf_webapi_port = 8080
         , cnf_cache_max_negative_ttl = 3600
+        , cnf_cache_max_ttl = 86400
         , cnf_cache_failure_rcode_ttl = 180
         , cnf_interface_automatic = False
         }
@@ -260,6 +262,7 @@ showConfig2 conf =
     , field'_ "webapi addrs" (unwords . cnf_webapi_addrs)
     , field' "webapi port" cnf_webapi_port
     , field' "cache max negative ttl" cnf_cache_max_negative_ttl
+    , field' "cache max ttl" cnf_cache_max_ttl
     , field' "cache failure rcode ttl" cnf_cache_failure_rcode_ttl
     , field' "interface automatic" cnf_interface_automatic
     ]
@@ -346,6 +349,7 @@ makeConfig def conf = do
     cnf_webapi_addrs <- maybe id (:) compat_webapi_addr <$> get "webapi-addrs" cnf_webapi_addrs
     cnf_webapi_port <- get "webapi-port" cnf_webapi_port
     cnf_cache_max_negative_ttl <- get "cache-max-negative-ttl" cnf_cache_max_negative_ttl
+    cnf_cache_max_ttl <- get "cache-max-ttl" cnf_cache_max_ttl
     cnf_cache_failure_rcode_ttl <- get "cache-failure-rcode-ttl" cnf_cache_failure_rcode_ttl
     cnf_interface_automatic <- get "interface-automatic" cnf_interface_automatic
     let getCreds addrs certFile keyFile
