@@ -62,6 +62,7 @@ test-suite spec
     build-tool-depends: hspec-discover:hspec-discover
     hs-source-dirs:     test
     other-modules:
+        HTTP2Spec
         ResolverSpec
         SetupSpec
 
@@ -74,6 +75,9 @@ test-suite spec
         dnsext-dox,
         dnsext-types,
         hspec,
+        http-types,
+        http2,
+        http2-tls,
         network
 
     if (os(windows) && impl(ghc >=9.0))

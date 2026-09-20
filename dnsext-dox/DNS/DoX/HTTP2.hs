@@ -97,7 +97,7 @@ resolv
 resolv tag ident ResolveInfo{..} sendRequest q qctl = do
     sendRequest req $ \rsp -> do
         when (responseStatus rsp /= Just ok200) $ E.throwIO OperationRefused
-        bs <- recvHTTP2 rsp
+        bs <- recvHTTP2 rinfoVCLimit rsp
         now <- getTime
         case decodeAt now bs of
             Left e -> E.throwIO e
@@ -119,16 +119,31 @@ resolv tag ident ResolveInfo{..} sendRequest q qctl = do
 onceUp :: IO () -> Client a -> Client a
 onceUp established client sendRequest aux = established >> client sendRequest aux
 
-recvHTTP2 :: Response -> IO ByteString
-recvHTTP2 rsp = go id
+-- | Reading the body of an answer, and no more of it than a DNS message
+--   is allowed to be.
+--
+--   Every other transport bounds what it reads with the same limit.
+--   This one read the body to its end whatever its length, so a server
+--   which kept writing was answered by a client which kept reading.
+recvHTTP2 :: VCLimit -> Response -> IO ByteString
+recvHTTP2 lim rsp = go 0 id
   where
-    go build = do
+    go len build = do
         bs <- getResponseBodyChunk rsp
         if BS.null bs
             then
                 return $ BS.concat $ build []
-            else
-                go (build . (bs :))
+            else do
+                let len' = len + BS.length bs
+                when (fromIntegral len' > lim) $
+                    E.throwIO $
+                        DecodeError $
+                            "length is over the limit: should be len <= lim, but (len: "
+                                ++ show len'
+                                ++ ") > (lim: "
+                                ++ show lim
+                                ++ ") "
+                go len' (build . (bs :))
 
 doHTTP
     :: NameTag
