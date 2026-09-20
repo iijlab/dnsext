@@ -22,7 +22,11 @@ quicPersistentResolver :: PersistentResolver
 quicPersistentResolver ri body = do
     cc <- getQUICParams ri tag "doq"
     toDNSError "quicPersistentResolver" $ run cc $ \conn -> do
-        body $ resolv conn ri
+        -- The query timeout, which quicResolver has had all along and
+        -- which every other transport puts on each question.  Without
+        -- it a peer which opens the connection and then leaves a stream
+        -- unanswered is waited on for ever.
+        body $ \q qctl -> withTimeout ri $ resolv conn ri q qctl
         saveResumptionInfo conn ri tag
   where
     tag = nameTag ri "QUIC"
