@@ -8,6 +8,14 @@ on:
   release:
     types:
       - created
+# Pushing again to a branch which is still building leaves the earlier run
+# holding runners -- macOS slots in particular, where there are only five --
+# to produce a result nobody will read.  Not on main: that is where the cache
+# is written from, and a run cancelled partway never reaches the save step.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -17,6 +25,26 @@ jobs:
       matrix:
         os:  [ 'ubuntu-latest', 'macOS-latest' ]
         ghc: [ '9.2', '9.4', '9.6', '9.8', '9.10', '9.12' ]
+        # GitHub runs at most five macOS jobs at once, and the five are the
+        # whole account's rather than this workflow's.  Six here meant one
+        # waited for another to finish within the run -- on the last run on
+        # main it started 744 s in, which is most of the difference between
+        # the longest job at 919 s and the run at 1545 s -- and it also meant
+        # that two runs at once had twelve jobs after five slots.  The second
+        # is the one which bites in practice: merging starts a run on main
+        # while the next branch is still building.
+        #
+        # Two, so that a run on main and a run on a branch fit in the five
+        # together.  9.6 is the one whose steps build the release binaries
+        # and the dug-mac-arm64 the Homebrew formula is pointed at, and 9.12
+        # is the newest.  What the other four were covering is the compiler,
+        # which Linux still runs all six of; what only macOS covers is the
+        # platform, and either job does that.
+        exclude:
+          - { os: macOS-latest, ghc: '9.2'  }
+          - { os: macOS-latest, ghc: '9.4'  }
+          - { os: macOS-latest, ghc: '9.8'  }
+          - { os: macOS-latest, ghc: '9.10' }
         include:
           - os: ubuntu-latest
             arch: amd64
@@ -43,57 +71,67 @@ jobs:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: latest
 
-    - name: Hackage index, Cache Key
+    - name: Cache Key
       id: params
       shell: bash
       run: |
         ghc_version=$(ghc --numeric-version)
-        cabal v2-update
-        echo "cache=${{ runner.os }}-build-${{ env.cache-name }}-${ghc_version}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}" > "$GITHUB_OUTPUT"
+        # The prefix is everything a cache may be shared across.  It leaves
+        # out the .cabal hash on purpose: that changes whenever a module is
+        # added to a test suite or a bound is touched, and keying on it threw
+        # away all twelve entries every time.  restore-keys picks up the most
+        # recent entry with this prefix instead, and cabal works out what of
+        # it is stale.
+        prefix="${{ runner.os }}-${{ runner.arch }}-${{ env.cache-name }}-${ghc_version}-"
+        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        echo "cache=${prefix}${{ github.sha }}" >> "$GITHUB_OUTPUT"
         echo "ghc_version=$ghc_version" >> "$GITHUB_OUTPUT"
         echo "release_brew=${{ (github.event_name == 'release' || github.ref_name == 'ci-brew') && runner.os == 'macOS' }}" >> "$GITHUB_OUTPUT"
+        # Ask cabal where it keeps things rather than assuming ~/.cabal: that
+        # is only right while the legacy layout is in use, and cabal 3.12 and
+        # later move to XDG directories when ~/.cabal does not already exist.
+        # `cabal path` prints without a trailing newline, hence the echo.
+        {
+          echo "paths<<PATHS_EOF"
+          cabal path --remote-repo-cache; echo
+          cabal path --store-dir; echo
+          echo "dist-newstyle"
+          echo "PATHS_EOF"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Restore Cache
       uses: actions/cache/restore@v4
       if: ${{ github.ref_name != 'ci-uc' }}
       with:
-        path: ~/.cabal
+        # One entry per job rather than two: the repository is capped at
+        # 10 GB and the dependencies alone already filled it.
+        path: ${{ steps.params.outputs.paths }}
         key: ${{ steps.params.outputs.cache }}
+        restore-keys: ${{ steps.params.outputs.prefix }}
 
+    # After the restore rather than before it.  The other way round, the
+    # index was downloaded on every run and then overwritten by whatever
+    # the cache held.
+    - name: Update the Hackage index
+      run: cabal v2-update
+
+    # Try what was restored first, so a warm run does not talk to Hackage at
+    # all, and fall back to fetching when it is cold or a dependency is new.
     - name: Install doctest
-      id: doctest-dep
       if: ${{ runner.os == 'Linux' }}
       shell: bash
       run: |
         set -x
-        if cabal v2-install doctest ${{ env.install-doctest-param }} --offline
-        then
-          echo "installed=false" >> "$GITHUB_OUTPUT"
-        else
+        cabal v2-install doctest ${{ env.install-doctest-param }} --offline ||
           cabal v2-install doctest ${{ env.install-doctest-param }}
-          echo "installed=true" >> "$GITHUB_OUTPUT"
-        fi
         doctest --version
 
     - name: Install dependencies
-      id: inst-dep
       shell: bash
       run: |
         set -x
-        if cabal v2-build ${{ env.build-targets }} --only-dependencies --offline
-        then
-          echo "installed=false" >> "$GITHUB_OUTPUT"
-        else
+        cabal v2-build ${{ env.build-targets }} --only-dependencies --offline ||
           cabal v2-build ${{ env.build-targets }} --only-dependencies
-          echo "installed=true" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Save Cache
-      uses: actions/cache/save@v4
-      if: ${{ steps.inst-dep.outputs.installed == 'true' || steps.doctest-dep.outputs.installed == 'true' }}
-      with:
-        path: ~/.cabal
-        key: ${{ steps.params.outputs.cache }}
 
     - name: Build
       run: cabal v2-build ${{ env.build-targets }}
@@ -111,6 +149,18 @@ jobs:
           DISABLE_V6_NS=1 cabal v2-repl $package               ${{ env.repl-doctest-param }}
         done
         DISABLE_V6_NS=1   cabal v2-repl dnsext-bowline:bowline ${{ env.repl-doctest-param }}
+
+    # Saved after the build, so the entry holds the build products too, and
+    # only from a branch which every other run can read: a cache written on
+    # a branch is visible to that branch alone, while one written on the
+    # default branch is visible everywhere.  Writing from pull requests as
+    # well is what put three sets of twelve entries in a 10 GB repository.
+    - name: Save Cache
+      uses: actions/cache/save@v4
+      if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'ci') }}
+      with:
+        path: ${{ steps.params.outputs.paths }}
+        key: ${{ steps.params.outputs.cache }}
 
     - name: Install
       if: matrix.ghc == '9.6'
