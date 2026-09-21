@@ -216,13 +216,31 @@ rootHints =
 --   meant to be insecure simply says nothing.
 fillDS :: FilePath -> FilePath -> IO ()
 fillDS cloveDir rootZone = do
-    fill <- concat <$> (mapM entry =<< listDirectory cloveDir)
     -- Read all of it before writing any of it: this is the one file
     -- which is its own source.
     before <- readFile rootZone
-    length before `seq` writeFile rootZone (substitute fill before)
+    length before `seq` pure ()
+    fill <- mapM entry $ dsWanted before
+    writeFile rootZone (substitute fill before)
   where
-    entry z = maybe [] (\rd -> [("DS " ++ z, rd)]) <$> dsRdata (cloveDir </> z)
+    -- The primary answers as soon as its first zone is ready, and a
+    -- scenario may have given it several, so the key of the zone being
+    -- asked about is not certain to exist yet.  Only the zones the root
+    -- zone actually asks for a DS of are waited for: one which is meant
+    -- to be an insecure delegation says nothing here and is never
+    -- signed, so waiting for its key would be waiting for ever.
+    entry z = do
+        rd <- waitForValue ("the key of " ++ z) $ dsRdata (cloveDir </> z)
+        pure ("DS " ++ z, rd)
+
+-- | The zones a root zone asks for a DS of, in the order it asks.
+dsWanted :: String -> [String]
+dsWanted = go
+  where
+    go [] = []
+    go s@(_ : cs) = case stripPrefix "{{DS " s of
+        Just rest | (z, '}' : '}' : more) <- break (== '}') rest -> z : go more
+        _ -> go cs
 
 -- | The DS of the root of the scenario's world, as the trust anchor
 --   bowline starts from.
@@ -231,12 +249,16 @@ trustAnchor zoneDir =
     maybe (fail $ "no key signing key in " ++ zoneDir) (pure . printf ".\t3600\tIN\tDS\t%s\n")
         =<< dsRdata zoneDir
 
--- | What a DS of this zone is made of, or nothing where the zone is not
---   signed.  clove writes everything a DS needs into the key file, so it
---   is read from there rather than worked out again.
+-- | What a DS of this zone is made of, or nothing where the zone has
+--   not been signed -- which is either because it never will be or
+--   because it has not been yet.  clove writes everything a DS needs
+--   into the key file, so it is read from there rather than worked out
+--   again.
 dsRdata :: FilePath -> IO (Maybe String)
 dsRdata zoneDir = do
-    names <- listDirectory zoneDir
+    names <-
+        listDirectory zoneDir `catch` \e ->
+            if isDoesNotExistError e then pure [] else throwIO e
     case [n | n <- names, ".ksk" `isSuffix` n] of
         [] -> pure Nothing
         ksk : _ -> do
@@ -326,12 +348,20 @@ withDaemon dir part prog args body = withFile (dir </> part ++ ".log") WriteMode
 --   configuration, binds its sockets and loads or signs a zone before it
 --   can, and how long that takes is the machine's business.
 waitFor :: String -> IO Bool -> IO ()
-waitFor what ready = go (300 :: Int)
+waitFor what ready = void $ waitForValue what $ boolToMaybe <$> ready
   where
-    go 0 = fail $ what ++ " did not start answering"
-    go n = do
-        ok <- ready
-        unless ok $ threadDelay 100000 >> go (n - 1)
+    boolToMaybe ok = if ok then Just () else Nothing
+
+-- | The same wait, for something with a value: whatever is being waited
+--   for is asked for until it is there.
+waitForValue :: String -> IO (Maybe a) -> IO a
+waitForValue what get = go (300 :: Int)
+  where
+    go 0 = fail $ what ++ ": waited for it and it never came"
+    go n =
+        get >>= \mx -> case mx of
+            Just x -> pure x
+            Nothing -> threadDelay 100000 >> go (n - 1)
 
 ----------------------------------------------------------------
 

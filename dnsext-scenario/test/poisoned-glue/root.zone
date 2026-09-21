@@ -1,0 +1,15 @@
+; The root of the scenario's world, which delegates two zones away and
+; then tells everyone who asks about either of them a lie about the
+; other -- see poison.zone, which the configuration attaches to every
+; response this zone sends.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
+victim.		IN	NS	ns.victim.
+ns.victim.	IN	{{AUTH_ADDR_RR}}
+victim.		IN	DS	{{DS victim}}

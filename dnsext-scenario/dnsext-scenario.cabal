@@ -28,6 +28,9 @@ extra-source-files:
     test/dnssec-failed/*.zone
     test/orphan-glue/*.conf
     test/orphan-glue/*.zone
+    test/poisoned-glue/*.args
+    test/poisoned-glue/*.conf
+    test/poisoned-glue/*.zone
     test/jp.sharp/*.args
     test/jp.sharp/*.conf
     test/jp.sharp/*.zone
@@ -52,6 +55,7 @@ test-suite spec
         Harness
         JpSharpSpec
         OrphanGlueSpec
+        PoisonedGlueSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded

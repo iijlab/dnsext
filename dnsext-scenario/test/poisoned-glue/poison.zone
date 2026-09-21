@@ -1,0 +1,13 @@
+; What the root attaches to every referral it makes, and has no business
+; attaching to any of them: an address for a name in victim., a zone the
+; root delegates away and is therefore not authoritative for.
+;
+; A resolver which takes what it finds in the additional section as an
+; answer has now been told that www.victim. is 192.0.2.66.  The zone
+; itself says otherwise, and never gets asked.
+;
+; This is the shape of small-is-beautiful.jp's "この委任応答には毒が入
+; れられるかも" and of hoge.sub.mufj.jp's "これで毒が入る実装があった".
+; Nothing here is signed, because glue never is: there is nothing for a
+; validator to catch, and only bailiwick keeps it out.
+www.victim.	3600	IN	A	192.0.2.66
