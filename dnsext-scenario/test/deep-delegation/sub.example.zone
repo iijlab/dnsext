@@ -1,0 +1,8 @@
+; The grandchild, back on the first address.  Signed, and delegated to
+; without a DS, so a resolver has nothing telling it to check.
+$ORIGIN sub.example.
+$TTL 3600
+@	IN	SOA	ns.sub.example. root.sub.example. 1 3600 900 604800 3600
+@	IN	NS	ns.sub.example.
+ns	IN	A	{{ROOT_ADDR}}
+www	IN	A	192.0.2.9

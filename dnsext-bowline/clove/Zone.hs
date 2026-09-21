@@ -54,10 +54,13 @@ newZones zcheck env keys zcs = do
   where
     names = map (fromRepresentation . cnf_zone) zcs
     signed = [fromRepresentation (cnf_zone zc) | zc <- zcs, cnf_signing zc]
-    -- The children of this zone among the ones clove serves, and only
-    -- the ones it is the nearest of: with example., a.example. and
-    -- b.a.example. all served, b.a.example. is a.example.'s to
-    -- delegate and not example.'s.
+    -- Which of the zones clove serves might be this one's to delegate.
+    -- Only the ones it is the nearest of: with example., a.example. and
+    -- b.a.example. all served, b.a.example. is a.example.'s to delegate
+    -- and not example.'s.  Nothing has been read at this point, so a
+    -- zone cut which clove does not serve cannot be seen from here and
+    -- the answer is only a candidate; 'checkChildDS' settles it against
+    -- what the zone turns out to say.
     signedChildrenOf p =
         [ c
         | c <- signed
@@ -335,7 +338,7 @@ loadSourceWithSigning env z = case zoneSigning z of
     -- insecure.mufj.jp was.  clove can see both halves here, so it says
     -- so rather than serving it.
     checkChildDS rrs =
-        case [c | c <- zoneSignedChildren z, not (hasDS c)] of
+        case [c | c <- zoneSignedChildren z, delegatedHere c, not (hasDS c)] of
             [] -> return ()
             cs ->
                 E.throwIO $
@@ -345,6 +348,16 @@ loadSourceWithSigning env z = case zoneSigning z of
                             ++ " (--insecure serves it anyway)"
       where
         hasDS c = any (\r -> rrtype r == DS && rrname r == c) rrs
+        -- Where this zone hands off, its own apex aside.
+        cuts = [rrname r | r <- rrs, rrtype r == NS, rrname r /= zone]
+        -- Which of them are this zone's to delegate.  clove may hold a
+        -- zone and its grandchild without holding what is between them,
+        -- and then the DS belongs in the zone clove does not have --
+        -- where it could not see it in any case.  The list of children
+        -- was worked out from the zone names alone, before any zone had
+        -- been read, so this is the first point at which that can be
+        -- told.
+        delegatedHere c = not $ or [c /= m && c `isSubDomainOf` m | m <- cuts]
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir

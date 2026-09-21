@@ -1,0 +1,12 @@
+; The root delegates example. to the other server and vouches for it.
+; It says nothing at all about sub.example., which is two labels further
+; down and example.'s business, not the root's -- even though the same
+; clove happens to be serving it.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
