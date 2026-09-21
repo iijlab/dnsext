@@ -22,6 +22,7 @@ import qualified System.TimeManager as T
 import System.Timeout (timeout)
 
 import DNS.Auth.Algorithm
+import DNS.Auth.DB (ZoneCheck (..))
 import DNS.Log
 import qualified DNS.SEC as DNS
 import qualified DNS.SVCB as DNS
@@ -29,6 +30,7 @@ import DNS.Types
 import qualified DNS.Types as DNS
 import DNS.Types.Time (EpochTime)
 import Data.IORef
+import Data.List (isPrefixOf)
 
 import qualified Auth
 import Config
@@ -48,15 +50,17 @@ main = reportingError $ do
         DNS.addResourceDataForDNSSEC
         DNS.addResourceDataForSVCB
     -- Initialization
-    conffile <- getConfFile
-    (Config{..}, zonelist) <- loadConfig conffile
+    Options{..} <- getOptions
+    (Config{..}, zonelist) <- loadConfig optConfFile
     --
     setCurrentDirectory cnf_clove_dir
     --
     withLogger Config{..} $ \env reopenLog -> do
+        when optInsecure $
+            envPutLines env WARN Nothing ["--insecure: serving what would otherwise be refused"]
         keys <- loadTSIGKeys env cnf_tsig_file
         envPutLines env INFO Nothing [show (countTSIGKeys keys) ++ " TSIG key(s)"]
-        zones <- newZones env keys zonelist
+        zones <- newZones (zoneCheckOf optInsecure) env keys zonelist
         zoneAlist <- toZoneAlist zones
         let (_, zonerefs) = unzip zoneAlist
         -- Zone updators.  Each loads its own zone, so a source which is
@@ -93,14 +97,32 @@ main = reportingError $ do
 
 ----------------------------------------------------------------
 
-getConfFile :: IO FilePath
-getConfFile = do
+-- | What the command line says.
+data Options = Options
+    { optInsecure :: Bool
+    -- ^ Whether clove may serve what it would otherwise refuse.  It is
+    --   for showing a resolver a zone which is wrong on purpose, so that
+    --   what a resolver does with one can be found out, and it is a
+    --   command line switch rather than a configuration item so that no
+    --   configuration file can turn it on by itself.
+    , optConfFile :: FilePath
+    }
+
+zoneCheckOf :: Bool -> ZoneCheck
+zoneCheckOf insecure
+    | insecure = Unchecked
+    | otherwise = Checked
+
+getOptions :: IO Options
+getOptions = do
     args <- getArgs
     case args of
-        [conffile] -> return conffile
+        ["--insecure", conffile] -> return $ Options True conffile
+        [conffile, "--insecure"] -> return $ Options True conffile
+        [conffile] | not ("-" `isPrefixOf` conffile) -> return $ Options False conffile
         _ -> do
             name <- getProgName
-            die $ "usage: " ++ name ++ " <config file>"
+            die $ "usage: " ++ name ++ " [--insecure] <config file>"
 
 -- | Reporting a failure as one line rather than as an uncaught
 --   exception with a backtrace.  This covers the whole of 'main', not

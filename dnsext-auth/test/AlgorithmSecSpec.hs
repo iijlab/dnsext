@@ -20,9 +20,9 @@ spec = describe "authoritative algorithm" $ do
         rrs <- loadZoneFile zone "test/example.zone"
         (_pub, _pri, dnskey, _ds, doSign) <-
             prepareDNSSEC $ defaultKeyConfig{keyConfZone = zone}
-        makeDBforPrimary zone Nothing doSign doSign (rrs ++ [dnskey])
+        makeDBforPrimary Checked zone Nothing doSign doSign (rrs ++ [dnskey])
     doit db
-    db2 <- runIO (makeDBforSecondary zone $ dbAll db)
+    db2 <- runIO (makeDBforSecondary Checked zone $ dbAll db)
     doit db2
 
 -- Canonical order:

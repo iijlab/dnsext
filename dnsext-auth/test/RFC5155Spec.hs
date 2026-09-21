@@ -29,13 +29,13 @@ spec = describe "authoritative algorithm" $ do
 
         -- The zone in the RFC's Appendix B is Opt-Out, which is what
         -- the tests below are of.
-        makeDBforPrimary zone (Just (nsec3Config n3p){nsec3OptOut = True}) doSign doSign (rrs ++ [dnskey])
+        makeDBforPrimary Checked zone (Just (nsec3Config n3p){nsec3OptOut = True}) doSign doSign (rrs ++ [dnskey])
     doit db
-    db2 <- runIO (makeDBforSecondary zone $ dbAll db)
+    db2 <- runIO (makeDBforSecondary Checked zone $ dbAll db)
     doit db2
 
 -- fixme
--- db2 <- fromJust <$> runIO (makeDBforSecondary zone $ dbAll db)
+-- db2 <- fromJust <$> runIO (makeDBforSecondary Checked zone $ dbAll db)
 -- doit db2
 
 doit :: DB -> Spec

@@ -46,10 +46,10 @@ import Types
 
 ----------------------------------------------------------------
 
-newZones :: Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
-newZones env keys zcs = do
+newZones :: ZoneCheck -> Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
+newZones zcheck env keys zcs = do
     checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone env keys) zcs
+    mapM (newZone zcheck env keys) zcs
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -64,8 +64,8 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: Env -> TSIGKeys -> ZoneConf -> IO Zone
-newZone env keys zoneconf@ZoneConf{..} = do
+newZone :: ZoneCheck -> Env -> TSIGKeys -> ZoneConf -> IO Zone
+newZone zcheck env keys zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
@@ -103,7 +103,8 @@ newZone env keys zoneconf@ZoneConf{..} = do
     batches <- newIORef Nothing
     return $
         Zone
-            { zoneDB = emptyDB
+            { zoneCheck = zcheck
+            , zoneDB = emptyDB
             , zoneBatches = batches
             , zoneRRs = []
             , zoneReady = False
@@ -303,7 +304,7 @@ loadSourceWithSigning env z = case zoneSigning z of
         got <- loadSource env key zone (sinceSerial oldRRs mserial) source
         case got of
             Transferred rrs -> do
-                db <- makeDBforSecondary zone rrs
+                db <- makeDBforSecondary (zoneCheck z) zone rrs
                 saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
                 loadedWith db rrs True
             Unchanged -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs True
@@ -339,7 +340,7 @@ loadSourceWithSigning env z = case zoneSigning z of
             loadZSKInfo env fresh zoneDir signingZSKPreserve zskKeyConfig
         signZone <- makeSigner zskKeyConfig keyInfoZSK1
         db <-
-            makeDBforPrimary zone signingN3P signKey signZone $
+            makeDBforPrimary (zoneCheck z) zone signingN3P signKey signZone $
                 soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2]
         -- Stored only after the zone has been built successfully so
         -- that a failure does not inflate the serial.

@@ -10,7 +10,7 @@ import Data.IP.RouteTable as IPRT
 import Network.Socket
 
 import DNS.Auth.Algorithm
-import DNS.Auth.DB (NSEC3Config (..))
+import DNS.Auth.DB (NSEC3Config (..), ZoneCheck (..))
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
@@ -48,6 +48,10 @@ data Zone = Zone
     { zoneName :: Domain
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
+    , zoneCheck :: ZoneCheck
+    -- ^ Whether what a zone may not contain is refused.  'Unchecked'
+    --   only where clove was started with @--insecure@, which is for
+    --   showing a resolver a zone which is wrong on purpose.
     , zoneDB :: DB
     , zoneBatches :: IORef (Maybe [[ResourceRecord]])
     -- ^ How the zone is cut into messages for a transfer, once
