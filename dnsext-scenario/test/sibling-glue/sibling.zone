@@ -1,0 +1,14 @@
+; Where ns.sibling. really belongs.  This zone is the one place with any
+; standing to say what address that host has -- and it says the host has
+; none.  The name exists here and has other records, so the answer is a
+; signed "no such data" rather than "no such name".
+;
+; The only address for ns.sibling. anywhere, then, is the one the root
+; hands out as glue.  Whether a resolver may pass that on to a client
+; as though the sibling zone had said it is the question tkix.net asks:
+; "Sibling domain の glue は信じて良いのでしょうか?".
+$ORIGIN sibling.
+$TTL 3600
+@	IN	SOA	ns.sibling. root.sibling. 1 3600 900 604800 3600
+@	IN	NS	ns.sibling.
+ns	IN	TXT	"the address of this host is nowhere in this zone"

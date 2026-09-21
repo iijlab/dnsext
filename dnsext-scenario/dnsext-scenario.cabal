@@ -31,6 +31,8 @@ extra-source-files:
     test/injected-delegation/*.args
     test/injected-delegation/*.conf
     test/injected-delegation/*.zone
+    test/sibling-glue/*.conf
+    test/sibling-glue/*.zone
     test/poisoned-glue/*.args
     test/poisoned-glue/*.conf
     test/poisoned-glue/*.zone
@@ -60,6 +62,7 @@ test-suite spec
         JpSharpSpec
         OrphanGlueSpec
         PoisonedGlueSpec
+        SiblingGlueSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
