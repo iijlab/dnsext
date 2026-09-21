@@ -8,8 +8,9 @@ import Crypto.Number.Serialize
 import qualified Crypto.PubKey.RSA as RSA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
-import Data.Either (fromRight)
-import Data.List (sortOn)
+import Data.Either (fromRight, isLeft, isRight)
+import Data.List (isInfixOf, sortOn)
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Word
 import Test.Hspec
@@ -55,6 +56,23 @@ spec = do
         -- missed about four times in a thousand.
         it "pads a signature of P-256" $ signaturesAreWide ECDSAP256SHA256 64 500
         it "pads a signature of P-384" $ signaturesAreWide ECDSAP384SHA384 96 500
+
+    -- Each iteration of the NSEC3 hash is a hash of the one before, the
+    -- count is a Word16, and the proof of a name which does not exist
+    -- needs several names hashed.  A zone which asks for the maximum
+    -- buys a good deal of somebody else's processor for every query.
+    -- RFC 9276 Sec 3.2 has a validating resolver stop believing a proof
+    -- which asks for more than a hundred.
+    describe "NSEC3 iterations" $ do
+        it "hashes with as many as are allowed" $
+            hashNSEC3 (nsec3With maxNSEC3Iterations) "a.example." `shouldSatisfy` isRight
+
+        it "refuses one more than that" $
+            hashNSEC3 (nsec3With (maxNSEC3Iterations + 1)) "a.example." `shouldSatisfy` isLeft
+
+        it "refuses a proof which asks for the most a zone can ask for" $
+            nameErrorNSEC3 "example." [("x.example.", nsec3With 65535)] "nope.example."
+                `shouldSatisfy` refusedForIterations
 
     describe "verify RRSIG" $ do
         it "RSA/SHA1 alias NSEC3_SHA1" $ caseRRSIG rsaSHA1NSEC3SHA1
@@ -298,6 +316,19 @@ caseRRSIG RRSIG_CASE{..} = do
     ts =
         (fromDNSTime (rrsig_inception rrsig) + fromDNSTime (rrsig_expiration rrsig))
             `div` 2
+
+-- | Refused for the reason we are looking for, rather than for one of
+--   the other things wrong with a proof made of one fabricated record.
+refusedForIterations :: Either String a -> Bool
+refusedForIterations (Left e) = "iterations" `isInfixOf` e
+refusedForIterations _ = False
+
+-- | An NSEC3 record which asks for the given number of iterations.
+nsec3With :: Word16 -> RD_NSEC3
+nsec3With iterations =
+    fromJust $
+        fromRData $
+            rd_nsec3 Hash_SHA1 [] iterations (Opaque.fromByteString "abcd") (Opaque.fromByteString "") []
 
 p256Key :: Integer -> PubKey
 p256Key d = fromRight (error "p256Key") $ p256toPubKey (i2osp d)
