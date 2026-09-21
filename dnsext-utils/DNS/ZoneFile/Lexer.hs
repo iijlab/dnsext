@@ -261,11 +261,16 @@ comment = void (many spc *> lineComment *> optional newline)
 --   which kind it can be, so it is looked at once and only the branches
 --   it allows are tried.  A dollar still falls back to a
 --   character-string, since "$FOO" is one.
+--
+--   The byte is read without being consumed, which is what deciding
+--   needs, but only here: a combinator which succeeds without consuming
+--   is one `many` away from a parser which never stops, and this is the
+--   one place which wants it.
 {-# INLINEABLE lexerToken #-}
 lexerToken :: MonadParser W8 s m => m Token
-lexerToken = peek >>= starting
+lexerToken = caseCons starting (parseError "lexerToken: eof") =<< getInput
   where
-    starting c
+    starting c _
         | c == _at          = At <$ token
         | c == _parenleft   = LParen <$ token
         | c == _parenright  = RParen <$ token
