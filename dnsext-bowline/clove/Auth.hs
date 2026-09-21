@@ -148,8 +148,24 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ quest
         -- names we simply know nothing about, and downstream caches
         -- would keep the denial.
         if zoneReady zone
-            then sendReply sa $ seal $ getAnswer (zoneDB zone) query
+            then sendReply sa $ seal $ spoofed (zoneSpoof zone) $ getAnswer (zoneDB zone) query
             else sendReply sa $ seal $ serverFailure query
+
+-- | Attaching to a reply what the zone was configured to send beyond
+--   what it has to say.  Nothing at all unless clove was started with
+--   @--insecure@, and nothing anybody would want in a server: a
+--   resolver is being handed a delegation or an address which is
+--   nobody's to give, so that a scenario can find out what it makes of
+--   one.  The records go on the end, after the zone's own, and are not
+--   signed -- neither is glue, which is why this cannot be seen through.
+spoofed :: Spoof -> DNSMessage -> DNSMessage
+spoofed Spoof{..} reply
+    | null spoofAuthority && null spoofAdditional = reply
+    | otherwise =
+        reply
+            { authority = authority reply ++ spoofAuthority
+            , additional = additional reply ++ spoofAdditional
+            }
 
 -- | Someone says the zone has moved on (RFC 1996).  Whether to believe
 --   them is what allow-notify-key and allow-notify-addrs decide; the

@@ -87,6 +87,7 @@ newZone zcheck env keys signedChildren zoneconf@ZoneConf{..} = do
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
     msigning <- withZoneName $ readSigning zcheck env zone zoneconf
+    spoof <- withZoneName $ readSpoof zcheck zoneconf
     notifyKey <- withZoneName $ namedKey keys "notify-key" cnf_notify_key
     allowNotifyKey <- withZoneName $ namedKey keys "allow-notify-key" cnf_allow_notify_key
     sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
@@ -119,6 +120,7 @@ newZone zcheck env keys signedChildren zoneconf@ZoneConf{..} = do
     return $
         Zone
             { zoneSignedChildren = signedChildren
+            , zoneSpoof = spoof
             , zoneCheck = zcheck
             , zoneDB = emptyDB
             , zoneBatches = batches
@@ -481,6 +483,30 @@ readSource ZoneConf{..}
     | Just a6 <- readMaybe cnf_source = FromUpstream6 a6 cnf_source_port
     | Just a4 <- readMaybe cnf_source = FromUpstream4 a4 cnf_source_port
     | otherwise = FromFile cnf_source
+
+-- | The records a zone is to attach to its responses over and above
+--   what it has to say, where the configuration names files of them.
+--   Sending them is the whole point of the setting and there is no
+--   honest use for it, so it needs --insecure -- refused rather than
+--   ignored, as with 'readSigner'.
+--
+--   The files are read as zone files with the root for an origin, so
+--   every name in them is written out in full.  That is what they are
+--   for: a record a zone has any business sending is one below it, and
+--   these are the others.
+readSpoof :: ZoneCheck -> ZoneConf -> IO Spoof
+readSpoof zcheck ZoneConf{..} = do
+    authority <- section "spoof-authority" cnf_spoof_authority
+    additional <- section "spoof-additional" cnf_spoof_additional
+    pure Spoof{spoofAuthority = authority, spoofAdditional = additional}
+  where
+    section _ "" = pure []
+    section setting file = case zcheck of
+        Checked ->
+            E.ioError $
+                E.userError $
+                    setting ++ ": " ++ file ++ ": sending what is not ours needs --insecure"
+        Unchecked -> loadZoneFile "." file
 
 -- | The zone to name in the signer field of the RRSIGs, where the
 --   configuration says one.  Naming a zone which did not sign them is
