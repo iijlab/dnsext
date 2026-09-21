@@ -1,0 +1,11 @@
+; The root delegates example. and carries no DS for it, so everything
+; below is insecure.  That is on purpose: this scenario is about what a
+; resolver does with a wrong rcode, and a signed zone would give it a
+; second, different reason to distrust the answer.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
