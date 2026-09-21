@@ -88,7 +88,17 @@ options =
         ['p']
         ["port"]
         (ReqArg (\port opts -> opts{optPort = Just port}) "<port>")
-        "specify port number"
+        "specify port number (with -i, the port authoritative servers are on)"
+    , Option
+        []
+        ["root-hints"]
+        (ReqArg (\path opts -> opts{optRootHints = Just path}) "<file>")
+        "with -i, start from these servers rather than from the root"
+    , Option
+        []
+        ["trust-anchor"]
+        (ReqArg (\path opts -> opts{optTrustAnchor = Just path}) "<file>")
+        "with -i, validate from this anchor rather than from the root's"
     , Option
         ['d']
         ["dox"]
@@ -179,7 +189,12 @@ main = do
             then do
                 target <- checkIterative at qs
                 opts <- checkFallbackV4 opts1 =<< getRootV6
-                iterativeQuery putLn putLines' target opts
+                {- An iterative resolution talks Do53 to the servers it
+                   walks down to, whatever -d asked for, so -p here is
+                   the port those servers are on and 53 is the default
+                   for it rather than whatever -d would have chosen. -}
+                authPort <- getPort optPort "do53"
+                iterativeQuery putLn putLines' target opts authPort
             else do
                 let mserver = map (drop 1) at
                 ips <- resolveServers opts1 mserver
