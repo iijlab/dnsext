@@ -74,6 +74,7 @@ test-suite spec
         base >=4 && <5,
         bytestring,
         directory,
+        dnsext-dnssec,
         dnsext-do53,
         dnsext-types,
         filepath,

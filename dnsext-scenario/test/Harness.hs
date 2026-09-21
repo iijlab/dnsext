@@ -52,6 +52,7 @@ import Text.Printf (printf)
 
 import DNS.Do53.Client hiding (lookup)
 import DNS.Do53.Internal
+import DNS.SEC (addResourceDataForDNSSEC)
 import DNS.Types hiding (Answer)
 
 import Network.Socket
@@ -125,6 +126,12 @@ addrRR addr
 --   name is the directory its files are in, under @test@.
 withScenario :: String -> (Scenario -> IO a) -> IO a
 withScenario name body = do
+    -- The types DNSSEC adds are not in the dictionaries until somebody
+    -- puts them there, and until they are, an RRSIG in an answer is an
+    -- unknown type with a string of hex in it and DNSKEY is a word
+    -- nothing can read.  Every scenario here has signed zones in it.
+    -- Registering a type twice is writing the same entry twice.
+    runInitIO addResourceDataForDNSSEC
     [authPort, resolverPort, monitorPort] <- mapM (const freePort) [1 :: Int, 2, 3]
     auth <- authAddr
     files <- makeAbsolute $ "test" </> name
