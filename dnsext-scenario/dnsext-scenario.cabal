@@ -30,6 +30,9 @@ extra-source-files:
     test/broken-ent/*.args
     test/broken-ent/*.conf
     test/broken-ent/*.zone
+    test/cname-nxdomain/*.args
+    test/cname-nxdomain/*.conf
+    test/cname-nxdomain/*.zone
     test/cname-extra/*.args
     test/cname-extra/*.conf
     test/cname-extra/*.zone
@@ -70,6 +73,7 @@ test-suite spec
         BrokenEntSpec
         CnameChainSpec
         CnameExtraSpec
+        CnameNxdomainSpec
         DeepDelegationSpec
         DeniedNodataSpec
         DiffNsSpec

@@ -1,0 +1,13 @@
+; Two zones delegated, neither with a DS, so everything below is
+; insecure.  That is on purpose: the question here is how a resolver
+; reads a response, and signatures would give it a second and quite
+; different reason to turn one down.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+elsewhere.	IN	NS	ns.elsewhere.
+ns.elsewhere.	IN	{{AUTH_ADDR_RR}}
