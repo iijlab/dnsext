@@ -44,6 +44,8 @@ extra-source-files:
     test/cname-chain/*.zone
     test/dnssec-failed/*.conf
     test/dnssec-failed/*.zone
+    test/ns-ttl/*.conf
+    test/ns-ttl/*.zone
     test/orphan-glue/*.conf
     test/orphan-glue/*.zone
     test/injected-delegation/*.args
@@ -87,6 +89,7 @@ test-suite spec
         Harness
         InjectedDelegationSpec
         JpSharpSpec
+        NsTtlSpec
         OrphanGlueSpec
         PoisonedGlueSpec
         QnameMinSpec

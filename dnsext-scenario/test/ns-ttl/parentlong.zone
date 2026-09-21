@@ -1,0 +1,12 @@
+; The zone says its name servers are good for two seconds.  Its parent
+; says an hour.  This is what a zone about to move does: it shortens its
+; own NS TTL and waits, so that when the delegation changes everybody
+; follows quickly.  It only works on a resolver which keeps the zone's
+; number rather than the parent's.
+$ORIGIN parentlong.
+$TTL 3600
+@	2	IN	SOA	ns.parentlong. root.parentlong. 1 3600 900 604800 3600
+@	2	IN	NS	ns.parentlong.
+ns	3600	IN	{{AUTH_ADDR_RR}}
+www	3600	IN	A	192.0.2.1
+other	3600	IN	A	192.0.2.2
