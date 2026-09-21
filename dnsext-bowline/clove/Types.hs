@@ -52,6 +52,9 @@ data Zone = Zone
     { zoneName :: Domain
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
+    , zoneSignedChildren :: [Domain]
+    -- ^ The signed zones clove also serves which are delegated from
+    --   this one.  What the parent owes each of them is a DS.
     , zoneCheck :: ZoneCheck
     -- ^ Whether what a zone may not contain is refused.  'Unchecked'
     --   only where clove was started with @--insecure@, which is for

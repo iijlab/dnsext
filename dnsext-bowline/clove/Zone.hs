@@ -48,8 +48,22 @@ import Types
 
 newZones :: ZoneCheck -> Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
 newZones zcheck env keys zcs = do
-    checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone zcheck env keys) zcs
+    checkDuplicate names
+    mapM (\zc -> newZone zcheck env keys (signedChildrenOf (fromRepresentation $ cnf_zone zc)) zc) zcs
+  where
+    names = map (fromRepresentation . cnf_zone) zcs
+    signed = [fromRepresentation (cnf_zone zc) | zc <- zcs, cnf_signing zc]
+    -- The children of this zone among the ones clove serves, and only
+    -- the ones it is the nearest of: with example., a.example. and
+    -- b.a.example. all served, b.a.example. is a.example.'s to
+    -- delegate and not example.'s.
+    signedChildrenOf p =
+        [ c
+        | c <- signed
+        , c /= p
+        , c `isSubDomainOf` p
+        , not $ or [c /= m && c `isSubDomainOf` m | m <- names, m /= p, m `isSubDomainOf` p]
+        ]
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -64,8 +78,8 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: ZoneCheck -> Env -> TSIGKeys -> ZoneConf -> IO Zone
-newZone zcheck env keys zoneconf@ZoneConf{..} = do
+newZone :: ZoneCheck -> Env -> TSIGKeys -> [Domain] -> ZoneConf -> IO Zone
+newZone zcheck env keys signedChildren zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
@@ -103,7 +117,8 @@ newZone zcheck env keys zoneconf@ZoneConf{..} = do
     batches <- newIORef Nothing
     return $
         Zone
-            { zoneCheck = zcheck
+            { zoneSignedChildren = signedChildren
+            , zoneCheck = zcheck
             , zoneDB = emptyDB
             , zoneBatches = batches
             , zoneRRs = []
@@ -310,12 +325,31 @@ loadSourceWithSigning env z = case zoneSigning z of
             Unchanged -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs True
             Unreachable -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs False
 
+    -- What a signed zone owes each signed zone below it which clove
+    -- also serves.  Without the DS the delegation is insecure, so the
+    -- child signs for nothing and a resolver has no way to tell the
+    -- child's data from anybody else's -- which is what
+    -- insecure.mufj.jp was.  clove can see both halves here, so it says
+    -- so rather than serving it.
+    checkChildDS rrs =
+        case [c | c <- zoneSignedChildren z, not (hasDS c)] of
+            [] -> return ()
+            cs ->
+                E.throwIO $
+                    AuthException $
+                        "signed zone(s) delegated without a DS: "
+                            ++ unwords (map toRepresentation cs)
+                            ++ " (--insecure serves it anyway)"
+      where
+        hasDS c = any (\r -> rrtype r == DS && rrname r == c) rrs
+
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
         mserial <- loadSerial zoneDir
         (answered, rrs0) <- reloadSource env key zone mserial source oldRRs
         (soa0, soarr0, rrs) <- checkRRs rrs0
         checkUnsigned rrs
+        when (zoneCheck z == Checked) $ checkChildDS rrs
         let soa
                 | byMySelf source = case mserial of
                     Nothing -> soa0 -- No serial file, serial from zone file
