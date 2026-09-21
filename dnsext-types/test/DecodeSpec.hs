@@ -10,6 +10,8 @@ import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peek, peekByteOff, poke)
 import Test.Hspec
 
+import Data.Either (isLeft, isRight)
+
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
@@ -72,8 +74,70 @@ test_root_ns =
 
 ----------------------------------------------------------------
 
+-- | An answer holding one A record, whose RDLENGTH is whatever is
+--   given rather than the four octets an address takes.
+oneA :: Int -> ByteString
+oneA rdlength =
+    BS.pack [0, 1, 0x80, 0, 0, 1, 0, 1, 0, 0, 0, 0]
+        <> name
+        <> BS.pack [0, 1, 0, 1]
+        <> BS.pack [0xc0, 0x0c]
+        <> BS.pack [0, 1, 0, 1, 0, 0, 0, 60]
+        <> BS.pack [fromIntegral (rdlength `div` 256), fromIntegral (rdlength `mod` 256)]
+        <> BS.pack [1, 2, 3, 4]
+  where
+    name = BS.pack [3] <> "www" <> BS.pack [7] <> "example" <> BS.pack [0]
+
+-- | A query for a name of the given labels.
+queryFor :: [ByteString] -> ByteString
+queryFor labels =
+    BS.pack [0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+        <> BS.concat [BS.pack [fromIntegral (BS.length l)] <> l | l <- labels]
+        <> BS.pack [0]
+        <> BS.pack [0, 1, 0, 1]
+
+-- | Labels adding up to the given number of octets on the wire: as
+--   many of 63 as fit, and one to make up the difference.  The root
+--   label and each length octet are counted, which is what RFC 1035
+--   Sec 2.3.4 limits to 255.
+labelsOfWireSize :: Int -> [ByteString]
+labelsOfWireSize n = replicate whole (BS.replicate 63 0x61) ++ [BS.replicate left 0x61 | left > 0]
+  where
+    (whole, rest) = (n - 1) `divMod` 64
+    left = rest - 1
+
 spec :: Spec
 spec = do
+    -- RFC 1035 Sec 3.2.1: RDLENGTH "specifies the length in octets of
+    -- the RDATA field".  A decoder which does not hold the RDATA parse
+    -- to it reads past the end of one record into the next, or stops
+    -- short and leaves the rest to be read as though it were a record
+    -- -- and sees records which another implementation does not.
+    describe "RDLENGTH" $ do
+        it "is what the RDATA of an A record is" $
+            fmap (map rdata . answer) (decode (oneA 4)) `shouldBe` Right [rd_a "1.2.3.4"]
+
+        it "is refused when it is shorter than the RDATA" $
+            decode (oneA 2) `shouldSatisfy` isLeft
+
+        it "is refused when it is longer than the RDATA" $ do
+            decode (oneA 6) `shouldSatisfy` isLeft
+            decode (oneA 100) `shouldSatisfy` isLeft
+
+    -- RFC 1035 Sec 2.3.4: a name is at most 255 octets.  A name made
+    -- from its representation is refused when it is longer; a name read
+    -- off the wire was not looked at at all.
+    describe "the length of a name off the wire" $ do
+        it "allows 255 octets" $ do
+            sum (map ((+ 1) . BS.length) (labelsOfWireSize 255)) + 1 `shouldBe` 255
+            decode (queryFor (labelsOfWireSize 255)) `shouldSatisfy` isRight
+
+        it "refuses 256 octets" $
+            decode (queryFor (labelsOfWireSize 256)) `shouldSatisfy` isLeft
+
+        it "refuses a name of several hundred octets" $
+            decode (queryFor (replicate 5 (BS.replicate 60 0x61))) `shouldSatisfy` isLeft
+
     describe "decode" $ do
         it "decodes double pointers correctly" $
             tripleDecodeTest test_doublePointer
