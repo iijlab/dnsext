@@ -285,6 +285,12 @@ data ResolveActions = ResolveActions
     -- ^ Time of timeout in microseconds.
     , ractionGenId :: IO Identifier
     -- ^ Generating identifiers.
+    , ractionMixCase :: Maybe (Domain -> IO Domain)
+    -- ^ How the name in a query is written before it is sent, where the
+    --   resolver mixes its case on purpose (DNS-0x20).  'Nothing' sends
+    --   the name as it stands and asks nothing of the case which comes
+    --   back; 'Just' sends a mixture and throws away an answer which
+    --   does not repeat it.
     , ractionGetTime :: IO EpochTime
     -- ^ Getting time.
     , ractionSetSockOpt :: Socket -> IO ()
@@ -328,6 +334,7 @@ defaultResolveActions =
     ResolveActions
         { ractionTimeoutTime = 3000000
         , ractionGenId = singleGenId
+        , ractionMixCase = Nothing
         , ractionGetTime = getEpochTime
         , ractionSetSockOpt = rsso
         , ractionLog = \_ _ ~_ -> return ()

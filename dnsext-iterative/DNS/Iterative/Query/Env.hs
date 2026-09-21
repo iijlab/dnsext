@@ -106,6 +106,7 @@ newEmptyEnv = do
         , logLines_ = \_ _ ~_ -> pure ()
         , logDNSTAP_ = \_ -> pure ()
         , disableV6NS_ = False
+        , mixCase_ = Nothing
         , authPort_ = 53
         , rootAnchor_ = FilledDS rootSepDSs
         , rootHint_ = rootHint
