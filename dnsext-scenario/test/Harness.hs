@@ -1,16 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | Standing up a world of its own: clove as the primary for it,
+-- | Standing up a world of its own: clove as the primaries for it,
 --   bowline as the resolver for it, and a way to ask bowline questions.
 --
+--   The world has a root of its own.  One clove serves that root and
+--   another serves the zones below it, and bowline is told by
+--   @auth-port@ which port to ask authoritative servers on, so that a
+--   scenario's delegations are walked down rather than stepped over and
+--   nothing needs a privileged port.  The two primaries share the port
+--   and are told apart by address, which is what one loopback interface
+--   has room for: a parent and a child, which is what a scenario about
+--   a delegation is made of.
+--
 --   What a scenario is made of lives in a directory of its own under
---   @test@ -- its zone files and the configurations of the two
---   programs, with @{{DIR}}@, @{{FILES}}@ and the ports left for this
---   to put in.  Nothing here talks to the network beyond the loopback,
---   and nothing it writes outlives the scenario.  The ports are asked
---   of the kernel rather than chosen, so that scenarios may run beside
---   each other and beside whatever else is on the machine.
+--   @test@ -- its zone files and the configurations of the three
+--   programs, with @{{DIR}}@, the addresses and the ports left for this
+--   to put in.  All of it is copied into a directory of this run's own
+--   before anything starts, so that what a run was given can be read
+--   afterwards beside what it wrote.  Nothing here talks to the network
+--   beyond the loopback, and nothing it writes outlives the scenario.
+--   The ports are asked of the kernel rather than chosen, so that
+--   scenarios may run beside each other and beside whatever else is on
+--   the machine.
 module Harness (
     Scenario (..),
     withScenario,
@@ -21,10 +33,12 @@ module Harness (
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, catch, throwIO)
-import Control.Monad (unless, void)
+import Control.Monad (unless, void, when)
 import Data.List (isPrefixOf, stripPrefix)
+import Data.String (fromString)
 import System.Directory (
     createDirectoryIfMissing,
+    doesFileExist,
     getTemporaryDirectory,
     listDirectory,
     makeAbsolute,
@@ -48,13 +62,14 @@ import Network.Socket
 --   resolver is listening.
 data Scenario = Scenario
     { scenarioDir :: FilePath
-    -- ^ Where this run keeps what it writes.  It holds the logs of both
+    -- ^ Where this run keeps what it writes.  It holds the
+    --   configurations as they were filled in and the logs of all three
     --   programs, which is where to look when a scenario does not come
     --   out as it should.
     , scenarioResolver :: PortNumber
     -- ^ The port bowline answers on.
-    , scenarioPrimary :: PortNumber
-    -- ^ The port clove answers on, for asking the primary directly.
+    , scenarioAuth :: PortNumber
+    -- ^ The port both primaries answer on, for asking one directly.
     }
 
 -- | What came back, reduced to what a scenario asks about.
@@ -68,49 +83,104 @@ data Answer = Answer
 
 ----------------------------------------------------------------
 
+-- | Where the root of the scenario's world is.  Every machine has this
+--   one.
+rootAddr :: String
+rootAddr = "127.0.0.1"
+
+-- | A second address on the loopback, for the servers below the root.
+--   Linux has the whole of 127\/8 and so needs nothing of IPv6, which
+--   is worth avoiding where a builder may have none; elsewhere -- macOS
+--   among them -- 127.0.0.1 is the only IPv4 address there is, and the
+--   second address has to be @::1@.  Which of the two it is, is asked
+--   of the kernel rather than of the operating system's name.
+authAddr :: IO String
+authAddr = do
+    second <- bindable AF_INET "127.0.0.2"
+    pure $ if second then "127.0.0.2" else "::1"
+
+-- | Whether this machine will let a socket have this address.
+bindable :: Family -> String -> IO Bool
+bindable family addr = do
+    ais <- getAddrInfo (Just hints) (Just addr) (Just "0")
+    case ais of
+        [] -> pure False
+        ai : _ ->
+            bracket (openSocket ai) close (\s -> bind s (addrAddress ai) >> pure True)
+                `catch` \e -> const (pure False) (e :: IOError)
+  where
+    hints = defaultHints{addrFamily = family, addrSocketType = Datagram, addrFlags = [AI_NUMERICHOST]}
+
+-- | How a zone's name is written where an address is expected of it:
+--   a scenario's zone file says @ns.example. IN {{AUTH_ADDR_RR}}@ and
+--   gets an A or a AAAA according to which address this run is using.
+addrRR :: String -> String
+addrRR addr
+    | ':' `elem` addr = "AAAA\t" ++ addr
+    | otherwise = "A\t" ++ addr
+
+----------------------------------------------------------------
+
 -- | Standing the named scenario up for as long as the action runs.  The
 --   name is the directory its files are in, under @test@.
 withScenario :: String -> (Scenario -> IO a) -> IO a
 withScenario name body = do
-    [primaryPort, resolverPort, monitorPort] <- mapM (const freePort) [1 :: Int, 2, 3]
-    -- Absolute: clove changes into its own directory once it has read
-    -- its configuration, so a relative path in one is a path to
-    -- somewhere else by the time it is used.
+    [authPort, resolverPort, monitorPort] <- mapM (const freePort) [1 :: Int, 2, 3]
+    auth <- authAddr
     files <- makeAbsolute $ "test" </> name
     -- The directory is named after a port nothing else has, so that two
     -- scenarios at once do not write over each other.
-    withTempDir (show primaryPort) $ \dir -> do
+    withTempDir (show authPort) $ \dir -> do
         let fill =
                 [ ("DIR", dir)
-                , ("FILES", files)
-                , ("PRIMARY_PORT", show primaryPort)
+                , ("ROOT_ADDR", rootAddr)
+                , ("AUTH_ADDR", auth)
+                , ("AUTH_ADDR_RR", addrRR auth)
+                , ("AUTH_PORT", show authPort)
                 , ("RESOLVER_PORT", show resolverPort)
                 , ("MONITOR_PORT", show monitorPort)
                 ]
-        createDirectoryIfMissing True (dir </> "clove")
-        configure fill (files </> "clove.conf") (dir </> "clove.conf")
-        configure fill (files </> "bowline.conf") (dir </> "bowline.conf")
+        mapM_ (createDirectoryIfMissing True . (dir </>)) ["clove", "root"]
+        copyIn fill files dir
+        writeFile (dir </> "root.hints") rootHints
         -- A scenario which needs clove to serve what clove would
         -- otherwise refuse says so in a file of its own, so that
         -- everything about a scenario is in the scenario's directory.
-        cloveArgs <- readArgs $ files </> "clove.args"
-        -- clove first: bowline is given a trust anchor made from the key
-        -- clove generates, so the key has to exist before bowline starts.
-        withDaemon dir "clove" (cloveArgs ++ [dir </> "clove.conf"]) $ do
-            waitFor "clove" $ answered primaryPort "example." SOA
-            writeFile (dir </> "anchor.zone") =<< trustAnchor (dir </> "clove" </> "example")
-            withDaemon dir "bowline" [dir </> "bowline.conf"] $ do
-                -- The apex of the zone every scenario has, so that
-                -- what a scenario puts in its zone is its own business.
-                waitFor "bowline" $ answered resolverPort "example." SOA
-                body
-                    Scenario
-                        { scenarioDir = dir
-                        , scenarioResolver = resolverPort
-                        , scenarioPrimary = primaryPort
-                        }
+        cloveArgs <- readArgs $ dir </> "clove.args"
+        rootArgs <- readArgs $ dir </> "root.args"
+        -- The zones below the root first: the root vouches for them
+        -- with a DS, and a DS is made of a key which does not exist
+        -- until the zone it belongs to has been served once.
+        withDaemon dir "clove" "clove" (cloveArgs ++ [dir </> "clove.conf"]) $ do
+            waitFor "clove" $ answered auth authPort "example." SOA
+            fillDS (dir </> "clove") (dir </> "root.zone")
+            withDaemon dir "root" "clove" (rootArgs ++ [dir </> "root.conf"]) $ do
+                waitFor "root" $ answered rootAddr authPort "." SOA
+                writeFile (dir </> "anchor.zone") =<< trustAnchor (dir </> "root" </> "root.")
+                withDaemon dir "bowline" "bowline" [dir </> "bowline.conf"] $ do
+                    -- The root, and nothing of the scenario's own: what
+                    -- is being waited for is bowline listening and
+                    -- reaching its hint, and a scenario about a zone
+                    -- which does not resolve should fail as a test
+                    -- rather than as a world which never came up.
+                    waitFor "bowline" $ answered rootAddr resolverPort "." SOA
+                    body
+                        Scenario
+                            { scenarioDir = dir
+                            , scenarioResolver = resolverPort
+                            , scenarioAuth = authPort
+                            }
 
--- | The arguments a scenario wants its primary started with, where it
+-- | The scenario's own files, with this run's directory, addresses and
+--   ports put in where they leave room for them.
+copyIn :: [(String, String)] -> FilePath -> FilePath -> IO ()
+copyIn fill from to = mapM_ one =<< listDirectory from
+  where
+    one n = do
+        isFile <- doesFileExist (from </> n)
+        when isFile $ writeFile (to </> n) . substitute fill =<< readFile (from </> n)
+
+-- | The arguments a scenario wants a primary started with, where it
 --   wants any.
 readArgs :: FilePath -> IO [String]
 readArgs path = (concatMap words . lines <$> readFile path) `catch` missing
@@ -118,11 +188,6 @@ readArgs path = (concatMap words . lines <$> readFile path) `catch` missing
     missing e
         | isDoesNotExistError e = pure []
         | otherwise = throwIO e
-
--- | A configuration file of the scenario, with this run's directory and
---   ports put in where it leaves room for them.
-configure :: [(String, String)] -> FilePath -> FilePath -> IO ()
-configure fill src dst = writeFile dst . substitute fill =<< readFile src
 
 substitute :: [(String, String)] -> String -> String
 substitute fill = go
@@ -133,22 +198,51 @@ substitute fill = go
         [] -> c : go cs
     brace k = "{{" ++ k ++ "}}"
 
--- | The DS of the zone's key signing key, as a trust anchor for bowline
---   to start from.  clove writes everything a DS is made of into the key
---   file, so it is read from there rather than worked out again.
+----------------------------------------------------------------
+
+-- | Where bowline starts from.  It is replaced by what the root zone
+--   actually says as soon as bowline asks it, so all this has to do is
+--   name a server and say where it is.
+rootHints :: String
+rootHints =
+    unlines
+        [ ".\t3600\tIN\tNS\tns.root."
+        , "ns.root.\t3600\tIN\tA\t" ++ rootAddr
+        ]
+
+-- | Putting into the root zone the DS of each zone the primary below it
+--   signs.  A scenario writes @example. IN DS {{DS example}}@, naming
+--   the zone as its primary's configuration does; a delegation which is
+--   meant to be insecure simply says nothing.
+fillDS :: FilePath -> FilePath -> IO ()
+fillDS cloveDir rootZone = do
+    fill <- concat <$> (mapM entry =<< listDirectory cloveDir)
+    -- Read all of it before writing any of it: this is the one file
+    -- which is its own source.
+    before <- readFile rootZone
+    length before `seq` writeFile rootZone (substitute fill before)
+  where
+    entry z = maybe [] (\rd -> [("DS " ++ z, rd)]) <$> dsRdata (cloveDir </> z)
+
+-- | The DS of the root of the scenario's world, as the trust anchor
+--   bowline starts from.
 trustAnchor :: FilePath -> IO String
-trustAnchor zoneDir = do
+trustAnchor zoneDir =
+    maybe (fail $ "no key signing key in " ++ zoneDir) (pure . printf ".\t3600\tIN\tDS\t%s\n")
+        =<< dsRdata zoneDir
+
+-- | What a DS of this zone is made of, or nothing where the zone is not
+--   signed.  clove writes everything a DS needs into the key file, so it
+--   is read from there rather than worked out again.
+dsRdata :: FilePath -> IO (Maybe String)
+dsRdata zoneDir = do
     names <- listDirectory zoneDir
     case [n | n <- names, ".ksk" `isSuffix` n] of
-        [] -> fail $ "no key signing key in " ++ zoneDir
+        [] -> pure Nothing
         ksk : _ -> do
             fields <- keyFields <$> readFile (zoneDir </> ksk)
             let field k = maybe (fail $ "no " ++ k ++ " in " ++ ksk) pure $ lookup k fields
-            tag <- field "KeyTag"
-            alg <- field "Algorithm"
-            dig <- field "DigestAlgo"
-            hash <- field "Digest"
-            pure $ printf "example.\t3600\tIN\tDS\t%s %s %s %s\n" tag alg dig hash
+            Just . unwords <$> mapM field ["KeyTag", "Algorithm", "DigestAlgo", "Digest"]
   where
     isSuffix s x = reverse s `isPrefixOf` reverse x
     -- "KeyTag:     6109" and "Algorithm:  15 # ED25519": the name up to
@@ -177,7 +271,7 @@ askWith cd sc dom typ = do
     -- what a client does and what a scenario wants: with DO set an
     -- answer of any size stops fitting quickly, and a truncated one
     -- looks like a missing record rather than like a truncated one.
-    er <- udpTcpResolver (resolveInfo $ scenarioResolver sc) (Question dom typ IN) ctl
+    er <- udpTcpResolver (resolveInfo rootAddr $ scenarioResolver sc) (Question dom typ IN) ctl
     case er of
         Left e -> throwIO e
         Right Reply{..} ->
@@ -190,10 +284,10 @@ askWith cd sc dom typ = do
   where
     ctl = rdFlag FlagSet <> doFlag FlagSet <> cd
 
-resolveInfo :: PortNumber -> ResolveInfo
-resolveInfo port =
+resolveInfo :: String -> PortNumber -> ResolveInfo
+resolveInfo addr port =
     defaultResolveInfo
-        { rinfoIP = "127.0.0.1"
+        { rinfoIP = fromString addr
         , rinfoPort = port
         , rinfoUDPRetry = 1
         , -- A chain of CNAMEs with a signature on each of them is past
@@ -202,10 +296,11 @@ resolveInfo port =
         , rinfoActions = defaultResolveActions{ractionTimeoutTime = 3000000}
         }
 
--- | Whether a server on this port has an answer for this question yet.
-answered :: PortNumber -> Domain -> TYPE -> IO Bool
-answered port dom typ = do
-    er <- udpResolver (resolveInfo port) (Question dom typ IN) (rdFlag FlagSet)
+-- | Whether a server at this address has an answer for this question
+--   yet.
+answered :: String -> PortNumber -> Domain -> TYPE -> IO Bool
+answered addr port dom typ = do
+    er <- udpResolver (resolveInfo addr port) (Question dom typ IN) (rdFlag FlagSet)
     pure $ case er of
         Right Reply{..} -> rcode replyDNSMessage == NoErr
         Left _ -> False
@@ -216,9 +311,10 @@ answered port dom typ = do
 --   whether the action finished or threw, and what it says goes to a
 --   file in the scenario's directory rather than into the test's
 --   output, where it is there to be read when a scenario does not come
---   out as it should.
-withDaemon :: FilePath -> String -> [String] -> IO a -> IO a
-withDaemon dir prog args body = withFile (dir </> prog ++ ".log") WriteMode $ \h ->
+--   out as it should.  The two primaries are the same program, so the
+--   log is named after the part being played rather than after it.
+withDaemon :: FilePath -> String -> String -> [String] -> IO a -> IO a
+withDaemon dir part prog args body = withFile (dir </> part ++ ".log") WriteMode $ \h ->
     bracket (start h) stop (const body)
   where
     start h =

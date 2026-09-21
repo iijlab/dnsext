@@ -6,5 +6,5 @@ $ORIGIN bogus.example.
 $TTL 3600
 @	IN	SOA	ns.bogus.example. root.example. 1 3600 900 604800 3600
 @	IN	NS	ns.bogus.example.
-ns	IN	A	127.0.0.1
+ns	IN	{{AUTH_ADDR_RR}}
 host	IN	A	192.0.2.9
