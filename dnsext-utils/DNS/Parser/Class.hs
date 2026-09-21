@@ -100,17 +100,6 @@ parseError s = do
         | lin < 0    = ""
         | otherwise  = "line " ++ show lin ++ ", column " ++ show col ++ ": "
 
--- | The token which comes next, left where it is.  'lookAhead' 'token'
---   does the same by taking it and putting the input and the position
---   back; this reads and writes nothing, which is what a parser wants
---   when it is deciding which way to go.
-{-# INLINEABLE peek #-}
-peek :: MonadParser t s m => m t
-peek = caseCons cons nil =<< getInput
-  where
-    cons t _ = pure t
-    nil = parseError "peek: eof"
-
 -- | As many tokens in a row as the predicate takes, taken at once.
 --
 --   'satisfy' reads the input, reads and writes the position and writes
