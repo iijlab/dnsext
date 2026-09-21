@@ -1,0 +1,16 @@
+; The root of the scenario's world.  It delegates example. away, and it
+; keeps www.victim. for itself -- that name is ordinary root-zone data,
+; signed by the root like everything else here, and there is no victim.
+; delegation anywhere.
+;
+; So the true answer for www.victim. is 203.0.113.66, and the root's own
+; signatures say so.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
+www.victim.	IN	A	203.0.113.66

@@ -28,6 +28,9 @@ extra-source-files:
     test/dnssec-failed/*.zone
     test/orphan-glue/*.conf
     test/orphan-glue/*.zone
+    test/injected-delegation/*.args
+    test/injected-delegation/*.conf
+    test/injected-delegation/*.zone
     test/poisoned-glue/*.args
     test/poisoned-glue/*.conf
     test/poisoned-glue/*.zone
@@ -53,6 +56,7 @@ test-suite spec
         DiffNsSpec
         DnssecFailedSpec
         Harness
+        InjectedDelegationSpec
         JpSharpSpec
         OrphanGlueSpec
         PoisonedGlueSpec
