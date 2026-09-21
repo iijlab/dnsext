@@ -71,6 +71,7 @@ import DNS.SEC (addResourceDataForDNSSEC)
 import DNS.SVCB (ALPN, addResourceDataForSVCB)
 import DNS.ThreadStats (listThreads, threadLabel)
 import DNS.Types (
+    DNSFlags (..),
     DNSMessage (..),
     Domain,
     Question (..),
@@ -257,6 +258,11 @@ worker Op{..} contvar resolver = do
             Just x -> go tid x >> loop tid
     go tid (bs, sa) = case decode bs of
         Left _ -> putLog "Decode error\n"
+        -- A response is not a question, and forwarding one on somebody's
+        -- behalf is how a packet with a forged source address becomes
+        -- our packet to whoever it names.
+        Right msg
+            | isResponse (flags msg) -> putLog "Response rather than a query: ignored\n"
         Right msg -> do
             let qry = question msg
             putLog $ toLogStr $ tid ++ " Q: " ++ pprDomain (qname qry) ++ " " ++ show (qtype qry) ++ "\n"
