@@ -1,0 +1,14 @@
+; Two names with the same data and very different TTLs.  How long the
+; cache is allowed to keep each of them is the only thing that tells
+; them apart, so how often this server is asked for each one says what
+; the cache did with the number it was given.
+;
+; a.t.e-ontap.com asks the same thing of an ISP's resolver: 「ISPのDNS
+; キャッシュサーバはTTLを越えてキャッシュを保持するか?」
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+long	3600	IN	A	192.0.2.1
+brief	2	IN	A	192.0.2.2

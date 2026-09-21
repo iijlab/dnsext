@@ -27,6 +27,8 @@ extra-source-files:
     test/denied-nodata/*.args
     test/denied-nodata/*.conf
     test/denied-nodata/*.zone
+    test/cache-ttl/*.conf
+    test/cache-ttl/*.zone
     test/broken-ent/*.args
     test/broken-ent/*.conf
     test/broken-ent/*.zone
@@ -71,6 +73,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         BrokenEntSpec
+        CacheTtlSpec
         CnameChainSpec
         CnameExtraSpec
         CnameNxdomainSpec
