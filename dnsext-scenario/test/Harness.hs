@@ -15,6 +15,7 @@ module Harness (
     Scenario (..),
     withScenario,
     ask,
+    askChecking,
     Answer (..),
 ) where
 
@@ -89,19 +90,34 @@ withScenario name body = do
         createDirectoryIfMissing True (dir </> "clove")
         configure fill (files </> "clove.conf") (dir </> "clove.conf")
         configure fill (files </> "bowline.conf") (dir </> "bowline.conf")
+        -- A scenario which needs clove to serve what clove would
+        -- otherwise refuse says so in a file of its own, so that
+        -- everything about a scenario is in the scenario's directory.
+        cloveArgs <- readArgs $ files </> "clove.args"
         -- clove first: bowline is given a trust anchor made from the key
         -- clove generates, so the key has to exist before bowline starts.
-        withDaemon dir "clove" ["--insecure", dir </> "clove.conf"] $ do
+        withDaemon dir "clove" (cloveArgs ++ [dir </> "clove.conf"]) $ do
             waitFor "clove" $ answered primaryPort "example." SOA
             writeFile (dir </> "anchor.zone") =<< trustAnchor (dir </> "clove" </> "example")
             withDaemon dir "bowline" [dir </> "bowline.conf"] $ do
-                waitFor "bowline" $ answered resolverPort "www.example." A
+                -- The apex of the zone every scenario has, so that
+                -- what a scenario puts in its zone is its own business.
+                waitFor "bowline" $ answered resolverPort "example." SOA
                 body
                     Scenario
                         { scenarioDir = dir
                         , scenarioResolver = resolverPort
                         , scenarioPrimary = primaryPort
                         }
+
+-- | The arguments a scenario wants its primary started with, where it
+--   wants any.
+readArgs :: FilePath -> IO [String]
+readArgs path = (concatMap words . lines <$> readFile path) `catch` missing
+  where
+    missing e
+        | isDoesNotExistError e = pure []
+        | otherwise = throwIO e
 
 -- | A configuration file of the scenario, with this run's directory and
 --   ports put in where it leaves room for them.
@@ -144,10 +160,24 @@ trustAnchor zoneDir = do
 
 ----------------------------------------------------------------
 
--- | Asking bowline, with DO set so that it says whether it validated.
+-- | Asking bowline, with DO set so that it says whether it validated,
+--   and with CD clear so that it is doing the validating.
 ask :: Scenario -> Domain -> TYPE -> IO Answer
-ask sc dom typ = do
-    er <- udpResolver (resolveInfo $ scenarioResolver sc) (Question dom typ IN) ctl
+ask = askWith (cdFlag FlagClear)
+
+-- | The same question with CD set: RFC 4035 Sec 3.2.2 has the resolver
+--   hand over what it has without validating it, for a client which
+--   would rather check for itself.
+askChecking :: Scenario -> Domain -> TYPE -> IO Answer
+askChecking = askWith (cdFlag FlagSet)
+
+askWith :: QueryControls -> Scenario -> Domain -> TYPE -> IO Answer
+askWith cd sc dom typ = do
+    -- Over UDP and then over TCP where the answer did not fit, which is
+    -- what a client does and what a scenario wants: with DO set an
+    -- answer of any size stops fitting quickly, and a truncated one
+    -- looks like a missing record rather than like a truncated one.
+    er <- udpTcpResolver (resolveInfo $ scenarioResolver sc) (Question dom typ IN) ctl
     case er of
         Left e -> throwIO e
         Right Reply{..} ->
@@ -158,7 +188,7 @@ ask sc dom typ = do
                     , answerRRs = answer replyDNSMessage
                     }
   where
-    ctl = rdFlag FlagSet <> doFlag FlagSet <> cdFlag FlagClear
+    ctl = rdFlag FlagSet <> doFlag FlagSet <> cd
 
 resolveInfo :: PortNumber -> ResolveInfo
 resolveInfo port =
@@ -166,6 +196,9 @@ resolveInfo port =
         { rinfoIP = "127.0.0.1"
         , rinfoPort = port
         , rinfoUDPRetry = 1
+        , -- A chain of CNAMEs with a signature on each of them is past
+          -- the 2048 a resolver is given by default.
+          rinfoVCLimit = 8 * 1024
         , rinfoActions = defaultResolveActions{ractionTimeoutTime = 3000000}
         }
 

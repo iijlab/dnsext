@@ -1,0 +1,10 @@
+; The child of the secure delegation.  There is nothing wrong with this
+; zone in itself: clove signs it properly with a key of its own.  What
+; is wrong is that the DS its parent publishes is for some other key, so
+; nothing here can be reached from the trust anchor.
+$ORIGIN bogus.example.
+$TTL 3600
+@	IN	SOA	ns.bogus.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.bogus.example.
+ns	IN	A	127.0.0.1
+host	IN	A	192.0.2.9

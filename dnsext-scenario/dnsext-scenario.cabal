@@ -16,10 +16,17 @@ description:
 
 category:           Network
 build-type:         Simple
+-- A star is only allowed in the last part of a glob, so each scenario's
+-- directory is named.  A new scenario adds three lines here.
 extra-source-files:
     CHANGELOG.md
-    test/*/*.conf
-    test/*/*.zone
+    test/cname-chain/*.conf
+    test/cname-chain/*.zone
+    test/dnssec-failed/*.conf
+    test/dnssec-failed/*.zone
+    test/jp.sharp/*.args
+    test/jp.sharp/*.conf
+    test/jp.sharp/*.zone
 
 source-repository head
     type:     git
@@ -35,6 +42,8 @@ test-suite spec
 
     hs-source-dirs:     test
     other-modules:
+        CnameChainSpec
+        DnssecFailedSpec
         Harness
         JpSharpSpec
 
