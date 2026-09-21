@@ -32,6 +32,8 @@ extra-source-files:
     test/broken-ent/*.args
     test/broken-ent/*.conf
     test/broken-ent/*.zone
+    test/classless-reverse/*.conf
+    test/classless-reverse/*.zone
     test/cname-nxdomain/*.args
     test/cname-nxdomain/*.conf
     test/cname-nxdomain/*.zone
@@ -76,6 +78,7 @@ test-suite spec
         CacheTtlSpec
         CnameChainSpec
         CnameExtraSpec
+        ClasslessReverseSpec
         CnameNxdomainSpec
         DeepDelegationSpec
         DeniedNodataSpec

@@ -1,0 +1,25 @@
+; The holder of 150.42.6.0/24 has given the first 64 addresses to
+; somebody else, and a zone cut cannot be made in the middle of a label.
+; RFC 2317 gets round it by giving the piece a name of its own,
+; 0-63.6.42.150.in-addr.arpa, delegating that, and pointing each of the
+; addresses at it with a CNAME.
+;
+; So a reverse lookup of 150.42.6.1 asks for 1.6.42.150.in-addr.arpa,
+; is sent to 1.0-63.6.42.150.in-addr.arpa by the CNAME, and has to
+; follow a delegation to get there.
+;
+; 0-63.6.42.150.in-addr.arpa is delegated without a DS, so the piece is
+; an insecure island under a signed chain.
+$ORIGIN arpa.
+$TTL 3600
+@					IN	SOA	ns.arpa. root.arpa. 1 3600 900 604800 3600
+@					IN	NS	ns.arpa.
+ns					IN	{{AUTH_ADDR_RR}}
+; The delegation of the classless piece, and the glue it needs.
+0-63.6.42.150.in-addr			IN	NS	ns.0-63.6.42.150.in-addr.arpa.
+ns.0-63.6.42.150.in-addr		IN	A	{{ROOT_ADDR}}
+; Each address in the piece points at its name inside the delegation.
+1.6.42.150.in-addr			IN	CNAME	1.0-63.6.42.150.in-addr.arpa.
+2.6.42.150.in-addr			IN	CNAME	2.0-63.6.42.150.in-addr.arpa.
+; And one which was kept rather than given away.
+200.6.42.150.in-addr			IN	PTR	kept.example.
