@@ -97,11 +97,14 @@ test-suite spec
         FakeServer
         LookupSpec
         IOSpec
+        UDPSpec
+        VCSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
         base,
+        async,
         bytestring,
         dnsext-do53,
         dnsext-types,

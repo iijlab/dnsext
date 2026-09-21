@@ -21,6 +21,7 @@ module DNS.Do53.Query (
     queryControls,
     modifyQuery,
     encodeQuery,
+    queryUdpSize,
     ODataOp (..),
 )
 where
@@ -429,6 +430,23 @@ encodeQuery
     -- ^ Query flag and EDNS overrides
     -> ByteString
 encodeQuery idt q ctls = encode $ modifyQuery ctls $ makeQuery idt q
+
+-- | The largest answer the query tells the peer it can take, which is
+--   how much room there has to be to read one.
+--
+--   The OPT record carries it, clamped on the way out as the encoder
+--   clamps it, and a query without EDNS is saying 512.
+queryUdpSize
+    :: Identifier
+    -- ^ Crypto random request id
+    -> Question
+    -- ^ Query name and type
+    -> QueryControls
+    -- ^ Query flag and EDNS overrides
+    -> Word16
+queryUdpSize idt q ctls = case ednsHeader $ modifyQuery ctls $ makeQuery idt q of
+    EDNSheader edns -> maxUdpSize `min` (minUdpSize `max` ednsUdpSize edns)
+    _ -> minUdpSize
 
 modifyQuery
     :: QueryControls
