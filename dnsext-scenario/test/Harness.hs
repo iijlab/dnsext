@@ -36,7 +36,7 @@ module Harness (
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, catch, throwIO)
 import Control.Monad (unless, void, when)
-import Data.List (isPrefixOf, stripPrefix)
+import Data.List (isInfixOf, isPrefixOf, stripPrefix)
 import Data.Maybe (mapMaybe)
 import Data.String (fromString)
 import System.Directory (
@@ -302,10 +302,20 @@ data Server
 --   @log-level: DEBUG@ for the server in question, the default here
 --   being quieter than that.
 asked :: Scenario -> Server -> IO [(Domain, TYPE)]
-asked sc server = mapMaybe oneQuestion . lines <$> readFile (scenarioDir sc </> logOf server)
+asked sc server = do
+    -- A server logging at the default level writes no queries at all,
+    -- and an empty list of them is what every assertion about what was
+    -- asked would then quietly agree with.  Say so instead.
+    conf <- readFile (scenarioDir sc </> confOf server)
+    unless ("log-level: DEBUG" `isInfixOf` conf) $
+        fail $
+            confOf server ++ ": asked needs log-level: DEBUG to have anything to read"
+    mapMaybe oneQuestion . lines <$> readFile (scenarioDir sc </> logOf server)
   where
     logOf TheRoot = "root.log"
     logOf ThePrimary = "clove.log"
+    confOf TheRoot = "root.conf"
+    confOf ThePrimary = "clove.conf"
 
 -- | clove writes @\"a.b.example.\" A from 127.0.0.1\/UDP@ for each
 --   query it answers.  Whatever else is in the log is not one.
