@@ -60,7 +60,8 @@ get_svcb len rbuf ref = do
     priority <- get16 rbuf
     target <- getDomain rbuf ref
     pos <- position rbuf
-    params <- newSvcParams <$> sGetMany "SVCB Param" (end - pos) svcparam rbuf ref
+    params <- inOrder =<< sGetMany "SVCB Param" (end - pos) svcparam rbuf ref
+    wellFormed params
     return $ RD_SVCB priority target params
   where
     svcparam _ _ = do
@@ -68,6 +69,57 @@ get_svcb len rbuf ref = do
         lng <- getInt16 rbuf
         val <- getOpaque lng rbuf ref
         return (key, SvcParamValue val)
+
+-- | RFC 9460 Sec 2.2: "SvcParamKeys SHALL appear in increasing numeric
+--   order", which also says each one appears at most once.
+--
+--   The parameters are held in a map, so out of order and repeated keys
+--   used to be taken and quietly put right: the record was accepted
+--   where other implementations refuse it, one of a repeated pair was
+--   dropped without a word, and what went back out was not what came
+--   in.
+inOrder :: [(Int, SvcParamValue)] -> IO SvcParams
+inOrder kvs
+    | and (zipWith (<) keys (drop 1 keys)) = pure $ newSvcParams kvs
+    | otherwise =
+        failParser $
+            "SVCB: SvcParamKeys are not in strictly increasing order: " ++ show keys
+  where
+    keys = map fst kvs
+
+-- | What RFC 9460 asks of the parameters of a record beyond their
+--   order.
+--
+--   Sec 7.1.1 has an alpn with nothing in it malformed, and Sec 8 says
+--   the same of mandatory, adding that mandatory must not name itself,
+--   must not name a key twice, and must not name a key which is not in
+--   the record.  None of this was looked at: an empty alpn read back as
+--   the empty list, which a caller cannot tell from an alpn which is not
+--   there, and a mandatory naming a key the record does not carry was
+--   passed on as though the record were usable.
+wellFormed :: SvcParams -> IO ()
+wellFormed params = do
+    notEmpty SPK_ALPN
+    case lookupSvcParam SPK_Mandatory params of
+        Nothing -> pure ()
+        Just v -> do
+            notEmpty SPK_Mandatory
+            keys <-
+                maybe (bad SPK_Mandatory "is not a list of keys") (pure . mandatory_keys) $
+                    fromSvcParamValue v
+            forM_ keys $ \k -> do
+                when (k == SPK_Mandatory) $ bad SPK_Mandatory "names itself"
+                when (length (filter (== k) keys) > 1) $
+                    bad SPK_Mandatory $
+                        "names " ++ show k ++ " more than once"
+                when (isNothing $ lookupSvcParam k params) $
+                    bad SPK_Mandatory $
+                        "names " ++ show k ++ ", which the record does not carry"
+  where
+    bad k what = failParser $ "SVCB: " ++ show k ++ " " ++ what
+    notEmpty k = case lookupSvcParam k params of
+        Just (SvcParamValue o) | Opaque.null o -> bad k "has no value"
+        _ -> pure ()
 
 rd_svcb :: Word16 -> Domain -> SvcParams -> RData
 rd_svcb p d s = toRData $ RD_SVCB p d s
