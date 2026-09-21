@@ -58,12 +58,23 @@ data Spoof = Spoof
     { spoofAnswer :: [ResourceRecord]
     , spoofAuthority :: [ResourceRecord]
     , spoofAdditional :: [ResourceRecord]
+    , spoofNxdomain :: [Domain]
+    -- ^ Names to answer NXDOMAIN, whatever the right answer would have
+    --   been.  Everything else about the reply is left alone, the proof
+    --   of what is really there included, so a signed zone ends up
+    --   saying two things at once.
     }
     deriving (Eq, Show)
 
 -- | A zone which sends only what it should.
 noSpoof :: Spoof
-noSpoof = Spoof{spoofAnswer = [], spoofAuthority = [], spoofAdditional = []}
+noSpoof =
+    Spoof
+        { spoofAnswer = []
+        , spoofAuthority = []
+        , spoofAdditional = []
+        , spoofNxdomain = []
+        }
 
 ----------------------------------------------------------------
 

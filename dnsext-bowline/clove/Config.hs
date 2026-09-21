@@ -98,6 +98,10 @@ data ZoneConf = ZoneConf
     --   with --insecure: an RRSIG which names a zone that did not sign
     --   it is what insecure.mufj.jp served, and nothing but finding out
     --   what a resolver does with one wants it.
+    , cnf_spoof_nxdomain       :: [String]
+    -- ^ Names this zone answers NXDOMAIN for, whatever it really holds.
+    --   Only with --insecure: an empty non-terminal answered NXDOMAIN
+    --   instead of NODATA is what gouv.fr had.
     , cnf_spoof_answer         :: FilePath
     -- ^ A zone file whose records are put into the answer section of
     --   every response this zone sends.  Only with --insecure: an
@@ -145,6 +149,7 @@ defaultZoneConf =
         , cnf_zsk_rollover_duration = 604800 -- 7 days
         , cnf_zsk_preserve          = 10
         , cnf_signer                = ""
+        , cnf_spoof_nxdomain       = []
         , cnf_spoof_answer         = ""
         , cnf_spoof_authority      = ""
         , cnf_spoof_additional     = ""
@@ -215,6 +220,7 @@ makeZoneConf def conf = do
     cnf_source_port           <- get "source-port"           cnf_source_port
     cnf_source_key            <- get "source-key"            cnf_source_key
     cnf_signer                <- get "signer"                cnf_signer
+    cnf_spoof_nxdomain        <- get "spoof-nxdomain"        cnf_spoof_nxdomain
     cnf_spoof_answer          <- get "spoof-answer"          cnf_spoof_answer
     cnf_spoof_authority       <- get "spoof-authority"       cnf_spoof_authority
     cnf_spoof_additional      <- get "spoof-additional"      cnf_spoof_additional

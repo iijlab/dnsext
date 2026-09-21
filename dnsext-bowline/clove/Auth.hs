@@ -159,14 +159,22 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ quest
 --   one.  The records go on the end, after the zone's own, and are not
 --   signed -- neither is glue, which is why this cannot be seen through.
 spoofed :: Spoof -> DNSMessage -> DNSMessage
-spoofed Spoof{..} reply
-    | null spoofAnswer && null spoofAuthority && null spoofAdditional = reply
-    | otherwise =
-        reply
-            { answer = answer reply ++ spoofAnswer
-            , authority = authority reply ++ spoofAuthority
-            , additional = additional reply ++ spoofAdditional
-            }
+spoofed Spoof{..} reply = attached $ denied reply
+  where
+    -- Only the rcode.  What the zone was going to say about the name is
+    -- left where it is, the signed proof of it included, so a signed
+    -- zone comes out saying one thing in the header and another below.
+    denied r
+        | qname (question r) `elem` spoofNxdomain = r{rcode = NXDomain}
+        | otherwise = r
+    attached r
+        | null spoofAnswer && null spoofAuthority && null spoofAdditional = r
+        | otherwise =
+            r
+                { answer = answer r ++ spoofAnswer
+                , authority = authority r ++ spoofAuthority
+                , additional = additional r ++ spoofAdditional
+                }
 
 -- | Someone says the zone has moved on (RFC 1996).  Whether to believe
 --   them is what allow-notify-key and allow-notify-addrs decide; the

@@ -499,20 +499,32 @@ readSpoof zcheck ZoneConf{..} = do
     answer <- section "spoof-answer" cnf_spoof_answer
     authority <- section "spoof-authority" cnf_spoof_authority
     additional <- section "spoof-additional" cnf_spoof_additional
+    nxdomain <- denied cnf_spoof_nxdomain
     pure
         Spoof
             { spoofAnswer = answer
             , spoofAuthority = authority
             , spoofAdditional = additional
+            , spoofNxdomain = nxdomain
             }
   where
     section _ "" = pure []
-    section setting file = case zcheck of
+    section setting file = insecureOnly setting file $ loadZoneFile "." file
+    -- The names to deny, whatever is really there.  Denying a name
+    -- which exists is not something a zone does by accident either, so
+    -- it is gated the same way and refused just as loudly.
+    denied :: [String] -> IO [Domain]
+    denied [] = pure []
+    denied ns =
+        insecureOnly "spoof-nxdomain" (unwords ns) $
+            pure $
+                map fromRepresentation ns
+    insecureOnly setting what action = case zcheck of
         Checked ->
             E.ioError $
                 E.userError $
-                    setting ++ ": " ++ file ++ ": sending what is not ours needs --insecure"
-        Unchecked -> loadZoneFile "." file
+                    setting ++ ": " ++ what ++ ": sending what is not ours needs --insecure"
+        Unchecked -> action
 
 -- | The zone to name in the signer field of the RRSIGs, where the
 --   configuration says one.  Naming a zone which did not sign them is
