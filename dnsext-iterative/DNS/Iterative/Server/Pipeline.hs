@@ -158,6 +158,15 @@ cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
     inpBS@Input{..} <- blockingRequest wstat fromReceiver
     case DNS.decode inputQuery of
         Left e -> logLn env Log.WARN $ "cacher.decode-error: " ++ inputAddr inpBS ++ " : " ++ show e
+        {- A response is not a question.  Answering one has two servers
+           which both do it talk to each other until somebody stops them,
+           and lets anybody who can forge a source address have us send a
+           packet to whoever they name.  DEBUG rather than louder: the
+           packet costs nothing to drop and a line of log for each one
+           would cost more than the packet did. -}
+        Right DNSMessage{flags = qflags}
+            | isResponse qflags ->
+                logLn env Log.DEBUG $ "cacher.not-a-query: " ++ inputAddr inpBS
         Right queryMsg@DNSMessage{question = qq, flags = qflags, ednsHeader = qeh} -> do
             -- Input ByteString -> Input DNSMessage
             let blockingEnqueue_ tag = blockingEnqueue wstat $ "cacher: " ++ tag

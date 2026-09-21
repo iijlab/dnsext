@@ -82,6 +82,21 @@ server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
                 -- a connection open after that only has the peer wait
                 -- for the idle timeout, so it ends here.
                 return $ not recvErrorFatal
+            -- A response is not a question, and answering one is how
+            -- two servers which both do it end up talking to each other
+            -- until somebody stops them.  It is also how anybody who can
+            -- forge a source address has us send a packet to whoever
+            -- they name.  Nothing goes back.  Saying so at DEBUG rather
+            -- than louder: a forged packet costs us nothing to drop, and
+            -- a line of log for each one would cost more than the packet
+            -- did.
+            Right query
+                | isResponse (flags query) -> do
+                    envPutLines
+                        DEBUG
+                        Nothing
+                        ["a response rather than a query from " ++ peerOf sa ++ "/" ++ protoName ++ ": ignored"]
+                    return True
             Right query -> (>> return True) $ do
                 -- RFC 8945 Sec 5.2: whatever the message is for, the
                 -- TSIG on it is looked at first, and before anybody
