@@ -17,6 +17,7 @@ module DNS.Types.Domain (
     unconsDomain,
     wireLabels_,
     wireLabels,
+    originalWireLabels,
     revLabels,
     Mailbox,
     mailboxSize,
@@ -92,20 +93,45 @@ class IsRepresentation a b where
 -- ["\SOH","exotic","example"]
 -- >>> wireLabels "just\\.one\\.label.example."
 -- ["just.one.label","example"]
-newtype Domain = Domain
+data Domain = Domain
     { wireLabels_ :: WireLabels
     -- ^ Labels in wire format. Lower cases, not escaped.
     --   https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
+    --   This is the form everything compares, orders and looks up by.
+    , originalLabels_ :: WireLabels
+    -- ^ The same labels with the case they arrived in, which is what
+    --   goes back out on the wire.  RFC 4343 Sec 3 asks a server to
+    --   give a name back as it was given, and RFC 5452 Sec 9.1 has
+    --   clients which mix the case of a query on purpose and throw
+    --   away an answer whose question does not match byte for byte.
+    --   It is the very same array as 'wireLabels_' unless a label
+    --   held an upper case byte, which is nearly always.
     }
 
+-- | A name whose labels are already folded to lower case.
+folded :: WireLabels -> Domain
+folded ls = Domain{wireLabels_ = ls, originalLabels_ = ls}
+
+-- | A name with the case it came in, folded for comparison.
+asGiven :: WireLabels -> Domain
+asGiven ls
+    | any (Short.any isUpper) (Array.elems ls) =
+        Domain{wireLabels_ = listWireLabels (map lowercase $ Array.elems ls), originalLabels_ = ls}
+    | otherwise = folded ls
+
 rootDomain :: Domain
-rootDomain = Domain emptyLabels
+rootDomain = folded emptyLabels
 
 listWireLabels :: [Label] -> WireLabels
 listWireLabels xs = listArray (0, length xs - 1) xs
 
 wireLabels :: Domain -> [Label]
 wireLabels = Array.elems . wireLabels_
+
+-- | Labels with the case the name arrived in.  The same as 'wireLabels'
+--   unless the name came off the wire with an upper case letter in it.
+originalWireLabels :: Domain -> [Label]
+originalWireLabels = Array.elems . originalLabels_
 
 emptyLabels :: WireLabels
 emptyLabels = listWireLabels []
@@ -114,10 +140,7 @@ domain :: ShortByteString -> Domain
 domain "" = rootDomain
 domain "." = rootDomain
 domain o =
-    validateDomain $
-        Domain
-            { wireLabels_ = ls
-            }
+    validateDomain $ folded ls
   where
     ls = listWireLabels $ unfoldr step $ lowercase o
     step x = case parseLabel _period x of
@@ -126,11 +149,15 @@ domain o =
             | p == "" -> Nothing
             | otherwise -> just
 
+-- | A name from labels handed to us rather than read off the wire.
+--   They are folded for comparison, which they were not before: a name
+--   built from @[\"WWW\", \"example\"]@ did not equal the same name
+--   from its representation.
 domainFromWireLabels :: WireLabels -> Domain
-domainFromWireLabels = Domain
+domainFromWireLabels = asGiven
 
 instance Eq Domain where
-    Domain d0 == Domain d1 = d0 `eqF` d1
+    d0 == d1 = wireLabels_ d0 `eqF` wireLabels_ d1
 
 eqF :: WireLabels -> WireLabels -> Bool
 eqF v0 v1 = l0 == l1 && go 0
@@ -152,7 +179,7 @@ eqF v0 v1 = l0 == l1 && go 0
 -- >>> ("example.jp" :: Domain) >= "example.com"
 -- True
 instance Ord Domain where
-    Domain d0 `compare` Domain d1 = d0 `cmpR` d1
+    d0 `compare` d1 = wireLabels_ d0 `cmpR` wireLabels_ d1
 
 cmpR :: WireLabels -> WireLabels -> Ordering
 cmpR v0 v1 = go (l0 - 1) (l1 - 1)
@@ -173,10 +200,14 @@ cmpR v0 v1 = go (l0 - 1) (l1 - 1)
 instance Show Domain where
     show d = "\"" ++ shortToString (toDomainRep d) ++ "\""
 
+-- | The folded form, as it always was: the representation of a name is
+--   what names it, not the case some peer happened to write it in.
 toDomainRep :: Domain -> Label
-toDomainRep (Domain d)
+toDomainRep d0
     | d == emptyLabels = "."
     | otherwise = foldr (\l r -> escapeLabel _period l <> "." <> r) "" d
+  where
+    d = wireLabels_ d0
 
 instance IsString Domain where
     fromString = fromRepresentation
@@ -188,7 +219,11 @@ instance IsString Domain where
 -- >>> ("www." :: Domain) <> "example.com."
 -- "www.example.com."
 instance Semigroup Domain where
-    d0 <> d1 = domainFromWireLabels (listWireLabels $ wireLabels d0 <> wireLabels d1)
+    d0 <> d1 =
+        Domain
+            { wireLabels_ = listWireLabels $ wireLabels d0 <> wireLabels d1
+            , originalLabels_ = listWireLabels $ originalWireLabels d0 <> originalWireLabels d1
+            }
 
 instance IsRepresentation Domain ShortByteString where
     fromRepresentation = domain
@@ -217,10 +252,14 @@ instance IsRepresentation Domain String where
 -- >>> domainSize "example.jp"
 -- 12
 domainSize :: Domain -> Int
-domainSize (Domain d) = foldr (\l a -> Short.length l + 1 + a) 0 d + 1
+domainSize d = foldr (\l a -> Short.length l + 1 + a) 0 (wireLabels_ d) + 1
 
 consDomain :: Label -> Domain -> Domain
-consDomain l dom = fromWireLabels (lowercase l : wireLabels dom)
+consDomain l dom =
+    Domain
+        { wireLabels_ = listWireLabels (lowercase l : wireLabels dom)
+        , originalLabels_ = listWireLabels (l : originalWireLabels dom)
+        }
 
 -- | Uncos a domain
 --
@@ -231,9 +270,10 @@ consDomain l dom = fromWireLabels (lowercase l : wireLabels dom)
 -- >>> unconsDomain "example.jp."
 -- Just ("example","jp.")
 unconsDomain :: Domain -> Maybe (Label, Domain)
-unconsDomain (Domain d) = case uncons (Array.elems d) of
-    Nothing -> Nothing
-    Just (l, d') -> Just (l, Domain $ listWireLabels d')
+unconsDomain dom = case (uncons (wireLabels dom), uncons (originalWireLabels dom)) of
+    (Just (l, ls), Just (_, os)) ->
+        Just (l, Domain{wireLabels_ = listWireLabels ls, originalLabels_ = listWireLabels os})
+    _ -> Nothing
 
 -- | Getting the left most label of a domain.
 --   'Nothing' for the root domain, which has no label.
@@ -249,9 +289,11 @@ unconsDomain (Domain d) = case uncons (Array.elems d) of
 -- >>> leafDomain "."
 -- Nothing
 leafDomain :: Domain -> Maybe Label
-leafDomain (Domain d)
+leafDomain dom
     | Array.numElements d == 0 = Nothing
     | otherwise = Just (d ! 0)
+  where
+    d = wireLabels_ dom
 
 -- | Getting the left most label of a domain.
 --   \".\" for the root domain, which has no label.
@@ -263,9 +305,11 @@ leafDomain (Domain d)
 -- >>> unsafeLeafDomain "."
 -- "."
 unsafeLeafDomain :: Domain -> Label
-unsafeLeafDomain (Domain d)
+unsafeLeafDomain dom
     | Array.numElements d == 0 = "."
     | otherwise = d ! 0
+  where
+    d = wireLabels_ dom
 
 -- | Generating a reverse list of domain labels.
 --
@@ -274,8 +318,9 @@ unsafeLeafDomain (Domain d)
 -- >>> revLabels "."
 -- []
 revLabels :: Domain -> [Label]
-revLabels (Domain d) = [d ! i | i <- [sz - 1, sz - 2 .. 0]]
+revLabels dom = [d ! i | i <- [sz - 1, sz - 2 .. 0]]
   where
+    d = wireLabels_ dom
     sz = Array.numElements d
 
 ----------------------------------------------------------------
@@ -331,7 +376,7 @@ instance Show Mailbox where
     show mbox = "\"" ++ shortToString (toMailboxRep mbox) ++ "\""
 
 toMailboxRep :: Mailbox -> Label
-toMailboxRep (Mailbox (Domain d)) = case uncons (Array.elems d) of
+toMailboxRep (Mailbox dom) = case uncons (wireLabels dom) of
     Nothing -> E.throw IllegalDomain
     Just (name, d') -> name <> "@" <> foldr (\x y -> escapeLabel _period x <> "." <> y) "" d'
 
@@ -344,7 +389,7 @@ instance Semigroup Mailbox where
 mailbox :: ShortByteString -> Mailbox
 mailbox o
     | Short.length o > 255 = E.throw $ DecodeError "The mailbox length is over 255"
-mailbox o = validateMailbox $ Mailbox $ Domain{wireLabels_ = listWireLabels ls}
+mailbox o = validateMailbox $ Mailbox $ folded $ listWireLabels ls
   where
     l = lowercase o
     ls = unfoldr step (l, 0 :: Int)
@@ -361,7 +406,7 @@ mailbox o = validateMailbox $ Mailbox $ Domain{wireLabels_ = listWireLabels ls}
 mailboxFromWireLabels :: WireLabels -> Mailbox
 mailboxFromWireLabels lls
     | lls == emptyLabels = E.throw $ DecodeError "Broken mailbox"
-    | otherwise = validateMailbox $ Mailbox $ Domain{wireLabels_ = lls}
+    | otherwise = validateMailbox $ Mailbox $ asGiven lls
 
 instance IsRepresentation Mailbox ShortByteString where
     fromRepresentation = mailbox
@@ -401,12 +446,16 @@ data CanonicalFlag
 
 -- | Putting a domain name.
 --   No name compression for new RRs.
+--   'Original' writes the name as it was given to us, 'Canonical' the
+--   folded one: RFC 4034 Sec 6.2 has every name in the canonical form
+--   of an RR folded to lower case, and that is what is signed and
+--   digested.
 putDomain :: CanonicalFlag -> Domain -> Builder ()
 putDomain Original Domain{..} wbuf _ = do
-    mapM_ (putPartialDomain wbuf) wireLabels_
+    mapM_ (putPartialDomain wbuf) originalLabels_
     put8 wbuf 0
 putDomain Canonical Domain{..} wbuf _ = do
-    mapM_ (putPartialDomain wbuf) wireLabels_ -- fixme
+    mapM_ (putPartialDomain wbuf) wireLabels_
     put8 wbuf 0
 
 putPartialDomain :: WriteBuffer -> Label -> IO ()
@@ -415,21 +464,27 @@ putPartialDomain wbuf dom = putLenShortByteString wbuf dom
 ----------------------------------------------------------------
 
 putCompressedDomain :: Domain -> Builder ()
-putCompressedDomain Domain{..} = putCompress wireLabels_
+putCompressedDomain dom = putCompress (wireLabels dom) (originalWireLabels dom)
 
-putCompress :: WireLabels -> Builder ()
-putCompress dom wbuf ref = case uncons (Array.elems dom) of
-    Nothing -> put8 wbuf 0
-    Just (d, ds) -> do
-        mpos <- popPointer dom ref
+-- | The bytes written are the name as it was given; what the table of
+--   pointers is keyed by is the folded name, since RFC 4343 Sec 3 has a
+--   name match another without regard to case.  So an answer whose
+--   owner name the zone holds in lower case points at the question,
+--   and comes back in the case the question was asked in.
+putCompress :: [Label] -> [Label] -> Builder ()
+putCompress lows origs wbuf ref = case (lows, origs) of
+    (l : ls, o : os) -> do
+        let key = listWireLabels (l : ls)
+        mpos <- popPointer key ref
         cur <- position wbuf
         case mpos of
             Just pos -> putPointer wbuf pos
             _ -> do
                 -- Pointers are limited to 14-bits!
-                when (cur <= 0x3fff) $ pushPointer dom cur ref
-                putPartialDomain wbuf d
-                putCompress (listWireLabels ds) wbuf ref
+                when (cur <= 0x3fff) $ pushPointer key cur ref
+                putPartialDomain wbuf o
+                putCompress ls os wbuf ref
+    _ -> put8 wbuf 0
 
 putPointer :: WriteBuffer -> Int -> IO ()
 putPointer wbuf pos = putInt16 wbuf (pos .|. 0xc000)
@@ -483,7 +538,7 @@ checkNameLength ls
 --   An error is thrown if name compression is used.
 getDomain :: Parser Domain
 getDomain rbuf ref =
-    domainFromWireLabels . listWireLabels <$> do
+    asGiven . listWireLabels <$> do
         n <- position rbuf
         ls <- getDomain' False n rbuf ref
         checkNameLength ls
@@ -501,7 +556,7 @@ getDomain rbuf ref =
 -- decreasing!
 getDomainRFC1035 :: Parser Domain
 getDomainRFC1035 rbuf ref =
-    domainFromWireLabels . listWireLabels <$> do
+    asGiven . listWireLabels <$> do
         n <- position rbuf
         ls <- getDomain' True n rbuf ref
         checkNameLength ls
@@ -571,7 +626,11 @@ getDomain' allowCompression ptrLimit = \rbuf ref -> do
                     pushDomain pos lls ref
                     return lls
         | otherwise = do
-            l <- lowercase <$> getNShortByteString rbuf n
+            -- Not folded: the case is kept so that it can be given
+            -- back.  'asGiven' folds a copy for comparison, and the
+            -- table of pointers holds what was read, so a name reached
+            -- through a pointer keeps its case too.
+            l <- getNShortByteString rbuf n
             -- Registering super domains
             ls <- getDomain' allowCompression ptrLimit rbuf ref
             let lls = l : ls
@@ -748,16 +807,18 @@ shortToString = C8.unpack . Short.fromShort
 -- >>> superDomains' "." "."
 -- []
 superDomains' :: Domain -> Domain -> [Domain]
-superDomains' ul d0@(Domain wl0) = go (Array.elems wl0) [d0]
+superDomains' ul d0 = go (wireLabels d0) (originalWireLabels d0) [d0]
   where
-    go ls ss = case uncons ls of
-        Nothing -> [] -- only the case of rootDomain
-        Just (_, ls')
-            | wl' == ul' -> ss
-            | otherwise -> go ls' (Domain wl' : ss)
+    go ls os ss = case (uncons ls, uncons os) of
+        (Just (_, ls'), Just (_, os')) -> next ls' os'
+        _ -> [] -- only the case of rootDomain
+      where
+        next ls' os'
+            | wl' == ul' = ss
+            | otherwise = go ls' os' (Domain{wireLabels_ = wl', originalLabels_ = listWireLabels os'} : ss)
           where
             wl' = listWireLabels ls'
-    Domain ul' = ul
+    ul' = wireLabels_ ul
 
 -- | Creating super domains.
 --
@@ -786,11 +847,14 @@ superDomains = superDomains' "."
 -- False
 isSubDomainOf :: Domain -> Domain -> Bool
 _ `isSubDomainOf` "." = True
-Domain dx `isSubDomainOf` Domain dy =
+dx0 `isSubDomainOf` dy0 =
     dx == dy
         || let xs = Array.elems dx
                ys = Array.elems dy
             in ys `isSuffixOf` xs
+  where
+    dx = wireLabels_ dx0
+    dy = wireLabels_ dy0
 
 -- | just count labels of domain
 labelsCount :: Domain -> Int
