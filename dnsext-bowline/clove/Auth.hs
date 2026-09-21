@@ -137,7 +137,7 @@ server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
                             _ -> sendReply sa $ seal $ refusal query
 
 response :: Proto -> Seal -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
-response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
+response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ question query) dom zoneAlist of -- isSubDomainOf
     Nothing -> sendReply sa $ seal $ refusal query
     Just (_, zoneref) -> do
         zone <- readIORef zoneref

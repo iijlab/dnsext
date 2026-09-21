@@ -6,6 +6,7 @@ module Zone (
     newZones,
     updateZone,
     findZoneAlist,
+    findZoneFor,
     toZoneAlist,
     zoneDirectory,
 ) where
@@ -712,6 +713,27 @@ findZoneAlist :: Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
 findZoneAlist dom alist = case filter (\(k, _) -> dom `isSubDomainOf` k) alist of
     [] -> Nothing
     xs -> Just $ maximumBy (compare `on` (labelsCount . fst)) xs
+
+-- | Finding the zone a question belongs to, which is not always the
+--   zone the name belongs to.
+--
+--   A DS lives on the upper side of the delegation, in the parent.  RFC
+--   4035 Sec 3.1.4.1 has a server which is authoritative for the child
+--   and not the parent answer \"no data\" for it, since it has no way of
+--   knowing better; a server which has the parent as well does know
+--   better and answers from there.  clove took the most specific zone
+--   whatever was asked, so where it was the primary for both halves it
+--   answered its own DS records away and made every delegation it
+--   served look unsigned.
+findZoneFor :: TYPE -> Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
+findZoneFor DS dom alist = case findZoneAlist dom above of
+    Just parent -> Just parent
+    -- No parent here: the child is all clove has, which is the case the
+    -- RFC has answer "no data" from the child's apex.
+    Nothing -> findZoneAlist dom alist
+  where
+    above = [e | e@(k, _) <- alist, k /= dom]
+findZoneFor _ dom alist = findZoneAlist dom alist
 
 toZoneAlist :: [Zone] -> IO ZoneAlist
 toZoneAlist zones = do
