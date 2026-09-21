@@ -51,12 +51,12 @@ library
         async,
         bytestring,
         containers,
+        crypton,
         dnsext-types,
         dnsext-utils,
         iproute >=1.3.2,
         mtl,
         network >=3.2.3 && <3.3,
-        random >=1.2,
         recv,
         stm,
         unix-time
@@ -95,6 +95,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         FakeServer
+        IdSpec
         LookupSpec
         IOSpec
         UDPSpec
@@ -106,6 +107,7 @@ test-suite spec
         base,
         async,
         bytestring,
+        containers,
         dnsext-do53,
         dnsext-types,
         hspec,
