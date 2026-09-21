@@ -1,0 +1,13 @@
+; The child of the insecure delegation.  It signs its data anyway, and
+; clove is told to put another zone's name in the signer field, so that
+; no key a resolver can reach will verify what this zone sends.
+;
+; That is insecure.mufj.jp of 2020: its answers carried an RRSIG whose
+; signer said "sharp", a zone which had not signed them, under a
+; delegation from mufj.jp which carried no DS.
+$ORIGIN insecure.example.
+$TTL 3600
+@	IN	SOA	ns.insecure.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.insecure.example.
+ns	IN	A	127.0.0.1
+host	IN	A	192.0.2.9

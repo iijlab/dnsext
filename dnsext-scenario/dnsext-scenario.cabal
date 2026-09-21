@@ -1,0 +1,55 @@
+cabal-version:      3.0
+name:               dnsext-scenario
+version:            0.0.0
+license:            BSD-3-Clause
+license-file:       LICENSE
+maintainer:         Kazu Yamamoto <kazu@iij.ad.jp>
+author:             Kazu Yamamoto
+synopsis:           Scenarios which put dnsext's servers in front of its resolver
+description:
+    Each scenario stands up clove as the primary for a world of its own
+    and bowline as the resolver for it, and asks what comes back.  What
+    is being tested is not a function but the two programs together,
+    over the wire, for cases the RFCs leave open -- a zone which is
+    wrong in a particular way, and what a resolver is supposed to make
+    of it.
+
+category:           Network
+build-type:         Simple
+extra-source-files:
+    CHANGELOG.md
+    test/*/*.conf
+    test/*/*.zone
+
+source-repository head
+    type:     git
+    location: https://github.com/iijlab/dnsext
+
+test-suite spec
+    type:               exitcode-stdio-1.0
+    main-is:            Spec.hs
+    build-tool-depends:
+        hspec-discover:hspec-discover,
+        dnsext-bowline:clove,
+        dnsext-bowline:bowline
+
+    hs-source-dirs:     test
+    other-modules:
+        Harness
+        JpSharpSpec
+
+    default-language:   Haskell2010
+    ghc-options:        -Wall -threaded
+    build-depends:
+        base >=4 && <5,
+        bytestring,
+        directory,
+        dnsext-do53,
+        dnsext-types,
+        filepath,
+        hspec,
+        network >=3.2.8 && <3.3,
+        process
+
+    if impl(ghc >=8)
+        default-extensions: Strict StrictData
