@@ -1,16 +1,14 @@
-; The parent names one server, the child another.  Here is the parent's
-; half: it delegates example. to ns-parent.example., and carries the
-; glue for that name because nothing else could.
+; The root of the scenario's world.  It delegates example. to the
+; primary which serves it, and vouches for that delegation with a DS.
 ;
-; Nothing in this half is wrong, and nothing in the child's half is
-; either.  What the scenario is about is that the two halves do not
-; agree, which is a thing the protocol nowhere forbids and which some
-; resolvers have made SERVFAIL of.
+; The DS is put in by the harness: it is made of the key signing key of
+; example., and that key does not exist until the primary below has
+; served the zone once, so the root zone cannot be complete until then.
 $ORIGIN .
 $TTL 3600
-@			IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
-@			IN	NS	ns.root.
-ns.root.		IN	A	{{ROOT_ADDR}}
-example.		IN	NS	ns-parent.example.
-ns-parent.example.	IN	{{AUTH_ADDR_RR}}
-example.		IN	DS	{{DS example}}
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
