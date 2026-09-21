@@ -160,10 +160,11 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ quest
 --   signed -- neither is glue, which is why this cannot be seen through.
 spoofed :: Spoof -> DNSMessage -> DNSMessage
 spoofed Spoof{..} reply
-    | null spoofAuthority && null spoofAdditional = reply
+    | null spoofAnswer && null spoofAuthority && null spoofAdditional = reply
     | otherwise =
         reply
-            { authority = authority reply ++ spoofAuthority
+            { answer = answer reply ++ spoofAnswer
+            , authority = authority reply ++ spoofAuthority
             , additional = additional reply ++ spoofAdditional
             }
 

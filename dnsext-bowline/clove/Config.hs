@@ -98,6 +98,11 @@ data ZoneConf = ZoneConf
     --   with --insecure: an RRSIG which names a zone that did not sign
     --   it is what insecure.mufj.jp served, and nothing but finding out
     --   what a resolver does with one wants it.
+    , cnf_spoof_answer         :: FilePath
+    -- ^ A zone file whose records are put into the answer section of
+    --   every response this zone sends.  Only with --insecure: an
+    --   address riding along with the CNAME which points at it is what
+    --   f.uecac.jp is about.
     , cnf_spoof_authority      :: FilePath
     -- ^ A zone file whose records are put into the authority section of
     --   every response this zone sends.  Only with --insecure: a
@@ -140,6 +145,7 @@ defaultZoneConf =
         , cnf_zsk_rollover_duration = 604800 -- 7 days
         , cnf_zsk_preserve          = 10
         , cnf_signer                = ""
+        , cnf_spoof_answer         = ""
         , cnf_spoof_authority      = ""
         , cnf_spoof_additional     = ""
         }
@@ -209,6 +215,7 @@ makeZoneConf def conf = do
     cnf_source_port           <- get "source-port"           cnf_source_port
     cnf_source_key            <- get "source-key"            cnf_source_key
     cnf_signer                <- get "signer"                cnf_signer
+    cnf_spoof_answer          <- get "spoof-answer"          cnf_spoof_answer
     cnf_spoof_authority       <- get "spoof-authority"       cnf_spoof_authority
     cnf_spoof_additional      <- get "spoof-additional"      cnf_spoof_additional
     cnf_signing               <- get "signing"               cnf_signing

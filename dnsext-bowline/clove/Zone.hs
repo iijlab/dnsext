@@ -496,9 +496,15 @@ readSource ZoneConf{..}
 --   these are the others.
 readSpoof :: ZoneCheck -> ZoneConf -> IO Spoof
 readSpoof zcheck ZoneConf{..} = do
+    answer <- section "spoof-answer" cnf_spoof_answer
     authority <- section "spoof-authority" cnf_spoof_authority
     additional <- section "spoof-additional" cnf_spoof_additional
-    pure Spoof{spoofAuthority = authority, spoofAdditional = additional}
+    pure
+        Spoof
+            { spoofAnswer = answer
+            , spoofAuthority = authority
+            , spoofAdditional = additional
+            }
   where
     section _ "" = pure []
     section setting file = case zcheck of

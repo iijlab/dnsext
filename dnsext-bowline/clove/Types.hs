@@ -46,21 +46,24 @@ data Signing = Signing
 -- | Records a zone puts into its responses which it has no business
 --   putting there: the additional section of a referral is where a
 --   resolver is handed addresses nobody is authoritative for, and the
---   authority section is where it is handed a delegation.  Neither is
---   signed -- glue never is -- so a resolver cannot tell these from the
---   real thing by looking.  What it does with them is the whole
---   question, and this is how a scenario asks it.
+--   authority section is where it is handed a delegation, and the
+--   answer section is where an address rides along with the CNAME that
+--   points at it.  None of it is signed -- glue never is -- so a
+--   resolver cannot tell these from the real thing by looking.  What it
+--   does with them is the whole question, and this is how a scenario
+--   asks it.
 --
 --   Only reachable with @--insecure@.
 data Spoof = Spoof
-    { spoofAuthority :: [ResourceRecord]
+    { spoofAnswer :: [ResourceRecord]
+    , spoofAuthority :: [ResourceRecord]
     , spoofAdditional :: [ResourceRecord]
     }
     deriving (Eq, Show)
 
 -- | A zone which sends only what it should.
 noSpoof :: Spoof
-noSpoof = Spoof{spoofAuthority = [], spoofAdditional = []}
+noSpoof = Spoof{spoofAnswer = [], spoofAuthority = [], spoofAdditional = []}
 
 ----------------------------------------------------------------
 
