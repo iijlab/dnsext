@@ -20,6 +20,8 @@ build-type:         Simple
 -- directory is named.  A new scenario adds three lines here.
 extra-source-files:
     CHANGELOG.md
+    test/diff-ns/*.conf
+    test/diff-ns/*.zone
     test/cname-chain/*.conf
     test/cname-chain/*.zone
     test/dnssec-failed/*.conf
@@ -45,6 +47,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         CnameChainSpec
+        DiffNsSpec
         DnssecFailedSpec
         Harness
         JpSharpSpec
