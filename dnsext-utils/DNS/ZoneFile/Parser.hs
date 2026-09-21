@@ -3,13 +3,18 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoStrict #-}
+{- A specialisation of a function defined elsewhere is an orphan rule
+   by construction: the rule belongs to neither the module which defines
+   the function nor the one which defines the type.  That is what the
+   SPECIALIZE pragmas below are. -}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module DNS.ZoneFile.Parser where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State.Strict
 import Data.Functor
 
 -- dnsext-* packages
@@ -55,10 +60,33 @@ runParser p = Poly.runParser . runStateT p
 
 instance MonadParser Token [Token] Parser where
     getInput = lift getInput
+    {-# INLINE getInput #-}
     putInput = lift . putInput
+    {-# INLINE putInput #-}
     raiseParser = lift . raiseParser
+    {-# INLINE raiseParser #-}
     getPos = lift getPos
+    {-# INLINE getPos #-}
     putPos = lift . putPos
+    {-# INLINE putPos #-}
+
+{- The other place the combinators are used, at the other monad.  See
+   the note in DNS.ZoneFile.Lexer. -}
+{-# SPECIALIZE token :: Parser Token #-}
+{-# SPECIALIZE parseError :: String -> Parser a #-}
+{-# SPECIALIZE satisfy :: String -> (Token -> Bool) -> Parser Token #-}
+{-# SPECIALIZE this :: Token -> Parser Token #-}
+{-# SPECIALIZE these :: [Token] -> Parser [Token] #-}
+{-# SPECIALIZE choice :: [Parser a] -> Parser a #-}
+{-# SPECIALIZE lookAhead :: Parser a -> Parser a #-}
+{-# SPECIALIZE repeatedly :: Parser a -> Parser [a] #-}
+{-# SPECIALIZE readable :: Read a => String -> String -> Parser a #-}
+{-# SPECIALIZE dot :: Parser Token #-}
+{-# SPECIALIZE blank :: Parser Token #-}
+{-# SPECIALIZE lstring :: Parser CS' #-}
+{-# SPECIALIZE cstring' :: Parser CS' #-}
+{-# SPECIALIZE cstring :: Parser CString #-}
+{-# SPECIALIZE readCString :: Read a => String -> Parser a #-}
 
 setCx :: (a -> Context -> Context) -> a -> Parser a
 setCx set_ x = modify (set_ x) $> x
@@ -322,7 +350,9 @@ record =
 
 {- FOURMOLU_DISABLE -}
 file :: Parser [Record]
-file = many (record <* this RSep)
+file = repeatedly $ do
+    r <- record <* this RSep
+    r `seq` pure r
 {- FOURMOLU_ENABLE -}
 
 -- |
