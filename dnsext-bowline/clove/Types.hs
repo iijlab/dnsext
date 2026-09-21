@@ -36,6 +36,10 @@ data Signing = Signing
     -- ^ How many ZSKs are kept on disk.  Generating one beyond this
     --   removes the oldest.
     , signingN3P :: Maybe NSEC3Config -- Nothing for NSEC
+    , signingSigner :: Maybe Domain
+    -- ^ The zone to name in the signer field of the RRSIGs over this
+    --   zone's data, where it is to be a zone which did not sign them.
+    --   Only reachable with @--insecure@.
     }
     deriving (Eq, Show)
 

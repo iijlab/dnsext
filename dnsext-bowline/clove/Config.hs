@@ -92,6 +92,12 @@ data ZoneConf = ZoneConf
     , cnf_rrsig_lifetime        :: Int
     , cnf_zsk_rollover_duration :: Int
     , cnf_zsk_preserve          :: Int
+    , cnf_signer                :: String
+    -- ^ The name to put in the signer field of the RRSIGs over this
+    --   zone's data, when it is to be a zone other than this one.  Only
+    --   with --insecure: an RRSIG which names a zone that did not sign
+    --   it is what insecure.mufj.jp served, and nothing but finding out
+    --   what a resolver does with one wants it.
     }
     deriving (Show)
 
@@ -124,6 +130,7 @@ defaultZoneConf =
         , cnf_rrsig_lifetime        = 864000 -- 10 days
         , cnf_zsk_rollover_duration = 604800 -- 7 days
         , cnf_zsk_preserve          = 10
+        , cnf_signer                = ""
         }
 
 ----------------------------------------------------------------
@@ -190,6 +197,7 @@ makeZoneConf def conf = do
     cnf_source                <- get "source"                cnf_source
     cnf_source_port           <- get "source-port"           cnf_source_port
     cnf_source_key            <- get "source-key"            cnf_source_key
+    cnf_signer                <- get "signer"                cnf_signer
     cnf_signing               <- get "signing"               cnf_signing
     cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
     cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo

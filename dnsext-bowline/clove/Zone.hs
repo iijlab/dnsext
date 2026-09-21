@@ -71,7 +71,7 @@ newZone zcheck env keys zoneconf@ZoneConf{..} = do
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
-    msigning <- withZoneName $ readSigning env zone zoneconf
+    msigning <- withZoneName $ readSigning zcheck env zone zoneconf
     notifyKey <- withZoneName $ namedKey keys "notify-key" cnf_notify_key
     allowNotifyKey <- withZoneName $ namedKey keys "allow-notify-key" cnf_allow_notify_key
     sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
@@ -338,7 +338,8 @@ loadSourceWithSigning env z = case zoneSigning z of
         signKey <- makeSigner kskKeyConfig keyInfoKSK
         ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
             loadZSKInfo env fresh zoneDir signingZSKPreserve zskKeyConfig
-        signZone <- makeSigner zskKeyConfig keyInfoZSK1
+        signZone0 <- makeSigner zskKeyConfig keyInfoZSK1
+        let signZone = maybe signZone0 (`inNameOf` signZone0) signingSigner
         db <-
             makeDBforPrimary (zoneCheck z) zone signingN3P signKey signZone $
                 soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2]
@@ -446,10 +447,37 @@ readSource ZoneConf{..}
     | Just a4 <- readMaybe cnf_source = FromUpstream4 a4 cnf_source_port
     | otherwise = FromFile cnf_source
 
-readSigning :: Env -> Domain -> ZoneConf -> IO (Maybe Signing)
-readSigning env dom ZoneConf{..}
+-- | The zone to name in the signer field of the RRSIGs, where the
+--   configuration says one.  Naming a zone which did not sign them is
+--   what insecure.mufj.jp served, so it is refused unless clove was
+--   started with --insecure -- refused rather than ignored, since a
+--   configuration which asks for it and does not get it is not a
+--   configuration anybody meant to write.
+readSigner :: ZoneCheck -> String -> IO (Maybe Domain)
+readSigner _ "" = return Nothing
+readSigner Checked s =
+    E.ioError $
+        E.userError $
+            "signer: " ++ s ++ ": naming another zone as the signer needs --insecure"
+readSigner Unchecked s = return $ Just $ fromRepresentation s
+
+-- | Signing in another zone's name: what is signed is signed as it
+--   always was, and the signer field of the RRSIG is then made to say a
+--   zone which did not sign it.  A resolver cannot verify the result
+--   with any key it can reach, which is the point.
+inNameOf :: Domain -> Signer -> Signer
+inNameOf name signer grouped rrs = map rename <$> signer grouped rrs
+  where
+    rename rs = rs{rrsetsigSig = renameRR <$> rrsetsigSig rs}
+    renameRR rr = case fromRData (rdata rr) of
+        Nothing -> rr
+        Just sig -> rr{rdata = toRData sig{rrsig_zone = name}}
+
+readSigning :: ZoneCheck -> Env -> Domain -> ZoneConf -> IO (Maybe Signing)
+readSigning zcheck env dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
+        signer <- readSigner zcheck cnf_signer
         checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
         checkPreserve cnf_zsk_preserve
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
@@ -496,6 +524,7 @@ readSigning env dom ZoneConf{..}
                 Signing
                     { signingKSKConfig = keyConfKSK
                     , signingZSKConfig = keyConfZSK
+                    , signingSigner = signer
                     , signingZSKRollover = cnf_zsk_rollover_duration
                     , signingZSKPreserve = cnf_zsk_preserve
                     , signingN3P = mn3p
