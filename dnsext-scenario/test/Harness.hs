@@ -161,8 +161,12 @@ withScenario name body = do
         -- The zones below the root first: the root vouches for them
         -- with a DS, and a DS is made of a key which does not exist
         -- until the zone it belongs to has been served once.
+        -- Whatever the primary is holding first: a scenario about
+        -- reverse names or about a zone of any other shape should not
+        -- have to keep an example. about merely to be waited for.
+        ready <- firstZone $ dir </> "clove.conf"
         withDaemon dir "clove" "clove" (cloveArgs ++ [dir </> "clove.conf"]) $ do
-            waitFor "clove" $ answered auth authPort "example." SOA
+            waitFor "clove" $ answered auth authPort ready SOA
             fillDS (dir </> "clove") (dir </> "root.zone")
             withDaemon dir "root" "clove" (rootArgs ++ [dir </> "root.conf"]) $ do
                 waitFor "root" $ answered rootAddr authPort "." SOA
@@ -189,6 +193,19 @@ copyIn fill from to = mapM_ one =<< listDirectory from
     one n = do
         isFile <- doesFileExist (from </> n)
         when isFile $ writeFile (to </> n) . substitute fill =<< readFile (from </> n)
+
+-- | The first zone a configuration says to serve, which is the one to
+--   ask for when waiting to see whether the server is up.
+firstZone :: FilePath -> IO Domain
+firstZone path = do
+    zones <- mapMaybe named . lines <$> readFile path
+    case zones of
+        z : _ -> pure $ fromRepresentation z
+        [] -> fail $ path ++ ": no zone to serve"
+  where
+    named l = case words l of
+        "zone:" : z : _ -> Just z
+        _ -> Nothing
 
 -- | The arguments a scenario wants a primary started with, where it
 --   wants any.
