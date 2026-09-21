@@ -22,6 +22,9 @@ extra-source-files:
     CHANGELOG.md
     test/diff-ns/*.conf
     test/diff-ns/*.zone
+    test/cname-extra/*.args
+    test/cname-extra/*.conf
+    test/cname-extra/*.zone
     test/cname-chain/*.conf
     test/cname-chain/*.zone
     test/dnssec-failed/*.conf
@@ -55,6 +58,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         CnameChainSpec
+        CnameExtraSpec
         DiffNsSpec
         DnssecFailedSpec
         Harness
