@@ -1,0 +1,17 @@
+; The parent of the orphan.  It delegates example. to ns.example. and
+; carries an address for that name, because the name is below the
+; delegation and so nothing else could: that is glue, and it is the only
+; place the address exists.
+;
+; The child says the same name is its name server and then says nothing
+; more about it.  So a resolver which keeps what the referral gave it
+; can go on asking; one which takes the child's word for the NS RRset
+; and looks the name up again has nowhere to look it up.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}

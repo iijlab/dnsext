@@ -24,6 +24,8 @@ extra-source-files:
     test/cname-chain/*.zone
     test/dnssec-failed/*.conf
     test/dnssec-failed/*.zone
+    test/orphan-glue/*.conf
+    test/orphan-glue/*.zone
     test/jp.sharp/*.args
     test/jp.sharp/*.conf
     test/jp.sharp/*.zone
@@ -46,6 +48,7 @@ test-suite spec
         DnssecFailedSpec
         Harness
         JpSharpSpec
+        OrphanGlueSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded

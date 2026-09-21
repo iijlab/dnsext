@@ -1,0 +1,14 @@
+; The orphan.  Its apex names ns.example. as its name server, the same
+; name the parent's referral names, and then gives no address for it.
+;
+; On the Internet this is what rand.orphan.e-ontap.com is: the address
+; of the name server lives in the parent as glue and nowhere else, so
+; the only way to reach the zone is to have kept what the referral said.
+; A resolver which discards it in favour of the authoritative NS RRset
+; -- the same names, higher ranking -- has to look ns.example. up, and
+; the only server which could answer is the one it is trying to reach.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+www	IN	A	192.0.2.1
