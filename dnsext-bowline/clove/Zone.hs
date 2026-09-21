@@ -337,27 +337,33 @@ loadSourceWithSigning env z = case zoneSigning z of
     -- child's data from anybody else's -- which is what
     -- insecure.mufj.jp was.  clove can see both halves here, so it says
     -- so rather than serving it.
-    checkChildDS rrs =
-        case [c | c <- zoneSignedChildren z, delegatedHere c, not (hasDS c)] of
-            [] -> return ()
-            cs ->
-                E.throwIO $
-                    AuthException $
-                        "signed zone(s) delegated without a DS: "
-                            ++ unwords (map toRepresentation cs)
-                            ++ " (--insecure serves it anyway)"
+    checkChildDS rrs = do
+        refuse "delegated without a DS" [c | c <- ours, isCut c, not (hasDS c)]
+        refuse "served below this zone with nothing delegating them" [c | c <- ours, not (isCut c)]
       where
+        refuse :: String -> [Domain] -> IO ()
+        refuse _ [] = return ()
+        refuse what cs =
+            E.throwIO $
+                AuthException $
+                    "signed zone(s) "
+                        ++ what
+                        ++ ": "
+                        ++ unwords (map toRepresentation cs)
+                        ++ " (--insecure serves it anyway)"
         hasDS c = any (\r -> rrtype r == DS && rrname r == c) rrs
         -- Where this zone hands off, its own apex aside.
         cuts = [rrname r | r <- rrs, rrtype r == NS, rrname r /= zone]
-        -- Which of them are this zone's to delegate.  clove may hold a
-        -- zone and its grandchild without holding what is between them,
-        -- and then the DS belongs in the zone clove does not have --
-        -- where it could not see it in any case.  The list of children
-        -- was worked out from the zone names alone, before any zone had
-        -- been read, so this is the first point at which that can be
-        -- told.
-        delegatedHere c = not $ or [c /= m && c `isSubDomainOf` m | m <- cuts]
+        isCut c = c `elem` cuts
+        -- Which of the candidates are this zone's business at all.
+        -- clove may hold a zone and its grandchild without holding what
+        -- is between them, and then the DS belongs in the zone clove
+        -- does not have -- where it could not see it in any case.  The
+        -- candidates were worked out from the zone names alone, before
+        -- any zone had been read, so this is the first point at which
+        -- that can be told.
+        ours = [c | c <- zoneSignedChildren z, not (cutAbove c)]
+        cutAbove c = or [c /= m && c `isSubDomainOf` m | m <- cuts]
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
