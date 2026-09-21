@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Axfr (
     transfer,
@@ -17,7 +18,6 @@ import Data.List as List
 import Data.List.NonEmpty ()
 import Data.Maybe
 import Network.Socket
-import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 import System.Posix.Time (epochTime)
 import System.Timeout (timeout)
@@ -84,10 +84,16 @@ tcpAllowAXFR sa sender msg zoneAlist = case List.lookup dom zoneAlist of -- exac
                     | otherwise -> TransferRefused
   where
     dom = qname $ question msg
-    byAddress zone = case fromSockAddr sa of
-        Just (IPv4 ip4, _) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
-        Just (IPv6 ip6, _) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
-        _ -> False
+    -- A route table is asked for one family or the other, so which
+    -- one the peer is has to be decided first, and an IPv4 peer seen
+    -- through a v6 socket is an IPv4 peer.  Without 'unmap' the
+    -- address ::ffff:192.0.2.1 is looked for among the IPv6 ranges,
+    -- where "allow-transfer-addrs: 192.0.2.1" is not, and the transfer
+    -- is refused without a word about why.
+    byAddress zone = case unmap . fst <$> fromSockAddr sa of
+        Just (IPv4 ip4) -> fromMaybe False $ T.lookup (makeAddrRange ip4 32) t4
+        Just (IPv6 ip6) -> fromMaybe False $ T.lookup (makeAddrRange ip6 128) t6
+        Nothing -> False
       where
         t4 = zoneAllowTransfer4 zone
         t6 = zoneAllowTransfer6 zone
@@ -114,30 +120,50 @@ minRRSize = 12
 --   with the key the request came with, where it came with one: RFC
 --   8945 Sec 5.3 asks that of us whether the key is also what granted
 --   the transfer or whether an address did.
-transfer :: Env -> Proto -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
-transfer Env{..} Proto{..} zone sender sa query = do
-    batches <- axfrBatches asSent $ dbAll $ zoneDB zone
-    envPutLines
-        NOTICE
-        Nothing
-        [ "    axfr @"
-            ++ client'
-            ++ "/TCP \""
-            ++ toRepresentation (zoneName zone)
-            ++ "\": "
-            ++ show (length batches)
-            ++ " message(s)"
-            ++ maybe "" (const ", signed") mkey
-        ]
-    case sender of
-        Unsigned -> mapM_ (sendReply sa . encode . withAnswer) batches
-        SignedWith key requestMAC now -> signAndSend now key (AtFirst $ Just requestMAC) batches
+transfer :: Env -> Proto -> Seal -> Zone -> Sender -> SockAddr -> DNSMessage -> IO ()
+transfer Env{..} Proto{..} seal zone sender sa query = do
+    room <- transferSlot
+    case room of
+        Nothing -> tooMany
+        Just release -> handOver `E.finally` release
   where
-    asSent batch = case mkey of
-        Nothing -> withAnswer batch
-        -- Of the size and the names the real record will have,
-        -- which is all the measuring needs of it.
-        Just key -> (withAnswer batch){additional = [tsigPlaceholder key]}
+    -- RFC 5936 has nothing to say for "not now", and this is not a
+    -- refusal: the peer is allowed the zone and should come back for
+    -- it, which is what a secondary does with a SERVFAIL at its retry
+    -- interval.  Worth a line, since it is the configuration speaking.
+    tooMany = do
+        envPutLines
+            NOTICE
+            Nothing
+            [ "    axfr @"
+                ++ client'
+                ++ "/TCP \""
+                ++ zoneRep
+                ++ "\": as many transfers as transfers-out allows are already going on"
+            ]
+        sendReply sa $ seal $ (fromQuery query){rcode = ServFail}
+
+    handOver = do
+        batches <- zoneCutUp zone reply
+        sent <- newIORef (0 :: Int)
+        let send bs = sendReply sa bs >> modifyIORef' sent (+ 1)
+            -- What was written, once it has been written.  Said before
+            -- the transfer began, it was a count of what we meant to
+            -- send, and a transfer which did not finish -- a slow peer,
+            -- a peer which stopped reading -- left a line saying it had.
+            told what = do
+                n <- readIORef sent
+                envPutLines NOTICE Nothing ["    axfr @" ++ client' ++ "/TCP \"" ++ zoneRep ++ "\": " ++ what n]
+            finished n = show n ++ " message(s)" ++ signedly
+            unfinished n = "unfinished, " ++ show n ++ " of " ++ show (length batches) ++ " message(s)" ++ signedly
+        (`E.onException` told unfinished) $ do
+            duringTransfer $ case sender of
+                Unsigned -> mapM_ (send . encode . withAnswer) batches
+                SignedWith key requestMAC now -> signAndSend send now key (AtFirst $ Just requestMAC) batches
+            told finished
+
+    zoneRep = toRepresentation $ zoneName zone
+    signedly = maybe "" (const ", signed") mkey
     reply = fromQuery query
     mkey = senderKey sender
     client' = maybe (show sa) (\(ip, port) -> show ip ++ "#" ++ show port) $ fromSockAddr sa
@@ -148,16 +174,67 @@ transfer Env{..} Proto{..} zone sender sa query = do
     -- name too many with it.
     -- RFC 8945 Sec 5.3.1 allows most messages of a transfer to go
     -- unsigned; signing all of them is simpler and is what it asks for.
-    signAndSend _ _ _ [] = return ()
-    signAndSend now key chain (batch : rest) = do
+    signAndSend
+        :: (BS.ByteString -> IO ())
+        -> EpochTime
+        -> TSIGKey
+        -> Chain
+        -> [[ResourceRecord]]
+        -> IO ()
+    signAndSend _ _ _ _ [] = return ()
+    signAndSend send now key chain (batch : rest) = do
         let body = encode $ withAnswer batch
             (rr, mac) = case chain of
                 -- The first message answers the request and is bound to
                 -- it; every one after is bound to the one before.
                 AtFirst mrequest -> signTSIG key now defaultFudge mrequest body
                 AfterFirst prior _ -> signTSIGCont key now defaultFudge prior [body]
-        sendReply sa $ encode (withAnswer batch){additional = [rr]}
-        signAndSend now key (AfterFirst mac []) rest
+        send $ encode (withAnswer batch){additional = [rr]}
+        signAndSend send now key (AfterFirst mac []) rest
+
+-- | A TSIG of the largest a TSIG can be: a key name of the longest a
+--   name may be, the longest algorithm name there is, and an untruncated
+--   SHA-512 MAC.
+--
+--   The cut below is measured with this rather than with the key the
+--   request came with, so that it does not depend on who is asking and
+--   can be worked out once for the zone.  A real signature is never
+--   larger, so a message which fits with this fits with that; what it
+--   costs is the few hundred octets of slack in each message, out of
+--   'axfrLimit'.
+widestTSIG :: ResourceRecord
+widestTSIG = tsigPlaceholder $ TSIGKey longestName HMAC_SHA512 BS.empty
+  where
+    -- 255 octets on the wire: four labels, three of the 63 a label may
+    -- hold and one of 61, and the root.
+    longestName = fromRepresentation $ intercalate "." [label 63, label 63, label 63, label 61] ++ "."
+    label n = replicate n 'a'
+
+-- | The zone cut into messages, worked out once and kept.
+--
+--   It used to be worked out for every request.  The cut is decided by
+--   asking the encoder what fits, which for each message is a handful
+--   of encodings of up to 'axfrLimit' octets, so the zone is encoded
+--   something like ten times over: 0.31 s of processor for a zone of
+--   sixty thousand records and 1.07 s for one of a hundred and eighty
+--   thousand, every time anybody asked.  Fifty requests at once left an
+--   ordinary query waiting eleven seconds behind them.
+zoneCutUp :: Zone -> DNSMessage -> IO [[ResourceRecord]]
+zoneCutUp zone reply = do
+    cached <- readIORef $ zoneBatches zone
+    case cached of
+        Just batches -> return batches
+        Nothing -> do
+            batches <- axfrBatches asSent $ dbAll $ zoneDB zone
+            -- Two transfers starting together may both do this, and
+            -- both get the same answer; the second write is the same
+            -- as the first.
+            writeIORef (zoneBatches zone) $ Just batches
+            return batches
+  where
+    -- Of the size and the names the real record will have, which is
+    -- all the measuring needs of it.
+    asSent batch = (reply{answer = batch}){additional = [widestTSIG]}
 
 -- | Spreading the records of a zone over as many messages as they need.
 --   RFC 5936 Sec 2.2 lets a transfer be split anywhere so long as it
@@ -335,7 +412,7 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
     -- The records come back reversed, so the head is the last one seen:
     -- the transfer is over once that is the closing SOA.
     collect now sock rest chain racc = do
-        (bs, rest') <- recvMessage sock rest
+        (bs, rest') <- recvMessage vcLimitMax sock rest
         msg <- case decode bs of
             Left e -> E.ioError $ E.userError $ show e
             Right m -> return m
@@ -411,21 +488,3 @@ checkChain (Just key) now chain bs msg final = case chain of
         TSIGFailed e -> failed $ show e
     held n = if n == tsigKeyName key then Just key else Nothing
     failed why = E.ioError $ E.userError $ "TSIG: " ++ why
-
--- | Reading one length-prefixed message, keeping whatever was read past
---   it for the next one.
-recvMessage :: Socket -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
-recvMessage sock rest0 = do
-    (lenbs, rest1) <- recvExactly sock 2 rest0
-    recvExactly sock (fromIntegral $ decodeVCLength lenbs) rest1
-
-recvExactly :: Socket -> Int -> BS.ByteString -> IO (BS.ByteString, BS.ByteString)
-recvExactly sock n rest0 = go [rest0] (BS.length rest0)
-  where
-    go acc len
-        | len >= n = return $ BS.splitAt n $ BS.concat $ reverse acc
-        | otherwise = do
-            bs <- NSB.recv sock $ max 2048 (n - len)
-            if BS.null bs
-                then E.ioError $ E.userError "the connection closed in mid message"
-                else go (bs : acc) (len + BS.length bs)

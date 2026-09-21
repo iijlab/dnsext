@@ -32,6 +32,10 @@ data Config = Config
     , cnf_log_level :: Level
     , cnf_clove_dir :: FilePath
     , cnf_tsig_file  :: FilePath
+    , cnf_tcp_client_timeout :: Int
+    , cnf_tcp_clients :: Int
+    , cnf_transfers_out :: Int
+    , cnf_transfer_time_limit :: Int
     } deriving (Show)
 
 defaultConfig :: Config
@@ -46,6 +50,10 @@ defaultConfig =
         , cnf_log_level = WARNING
         , cnf_clove_dir = "/var/clove/"
         , cnf_tsig_file  = "tsig.conf"
+        , cnf_tcp_client_timeout = 30
+        , cnf_tcp_clients = 150
+        , cnf_transfers_out = 10
+        , cnf_transfer_time_limit = 3600 -- 1 hour
         }
 
 ----------------------------------------------------------------
@@ -127,12 +135,32 @@ makeConfig def conf0 = do
     cnf_log_level <- get "log-level" cnf_log_level
     cnf_clove_dir <- get "clove-dir" cnf_clove_dir
     cnf_tsig_file <- get "tsig-file" cnf_tsig_file
+    cnf_tcp_client_timeout <- get "tcp-client-timeout" cnf_tcp_client_timeout
+    cnf_tcp_clients <- get "tcp-clients" cnf_tcp_clients
+    cnf_transfers_out <- get "transfers-out" cnf_transfers_out
+    cnf_transfer_time_limit <- get "transfer-time-limit" cnf_transfer_time_limit
+    mapM_
+        (uncurry checkPositive)
+        [ ("tcp-client-timeout", cnf_tcp_client_timeout)
+        , ("tcp-clients", cnf_tcp_clients)
+        , ("transfers-out", cnf_transfers_out)
+        , ("transfer-time-limit", cnf_transfer_time_limit)
+        ]
     checkUnknown "" ref conf
     checkRepeated "" conf
     zonelist      <- mapM (makeZoneConf defaultZoneConf) zones
     pure (Config{..}, zonelist)
   where
     (conf, zones) = splitConf "zone" conf0
+
+-- | None of the limits has a value which means "no limit".  A limit of
+--   nothing at all would refuse every connection or every transfer, and
+--   a negative one is not a limit; asking for one is the way to say how
+--   much to put up with, not whether to.
+checkPositive :: String -> Int -> IO ()
+checkPositive what n
+    | n > 0 = pure ()
+    | otherwise = ioError $ userError $ what ++ ": must be positive, not " ++ show n
 
 makeZoneConf :: ZoneConf -> [Conf] -> IO ZoneConf
 makeZoneConf def conf = do

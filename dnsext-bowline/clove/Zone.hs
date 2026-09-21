@@ -39,6 +39,7 @@ import qualified Axfr
 import Config
 import Exception
 import KeyFile
+import Net (unmapRange)
 import Serial
 import TSIGKeys
 import Types
@@ -99,9 +100,11 @@ newZone env keys zoneconf@ZoneConf{..} = do
     -- source which never answers must not leave the zone waiting for a
     -- refresh which already happened.
     now <- currentTime
+    batches <- newIORef Nothing
     return $
         Zone
             { zoneDB = emptyDB
+            , zoneBatches = batches
             , zoneRRs = []
             , zoneReady = False
             , zoneFromFile = fromFile source
@@ -184,6 +187,7 @@ updateZone env zoneref = do
                     z
                         { zoneReady = True
                         , zoneDB = loadedDB
+                        , zoneBatches = loadedBatches
                         , zoneRRs = loadedRRs
                         , zoneAnswered = now
                         , zoneFailing = False
@@ -193,7 +197,14 @@ updateZone env zoneref = do
             -- same.
             | otherwise -> do
                 ready <- stillOurs now zone
-                store $ \z -> z{zoneReady = ready, zoneDB = loadedDB, zoneRRs = loadedRRs, zoneFailing = True}
+                store $ \z ->
+                    z
+                        { zoneReady = ready
+                        , zoneDB = loadedDB
+                        , zoneBatches = loadedBatches
+                        , zoneRRs = loadedRRs
+                        , zoneFailing = True
+                        }
   where
     store f = atomicModifyIORef' zoneref $ \z -> (f z, ())
     -- RFC 1035 Sec 3.3.13: the expire is the longest a secondary may
@@ -247,6 +258,9 @@ zoneDirectory zone = case toRepresentation zone of
 -- | What reading the source came to.
 data Loaded = Loaded
     { loadedDB :: DB
+    , loadedBatches :: IORef (Maybe [[ResourceRecord]])
+    -- ^ Empty for a database just built, and the one the zone already
+    --   has where the database is the one it already has.
     , loadedRRs :: [ResourceRecord]
     , loadedAnswered :: Bool
     -- ^ Whether the source answered.  False when it could not be reached
@@ -264,19 +278,36 @@ loadSourceWithSigning env z = case zoneSigning z of
     Nothing -> unsigned
     Just signing -> signed signing
   where
+    -- A database just built has nothing cut up yet.
+    loadedWith db rrs answered = do
+        batches <- newIORef Nothing
+        return $ Loaded db batches rrs answered
+
     zone = zoneName z
     source = zoneSource z
     oldRRs = zoneRRs z
     key = zoneSourceKey z
     zoneDir = zoneDirectory zone
 
+    -- An unsigned zone whose source has nothing new for us has nothing
+    -- new to build, so the database it is already answering from is
+    -- kept.  Building it again would give the same database, and for a
+    -- large zone that is seconds of work and a second copy of it in
+    -- memory beside the one in use, once every refresh interval, for
+    -- nothing.  A signed zone is the other case: its signatures age
+    -- whether the records do or not, which is what 'signed' below
+    -- rebuilds for.
     unsigned = do
         createDirectoryIfMissing True zoneDir
         mserial <- loadSerial zoneDir
-        (answered, rrs) <- reloadSource env key zone mserial source oldRRs
-        db <- makeDBforSecondary zone rrs
-        saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
-        return $ Loaded db rrs answered
+        got <- loadSource env key zone (sinceSerial oldRRs mserial) source
+        case got of
+            Transferred rrs -> do
+                db <- makeDBforSecondary zone rrs
+                saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
+                loadedWith db rrs True
+            Unchanged -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs True
+            Unreachable -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs False
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
@@ -313,7 +344,7 @@ loadSourceWithSigning env z = case zoneSigning z of
         -- Stored only after the zone has been built successfully so
         -- that a failure does not inflate the serial.
         saveSerial zoneDir $ soa_serial soa
-        return $ Loaded db rrs0 answered
+        loadedWith db rrs0 answered
 
 -- | Refusing to sign a zone which is signed already.
 --
@@ -353,17 +384,19 @@ reloadSource
     -> [ResourceRecord]
     -> IO (Bool, [ResourceRecord])
 reloadSource env key zone mserial source oldRRs =
-    said <$> loadSource env key zone sinceSerial source
+    said <$> loadSource env key zone (sinceSerial oldRRs mserial) source
   where
     said (Transferred rrs) = (True, rrs)
     said Unchanged = (True, oldRRs)
     said Unreachable = (False, oldRRs)
-    -- With nothing to fall back on there is nothing to be gained by
-    -- asking only for what is newer: fetch the zone whatever the
-    -- stored serial says.
-    sinceSerial
-        | null oldRRs = Nothing
-        | otherwise = mserial
+
+-- | With nothing to fall back on there is nothing to be gained by
+--   asking only for what is newer: fetch the zone whatever the stored
+--   serial says.
+sinceSerial :: [ResourceRecord] -> Maybe Serial -> Maybe Serial
+sinceSerial oldRRs mserial
+    | null oldRRs = Nothing
+    | otherwise = mserial
 
 -- | Going to the source for the zone.  A file is always there to be
 --   read; an upstream may have nothing newer, or nothing to say.
@@ -391,12 +424,18 @@ checkRRs (soarr : rrs) = case fromRData $ rdata soarr of
 readIP :: [String] -> [IP]
 readIP ss = mapMaybe readMaybe ss
 
+-- | The configuration's addresses, sorted into the two families the
+--   route tables are kept in.  A range written as IPv4-mapped goes with
+--   the IPv4 ones, since that is what it is and that is the table an
+--   IPv4 peer is looked for in.
 readIPRange :: [String] -> ([AddrRange IPv4], [AddrRange IPv6])
 readIPRange ss0 = loop id id ss0
   where
     loop b4 b6 [] = (b4 [], b6 [])
     loop b4 b6 (s : ss)
-        | Just a6 <- readMaybe s = loop b4 (b6 . (a6 :)) ss
+        | Just a6 <- readMaybe s = case unmapRange a6 of
+            Just a4 -> loop (b4 . (a4 :)) b6 ss
+            Nothing -> loop b4 (b6 . (a6 :)) ss
         | Just a4 <- readMaybe s = loop (b4 . (a4 :)) b6 ss
         | otherwise = loop b4 b6 ss
 

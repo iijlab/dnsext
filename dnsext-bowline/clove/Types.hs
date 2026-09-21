@@ -2,6 +2,7 @@
 
 module Types where
 
+import Control.Concurrent.STM
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.IP
@@ -47,6 +48,13 @@ data Zone = Zone
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
     , zoneDB :: DB
+    , zoneBatches :: IORef (Maybe [[ResourceRecord]])
+    -- ^ How the zone is cut into messages for a transfer, once
+    --   somebody has asked for one.  Working it out costs a pass over
+    --   the zone with a good deal of encoding in it, and the answer is
+    --   the same for every peer, so it is kept.  A new one of these is
+    --   made wherever 'zoneDB' is, and never anywhere else, so the two
+    --   cannot come apart.
     , zoneRRs :: [ResourceRecord]
     -- ^ Records last obtained from the source, kept so that the zone
     --   can be signed again without transferring it again.
@@ -132,6 +140,29 @@ data Transfer
     | -- | It may not, and there is nothing more to say about it
       TransferRefused
 
+-- | How many of something may be going on at once.  A connection and a
+--   transfer each hold one of these for as long as they last, so that a
+--   peer, or a hundred of them, cannot have as many as it likes.
+newtype Slots = Slots (TVar Int)
+
+newSlots :: Int -> IO Slots
+newSlots n = Slots <$> newTVarIO n
+
+-- | One of them, and the action which gives it back, or 'Nothing'
+--   where they are all taken.
+takeSlot :: Slots -> IO (Maybe (IO ()))
+takeSlot (Slots var) = atomically $ do
+    free <- readTVar var
+    if free <= 0
+        then return Nothing
+        else do
+            writeTVar var $ free - 1
+            return $ Just $ atomically $ modifyTVar' var (+ 1)
+
+-- | Closing off an answer: encoding it for the transport it goes over,
+--   and signing it where the query it answers was signed.
+type Seal = DNSMessage -> ByteString
+
 data Proto = Proto
     { recvQuery :: IO (ByteString, SockAddr)
     , sendReply :: SockAddr -> ByteString -> IO ()
@@ -144,4 +175,13 @@ data Proto = Proto
     , replyLimit :: DNSMessage -> Maybe Int
     -- ^ Largest reply which may be sent in answer to this query, if the
     --   transport limits it at all.
+    , duringTransfer :: IO () -> IO ()
+    -- ^ Handing a zone over, which is not governed by the same clock as
+    --   waiting for a query: see 'Network.Run.TCP.Timeout' and the
+    --   note on the TCP server.  Identity where no zone is ever handed
+    --   over, which is every transport but TCP.
+    , transferSlot :: IO (Maybe (IO ()))
+    -- ^ Room to hand a zone over, and the action which gives the room
+    --   back.  'Nothing' when as many transfers are already going on as
+    --   the configuration allows.
     }
