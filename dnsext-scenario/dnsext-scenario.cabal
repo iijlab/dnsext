@@ -36,6 +36,8 @@ extra-source-files:
     test/injected-delegation/*.zone
     test/sibling-glue/*.conf
     test/sibling-glue/*.zone
+    test/qname-min/*.conf
+    test/qname-min/*.zone
     test/poisoned-glue/*.args
     test/poisoned-glue/*.conf
     test/poisoned-glue/*.zone
@@ -66,6 +68,7 @@ test-suite spec
         JpSharpSpec
         OrphanGlueSpec
         PoisonedGlueSpec
+        QnameMinSpec
         SiblingGlueSpec
 
     default-language:   Haskell2010
