@@ -13,6 +13,8 @@ data Options = Options
     , optIterative :: Bool
     , optDisableV6NS :: Bool
     , optPort :: Maybe String
+    , optRootHints :: Maybe FilePath
+    , optTrustAnchor :: Maybe FilePath
     , optDoX :: ShortByteString
     , optSynthesis :: Synthesis
     , optFormat :: OutputFlag
@@ -31,6 +33,8 @@ defaultOptions =
         , optIterative = False
         , optDisableV6NS = False
         , optPort = Nothing
+        , optRootHints = Nothing
+        , optTrustAnchor = Nothing
         , optDoX = "do53"
         , optSynthesis = SynthNone
         , optFormat = Singleline

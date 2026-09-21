@@ -11,7 +11,17 @@ import System.Timeout (timeout)
 
 import DNS.Do53.Client (QueryControls)
 import DNS.Iterative.Internal (Delegation (..), delegationEntry)
-import DNS.Iterative.Query (Env (..), newEmptyEnv, resolveResponseIterative, setRRCacheOps, setTimeCache)
+import DNS.Iterative.Query (
+    Env (..),
+    newEmptyEnv,
+    readRootHint,
+    readTrustAnchors,
+    resolveResponseIterative,
+    setRRCacheOps,
+    setRootAnchor,
+    setRootHint,
+    setTimeCache,
+ )
 import qualified DNS.Log as Log
 import qualified DNS.RRCache as Cache
 import DNS.TimeCache (getTime, newTimeCache)
@@ -40,26 +50,39 @@ iterativeQuery
     -> Log.PutLines IO
     -> (Question, QueryControls)
     -> Options
+    -> PortNumber
+    -- ^ The port to ask authoritative servers on.
     -> IO ()
-iterativeQuery putLn putLines qq opts = do
-    env <- setup putLines opts
+iterativeQuery putLn putLines qq opts authPort = do
+    env <- setup putLines opts authPort
     er <- resolve env (optSynthesis opts) qq
     case er of
         Left e -> print e
         Right msg -> putLn msg
 
-setup :: Log.PutLines IO -> Options -> IO Env
-setup putLines opt@Options{..} = do
+setup :: Log.PutLines IO -> Options -> PortNumber -> IO Env
+setup putLines opt@Options{..} authPort = do
     tcache <- newTimeCache
     let cacheConf = Cache.getDefaultStubConf (4 * 1024) 600 $ getTime tcache
     cacheOps <- Cache.newRRCacheOps cacheConf
+    -- Where to start from and what to believe, which go together: a
+    -- world of one's own has a root of its own and is signed by a key
+    -- the real root has never heard of.  Left alone, both are the real
+    -- ones.
+    rootHint <- mapM readRootHint optRootHints
+    anchors <- maybe (pure mempty) (readTrustAnchors . pure) optTrustAnchor
     let tmout = timeout 3000000
-        setOps = setRRCacheOps cacheOps . setTimeCache tcache
+        setOps =
+            setRRCacheOps cacheOps
+                . setTimeCache tcache
+                . setRootHint rootHint
+                . maybe id (const $ setRootAnchor anchors) optTrustAnchor
     newEmptyEnv <&> \env0 ->
         (setOps env0)
             { shortLog_ = shortLog opt
             , logLines_ = putLines
             , disableV6NS_ = optDisableV6NS
+            , authPort_ = authPort
             , timeout_ = tmout
             }
 
