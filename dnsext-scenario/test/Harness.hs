@@ -29,12 +29,15 @@ module Harness (
     ask,
     askChecking,
     Answer (..),
+    Server (..),
+    asked,
 ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, catch, throwIO)
 import Control.Monad (unless, void, when)
 import Data.List (isPrefixOf, stripPrefix)
+import Data.Maybe (mapMaybe)
 import Data.String (fromString)
 import System.Directory (
     createDirectoryIfMissing,
@@ -280,6 +283,38 @@ dsRdata zoneDir = do
     oneField l = case break (== ':') l of
         (k, ':' : rest) -> [(k, w) | w : _ <- [words rest]]
         _ -> []
+
+----------------------------------------------------------------
+
+-- | One of the two primaries of the scenario's world.
+data Server
+    = TheRoot
+    | ThePrimary
+    deriving (Eq, Show)
+
+-- | What a server was asked, in the order it was asked it.
+--
+--   This is the one thing about a scenario which cannot be seen in the
+--   answer: whether bowline told a server more than it needed to know,
+--   how many times it went back, which of them it went to.  clove
+--   writes a line for every query it answers, so the questions are read
+--   out of its log -- which means a scenario wanting them has to set
+--   @log-level: DEBUG@ for the server in question, the default here
+--   being quieter than that.
+asked :: Scenario -> Server -> IO [(Domain, TYPE)]
+asked sc server = mapMaybe oneQuestion . lines <$> readFile (scenarioDir sc </> logOf server)
+  where
+    logOf TheRoot = "root.log"
+    logOf ThePrimary = "clove.log"
+
+-- | clove writes @\"a.b.example.\" A from 127.0.0.1\/UDP@ for each
+--   query it answers.  Whatever else is in the log is not one.
+oneQuestion :: String -> Maybe (Domain, TYPE)
+oneQuestion ('"' : rest)
+    | (name, '"' : more) <- break (== '"') rest
+    , typ : "from" : _ <- words more =
+        Just (fromRepresentation name, read typ)
+oneQuestion _ = Nothing
 
 ----------------------------------------------------------------
 
