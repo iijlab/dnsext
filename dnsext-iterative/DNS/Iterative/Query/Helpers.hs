@@ -14,6 +14,7 @@ import DNS.SEC
 import DNS.Types
 import qualified DNS.Types as DNS
 import Data.IP (IP (IPv4, IPv6), IPv4, IPv6)
+import Network.Socket (PortNumber)
 
 -- this package
 import DNS.Iterative.Imports
@@ -215,12 +216,12 @@ foldIPnonEmpty v4 v6 both (x :| xs) = case x of
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
-dentryToPermAx :: MonadIO m =>  Bool -> [DEntry] -> m [Address]
-dentryToPermAx disableV6NS des = do
+dentryToPermAx :: MonadIO m => PortNumber -> Bool -> [DEntry] -> m [Address]
+dentryToPermAx port disableV6NS des = do
     as <- unique . concatMap NE.toList <$> sequence actions
     randomizedPerm as
   where
-    actions = dentryIPsetChoices disableV6NS des
+    actions = dentryIPsetChoices port disableV6NS des
     unique = Set.toList . Set.fromList
 {- FOURMOLU_ENABLE -}
 
@@ -243,35 +244,52 @@ dentryToPermNS zone des = do
 -- >>> expect1 p as = do { [a] <- pure as; is <- a; pure $ p $ NE.toList is }
 --
 -- >>> de4 = DEwithA4 "example." ("192.0.2.33" :| ["192.0.2.34"])
--- >>> expect1 (all v4) (dentryIPsetChoices False [de4])
+-- >>> expect1 (all v4) (dentryIPsetChoices 53 False [de4])
 -- True
--- >>> expect1 (all v4) (dentryIPsetChoices True  [de4])
+-- >>> expect1 (all v4) (dentryIPsetChoices 53 True  [de4])
 -- True
 --
 -- >>> de6 = DEwithA6 "example." ("2001:db8::21" :| ["2001:db8::22"])
--- >>> expect1 (all v6) (dentryIPsetChoices False [de6])
+-- >>> expect1 (all v6) (dentryIPsetChoices 53 False [de6])
 -- True
--- >>> null             (dentryIPsetChoices True  [de6] :: [IO (NonEmpty Address)])
+-- >>> null             (dentryIPsetChoices 53 True  [de6] :: [IO (NonEmpty Address)])
 -- True
 --
 -- >>> de46 = DEwithAx "example." ("192.0.2.35" :| ["192.0.2.36"]) ("2001:db8::23" :| ["2001:db8::24"])
--- >>> expect1 ((||) <$> all v4 <*> all v6) (dentryIPsetChoices False [de46])
+-- >>> expect1 ((||) <$> all v4 <*> all v6) (dentryIPsetChoices 53 False [de46])
 -- True
--- >>> expect1 (all v4)                     (dentryIPsetChoices True  [de46])
+-- >>> expect1 (all v4)                     (dentryIPsetChoices 53 True  [de46])
 -- True
-dentryIPsetChoices :: MonadIO m => Bool -> [DEntry] -> [m (NonEmpty Address)]
-dentryIPsetChoices disableV6NS des = mapMaybe choose des
+--
+-- A delegation says which addresses to ask, never on which port; the
+-- port is the resolver's own, and is 53 except where a test stands a
+-- world up on ports it may have without privilege.
+--
+-- >>> expect1 (all ((== 5353) . snd)) (dentryIPsetChoices 5353 False [de4])
+-- True
+-- >>> expect1 (all ((== 5353) . snd)) (dentryIPsetChoices 5353 False [de6])
+-- True
+-- >>> expect1 (all ((== 5353) . snd)) (dentryIPsetChoices 5353 False [de46])
+-- True
+--
+-- A stub zone is given its servers by the configuration rather than by
+-- a delegation, so it keeps the port written there.
+--
+-- >>> expect1 (all ((== 5301) . snd)) (dentryIPsetChoices 5353 False [DEstubA4 (("192.0.2.41", 5301) :| [])])
+-- True
+dentryIPsetChoices :: MonadIO m => PortNumber -> Bool -> [DEntry] -> [m (NonEmpty Address)]
+dentryIPsetChoices port disableV6NS des = mapMaybe choose des
   where
-    v4do53 i4s = [(IPv4 i, 53) | i <- i4s]
-    v6do53 i6s = [(IPv6 i, 53) | i <- i6s]
+    v4port i4s = [(IPv4 i, port) | i <- i4s]
+    v6port i6s = [(IPv6 i, port) | i <- i6s]
     choose  DEonlyNS{}           = Nothing
-    choose (DEwithA4 _ i4s)      = Just $ pure $ v4do53 i4s
+    choose (DEwithA4 _ i4s)      = Just $ pure $ v4port i4s
     choose (DEwithA6 _ i6s)
         | disableV6NS            = Nothing
-        | otherwise              = Just $ pure $ v6do53 i6s
+        | otherwise              = Just $ pure $ v6port i6s
     choose (DEwithAx _ i4s i6s)
-        | disableV6NS            = Just $ pure $ v4do53 i4s
-        | otherwise              = Just $ randomizedChoice (v4do53 i4s) (v6do53 i6s)
+        | disableV6NS            = Just $ pure $ v4port i4s
+        | otherwise              = Just $ randomizedChoice (v4port i4s) (v6port i6s)
     choose (DEstubA4 i4s)        = Just $ pure [(IPv4 i, p) | (i, p) <- i4s]
     choose (DEstubA6 i6s)        = Just $ pure [(IPv6 i, p) | (i, p) <- i6s]
 {- FOURMOLU_ENABLE -}

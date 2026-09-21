@@ -116,6 +116,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                         , logLines_ = putLines
                         , logDNSTAP_ = putDNSTAP
                         , disableV6NS_ = disable_v6_ns
+                        , authPort_ = cnf_auth_port
                         , chaosZones_ = chaosZones
                         , localZones_ = getLocalZones cnf_local_zones
                         , localSynthZones_ = getLocalSynthZones cnf_local_synth_zones

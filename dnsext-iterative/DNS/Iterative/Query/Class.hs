@@ -111,6 +111,10 @@ data Env = Env
     , logLines_ :: Log.PutLines IO
     , logDNSTAP_ :: DNSTAP.Message -> IO ()
     , disableV6NS_ :: Bool
+    , authPort_ :: PortNumber
+    -- ^ The port authoritative servers are asked on.  53 everywhere but
+    --   in a test, where a world of one's own can be stood up without
+    --   the privilege a well-known port needs.
     , rootAnchor_ :: MayFilledDS
     , rootHint_ :: Delegation
     , chaosZones_ :: LocalZones

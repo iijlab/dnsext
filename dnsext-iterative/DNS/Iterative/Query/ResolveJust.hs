@@ -30,6 +30,7 @@ import qualified Data.Set as Set
 import DNS.Types
 import qualified DNS.Types as DNS
 import Data.IP (IP)
+import Network.Socket (PortNumber)
 
 -- dnsext-dnssec
 import DNS.SEC
@@ -557,7 +558,8 @@ delegationFallbacks
 delegationFallbacks dc dnssecOK ah d0 name typ = do
     eventLog' "bgn"
     disableV6NS <- asksEnv disableV6NS_
-    x <- delegationFallbacks_ handled failed qparallel disableV6NS dc dnssecOK ah d0 name typ
+    authPort <- asksEnv authPort_
+    x <- delegationFallbacks_ handled failed qparallel authPort disableV6NS dc dnssecOK ah d0 name typ
     eventLog' "end"
     pure x
   where
@@ -571,7 +573,7 @@ delegationFallbacks dc dnssecOK ah d0 name typ = do
 {- FOURMOLU_DISABLE -}
 -- |
 --
--- >>> fallbacks = delegationFallbacks_ (const $ pure ()) (const $ pure ()) 2 True 0 True (const $ pure ())
+-- >>> fallbacks = delegationFallbacks_ (const $ pure ()) (const $ pure ()) 2 53 True 0 True (const $ pure ())
 -- >>> --
 -- >>> foldIP0 ns = foldIPList' (DEonlyNS ns:|[]) (\v4 -> DEwithA4 ns v4:|[]) (\v6 -> DEwithA6 ns v6:|[]) (\v4 v6 -> DEwithAx ns v4 v6:|[])
 -- >>> foldIP ns ips = foldIP0 ns [i | IPv4 i <- ips] [i | IPv6 i <- ips]
@@ -614,10 +616,10 @@ delegationFallbacks_
     :: MonadQuery m
     => (String -> m c)
     -> ([(String, [Address])] -> m a)
-    -> Int -> Bool -> Int -> Bool -> ([Address] -> m b)
+    -> Int -> PortNumber -> Bool -> Int -> Bool -> ([Address] -> m b)
     -> Delegation -> Domain -> TYPE -> m (DNSMessage, Delegation)
-delegationFallbacks_ eh fh qparallel disableV6NS dc dnssecOK ah d0@Delegation{..} name typ = do
-    paxs  <- dentryToPermAx disableV6NS dentry
+delegationFallbacks_ eh fh qparallel authPort disableV6NS dc dnssecOK ah d0@Delegation{..} name typ = do
+    paxs  <- dentryToPermAx authPort disableV6NS dentry
     pnss  <- dentryToPermNS zone dentry
     -- Try known IP addresses first
     -- Then try known names if necessary
@@ -645,7 +647,7 @@ delegationFallbacks_ eh fh qparallel disableV6NS dc dnssecOK ah d0@Delegation{..
             fallbacks' as = fbs dN $ aa . ((show ns, as) :)
             left  e    = eh' (unwords [e, "for resolving", show ns, show tyAx]) >> evLog [] >> fallbacks' []
             right axs  = randomized >>= \ps -> evLog (map (show . fst) ps) >> fallbacksAx dN ps (fallbacks' ps)
-              where randomized = randomizedPermN [(ip, 53) | (ip, _) <- axs] <&> NE.toList
+              where randomized = randomizedPermN [(ip, authPort) | (ip, _) <- axs] <&> NE.toList
         either left right res
     zero _d aa = fh (aa []) >> throwDnsError ServerFailure
     randomizedAxs
