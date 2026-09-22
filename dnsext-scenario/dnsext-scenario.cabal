@@ -46,6 +46,8 @@ extra-source-files:
     test/dnssec-failed/*.zone
     test/ns-ttl/*.conf
     test/ns-ttl/*.zone
+    test/optout-ent/*.conf
+    test/optout-ent/*.zone
     test/orphan-glue/*.conf
     test/orphan-glue/*.zone
     test/injected-delegation/*.args
@@ -90,6 +92,7 @@ test-suite spec
         InjectedDelegationSpec
         JpSharpSpec
         NsTtlSpec
+        OptoutEntSpec
         OrphanGlueSpec
         PoisonedGlueSpec
         QnameMinSpec

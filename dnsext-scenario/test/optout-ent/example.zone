@@ -1,0 +1,23 @@
+; gov.example. has no records of its own.  It exists because
+; sub.gov.example. is delegated below it, and that delegation carries no
+; DS -- so the empty non-terminal is one which exists only because of an
+; insecure delegation.
+;
+; RFC 5155 Sec 7.1 lets a zone using Opt-Out leave such a name out of the
+; chain.  A zone which does has nothing to match the closest encloser of
+; a name below it with, so an NXDOMAIN there cannot be proved, and
+; resolvers disagree about what to do then: hoge.gov.mufj.jp is where
+; 「これも SERVFAIL する実装としない実装がある」, and the conclusion
+; quoted there is "DO NOT USE THE NSEC3 OPT-OUT BIT".
+;
+; clove keeps it.  Opt-Out leaves out the delegations which carry no DS
+; and nothing else, so the encloser is there to be matched and the
+; denial can be proved.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+sub.gov		IN	NS	ns.sub.gov.example.
+ns.sub.gov	IN	A	192.0.2.53
