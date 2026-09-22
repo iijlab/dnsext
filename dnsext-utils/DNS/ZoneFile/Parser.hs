@@ -16,6 +16,7 @@ import Data.Functor
 import DNS.SEC
 import DNS.Types hiding (rrclass, rrname, rrttl, rrtype)
 import qualified DNS.Types.Opaque as Opaque
+import qualified Data.ByteString.Char8 as C8
 import Data.IP (IPv4, IPv6)
 
 -- this package
@@ -192,6 +193,39 @@ rdataTXT = rd_txt_n . txts <$> ((:) <$> nbstring <*> many (blank *> nbstring))
     txts = map Opaque.fromShortByteString
     nbstring = mconcat <$> some (cstring <|> dot $> ".")
 
+{- FOURMOLU_DISABLE -}
+-- | RFC 3597 Sec 5: the RDATA of any type may be written as @\\#@,
+--   its length in octets, and that many octets in hexadecimal.  It is
+--   how a type this has no syntax of its own for is written -- there is
+--   no other way to put a CAA or an RRSIG in a zone file here -- and the
+--   RFC allows it for the types which do have one as well.
+--
+--   The hexadecimal may be broken by whitespace, so it is gathered up
+--   before it is read.
+--
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "4",Blank,CS "0a0b0c0d"]
+-- Right ((RD_Unknown(65280) \# 4 0a0b0c0d,Context "." "." 3600 IN),[])
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "0"]
+-- Right ((RD_Unknown(65280) \# 0 ,Context "." "." 3600 IN),[])
+rdataGeneric :: TYPE -> Parser RData
+rdataGeneric ty = do
+    _    <- this genericMark
+    len  <- blank *> readCString "rdlength"
+    hex  <- concat <$> many (blank *> (fromCString <$> cstring))
+    o    <- either (parseError . (("Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": ") ++)) pure
+              $ Opaque.fromBase16 (C8.pack hex)
+    when (Opaque.length o /= len)
+      $ parseError
+      $ "Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": said " ++ show len
+        ++ " octets and wrote " ++ show (Opaque.length o)
+    pure $ rd_unknown ty o
+
+-- | The @\\#@ which says the RDATA is written the generic way: a @#@
+--   which the lexer has seen escaped.
+genericMark :: Token
+genericMark = CS $ estringToCS' [E 35]
+{- FOURMOLU_ENABLE -}
+
 rdataMX :: Parser RData
 rdataMX = rd_mx <$> readCString "mx_preference" <*> (blank *> domain)
 
@@ -288,9 +322,13 @@ rrTyRData mk =
     )
   where
     pair tbl ty = do
-         let left = raise $ "Zonefile.rdata: unsupported TYPE: " ++ show ty
-             right rd = mk ty <$> (blank *> rd :: Parser RData {- for GHC 9.2. type-inference not working with fundep? -})
-         maybe left right (lookup ty tbl)
+         let left = raise $ "Zonefile.rdata: no syntax for TYPE " ++ show ty ++ " -- write it the generic way, \\# <length> <hex>"
+             right rd = blank *> rd :: Parser RData {- for GHC 9.2. type-inference not working with fundep? -}
+             {- RFC 3597 Sec 5 lets the generic form stand for any type,
+                so which of the two it is, is read off the RDATA rather
+                than decided by the type. -}
+             rdata_ = blank *> rdataGeneric ty <|> maybe left right (lookup ty tbl)
+         mk ty <$> rdata_
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}

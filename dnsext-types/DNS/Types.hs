@@ -109,6 +109,8 @@ module DNS.Types (
     RD_TXT,
     rd_txt,
     rd_txt_n,
+    RD_Unknown (..),
+    rd_unknown,
     txt_opaque,
 
     -- *** RP RR
