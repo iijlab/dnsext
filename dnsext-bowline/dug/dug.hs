@@ -469,7 +469,11 @@ toFlag "+nocdflag"  = return $ cdFlag FlagClear
 toFlag "+adflag"    = return $ adFlag FlagSet
 toFlag "+noadflag"  = return $ adFlag FlagClear
 toFlag x
-  | "+udpsize=" `isPrefixOf` x = return $ ednsSetUdpSize (Just $ read $ drop 9 $ x)
+  | "+udpsize=" `isPrefixOf` x = case readMaybe (drop 9 x) of
+        Just n  -> return $ ednsSetUdpSize (Just n)
+        Nothing -> do
+            putStrLn $ "+udpsize= wants a number, not " ++ show (drop 9 x)
+            exitFailure
 toFlag x            = do
     putStrLn $ "Unrecognized query control " ++ x
     exitFailure

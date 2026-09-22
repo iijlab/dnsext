@@ -21,7 +21,7 @@ import Control.Monad (forever, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString.Short ()
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.IP ()
+import Data.IP (IP)
 import Data.List (find, intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
@@ -45,6 +45,7 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.Log.FastLogger
 import System.Posix.Signals
+import Text.Read (readMaybe)
 
 import DNS.Do53.Client (
     LookupConf (..),
@@ -132,6 +133,14 @@ usage =
         , "options:"
         ]
 
+-- | An address given on the command line, or a complaint about it.
+readAddr :: String -> IO IP
+readAddr s = case readMaybe s of
+    Just ip -> pure ip
+    Nothing -> do
+        putStrLn $ "Not an IP address: " ++ s
+        exitFailure
+
 showUsageAndExit :: IO a
 showUsageAndExit = do
     putStr $ usageInfo usage options
@@ -202,9 +211,13 @@ main :: IO ()
 main = do
     labelMe "ddrd main"
     args <- getArgs
-    (opts, ips) <- parseOpts args
+    (opts, args') <- parseOpts args
     when (optHelp opts) showUsageAndExit
-    when (null ips) showUsageAndExit
+    when (null args') showUsageAndExit
+    -- Said here rather than where the addresses are used, so that a
+    -- typed-in address which is not one is a sentence naming it and not
+    -- "Prelude.read: no parse" from somewhere inside.
+    ips <- mapM readAddr args'
     runInitIO $ do
         addResourceDataForDNSSEC
         addResourceDataForSVCB
@@ -320,13 +333,13 @@ selectSVCB _ _ = Nothing
 
 makeConf
     :: IORef (Map.Map NameTag ByteString)
-    -> [String]
+    -> [IP]
     -> LookupConf
 makeConf ref addrs =
     defaultLookupConf
         { lconfCacheConf = Just defaultCacheConf
         , lconfConcurrent = True
-        , lconfSeeds = SeedsAddrs $ map read addrs
+        , lconfSeeds = SeedsAddrs addrs
         , lconfActions =
             actions
                 { ractionUseEarlyData = True
