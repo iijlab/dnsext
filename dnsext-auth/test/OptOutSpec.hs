@@ -26,15 +26,18 @@ spec :: Spec
 spec = describe "a referral to an unsigned subzone" $ do
     runIO $ runInitIO addResourceDataForDNSSEC
     let zone = "."
-    db <- runIO $ do
-        rrs <- loadZoneFile zone "test/optout.zone"
-        (_pub, _pri, dnskey, _ds, doSign) <-
-            prepareDNSSEC $ defaultKeyConfig{keyConfZone = zone}
-        -- No salt and no extra iterations, which is what BCP 236 asks
-        -- for and what the hashes in the zone file were worked out with.
-        let salt = fromRight (error "fromBase16") $ Opaque.fromBase16 ""
-            n3p = RD_NSEC3PARAM Hash_SHA1 0 0 salt
-        makeDBforPrimary zone (Just n3p) doSign doSign (rrs ++ [dnskey])
+        build optOut = do
+            rrs <- loadZoneFile zone "test/optout.zone"
+            (_pub, _pri, dnskey, _ds, doSign) <-
+                prepareDNSSEC $ defaultKeyConfig{keyConfZone = zone}
+            -- No salt and no extra iterations, which is what BCP 236
+            -- asks for and what the hashes in the zone file were worked
+            -- out with.
+            let salt = fromRight (error "fromBase16") $ Opaque.fromBase16 ""
+                n3p = RD_NSEC3PARAM Hash_SHA1 0 0 salt
+                n3c = (nsec3Config n3p){nsec3OptOut = optOut}
+            makeDBforPrimary zone (Just n3c) doSign doSign (rrs ++ [dnskey])
+    db <- runIO $ build True
 
     -- Without this a resolver has no way to tell a name left out on
     -- purpose from one forged away, and dnsext's own validator turns
@@ -55,6 +58,26 @@ spec = describe "a referral to an unsigned subzone" $ do
         let auth = authorityFor db "www.parentlong."
         auth `shouldBe` nub auth
         length (proofFor db "www.parentlong.") `shouldBe` 2
+
+    describe "and the same zone signed without Opt-Out" $ do
+        plain <- runIO $ build False
+        -- Every name is in the chain now, the insecure delegations
+        -- among them, so each of them can be denied a DS outright
+        -- rather than pointed at a gap.
+        it "proves the delegation with the NSEC3 which matches it" $ do
+            let n3s = proofFor plain "www.parentbrief."
+            length n3s `shouldBe` 1
+            n3s `shouldSatisfy` all (\n3 -> NS `elem` nsec3_types n3)
+            n3s `shouldSatisfy` all (\n3 -> not $ DS `elem` nsec3_types n3)
+
+        -- And says nothing about Opt-Out, because it is not using it.
+        it "does not claim Opt-Out" $ do
+            proofFor plain "www.parentbrief."
+                `shouldSatisfy` all (\n3 -> not $ OptOut `elem` nsec3_flags n3)
+
+        -- The one which used to need a gap needs none either.
+        it "proves the other one the same way" $ do
+            length (proofFor plain "www.parentlong.") `shouldBe` 1
 
 authorityFor :: DB -> Domain -> [ResourceRecord]
 authorityFor db dom = authority $ getAnswer db dnssecQuery{question = Question dom A IN}

@@ -486,8 +486,9 @@ readSigning env dom ZoneConf{..}
         h <- case toNsec3Hash cnf_nsec3_hash of
             Just h0 -> return h0
             Nothing -> E.ioError $ E.userError $ "NSEC3 Hash: " ++ cnf_nsec3_hash ++ " is unknown"
-        let mn3p
-                | cnf_nsec3 = Just $ defaultNSEC3PARAM{nsec3param_hashalg = h}
+        let params = defaultNSEC3PARAM{nsec3param_hashalg = h}
+            mn3p
+                | cnf_nsec3 = Just (nsec3Config params){nsec3OptOut = cnf_nsec3_optout}
                 | otherwise = Nothing
         return $
             Just $
