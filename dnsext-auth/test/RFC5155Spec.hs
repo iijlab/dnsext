@@ -12,6 +12,7 @@ import DNS.Types
 import qualified DNS.Types.Opaque as Opaque
 
 import Data.Either
+import Data.List (sort)
 
 import Common
 
@@ -50,6 +51,18 @@ doit db = do
             n3s = [n3 | rr <- authority ans, rrtype rr == NSEC3, Just n3 <- [fromRData $ rdata rr]]
         n3s `shouldSatisfy` not . null
         n3s `shouldSatisfy` all (\n3 -> OptOut `elem` nsec3_flags n3)
+
+    -- RFC 5155 Sec 7.1: the bitmap says which RRsets are at the name
+    -- the NSEC3 is about, and Appendix A writes these three out.
+    -- ji6ne... is y.w.example., an empty non-terminal, and is written
+    -- with no bitmap at all; 35mth... is a.example., a delegation with
+    -- a DS, whose DS is signed; 0p9mh... is the apex.
+    it "says which RRsets are at the name, and no others" $ do
+        typesAt db "ji6neoaepv8b5o6k4ev33abha8ht9fgc.example." `shouldBe` Just []
+        typesAt db "35mthgpgcu1qg68fab165klnsnk3dpvl.example."
+            `shouldBe` Just (sort [NS, DS, RRSIG])
+        typesAt db "0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example."
+            `shouldBe` Just (sort [MX, DNSKEY, NS, SOA, NSEC3PARAM, RRSIG])
 
     it "builds two entries for the last range" $ do
         lookupN "00000000000000000000000000000000.example." db `shouldSatisfy` include "t644ebqk9bibcna874givr6joj62mlhv.example." NSEC3
@@ -140,3 +153,9 @@ doit db = do
         authority ans `shouldSatisfy` includeRRSIG "0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example" NSEC3
         length (additional ans) `shouldBe` 0
         flags ans `shouldSatisfy` authAnswer
+
+-- | The type bitmap of the NSEC3 at this name, where there is one.
+typesAt :: DB -> Domain -> Maybe [TYPE]
+typesAt db dom = case [n3 | rr <- dbAll db, rrname rr == dom, rrtype rr == NSEC3, Just n3 <- [fromRData $ rdata rr]] of
+    n3 : _ -> Just $ sort $ nsec3_types n3
+    [] -> Nothing

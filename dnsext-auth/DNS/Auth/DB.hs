@@ -482,7 +482,7 @@ makeNSEC3forPrimary ttl zone signZone NSEC3Config{nsec3Param = n3p@RD_NSEC3PARAM
               -- forged away.  dnsext's own validator will not take the
               -- proof of an insecure delegation without it (see
               -- step_unsignedDelegation in DNS.SEC.Verify.NSEC3).
-              rdata = rd_nsec3 nsec3param_hashalg flags nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
+              rdata = rd_nsec3 nsec3param_hashalg flags nsec3param_iterations nsec3param_salt nxt types
             }
     flags
         | optOut = [OptOut]
@@ -490,13 +490,26 @@ makeNSEC3forPrimary ttl zone signZone NSEC3Config{nsec3Param = n3p@RD_NSEC3PARAM
     skipUnderDelegated Node{..} = (xs, not nodeDelegated)
       where
         types = map rrsetsigType nodeRRs
+        hasDS = DS `elem` types
+        -- RFC 5155 Sec 7.1: the bitmap says which RRsets are at the
+        -- name the NSEC3 is about, and Appendix A shows what that comes
+        -- to.  An empty non-terminal owns nothing and is written with
+        -- no bitmap at all.  A delegation owns its NS, which the parent
+        -- does not sign, and its DS where it has one, which the parent
+        -- does; so RRSIG belongs there only with a DS.  Anywhere else
+        -- what is there is signed and RRSIG belongs.  The NSEC3 itself
+        -- is at another name and is never named here, unlike an NSEC.
+        bitmap
+            | null types = []
+            | nodeDelegated = if hasDS then RRSIG : types else types
+            | otherwise = RRSIG : types
         xs
             -- A delegation with no DS is the one thing Opt-Out leaves
             -- out.  Without it every name in the zone is in the chain,
             -- which is what lets such a delegation be proved rather
             -- than merely skipped over.
-            | nodeDelegated && not (DS `elem` types) = [(nodeName, types) | not optOut]
-            | otherwise = [(nodeName, types)]
+            | nodeDelegated && not hasDS = [(nodeName, bitmap) | not optOut]
+            | otherwise = [(nodeName, bitmap)]
 
 makeNSECforSecondary
     :: M.Map (Domain, TYPE) ResourceRecord

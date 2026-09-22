@@ -10,7 +10,7 @@
 module OptOutSpec where
 
 import Data.Either (fromRight)
-import Data.List (nub)
+import Data.List (nub, sort)
 import Test.Hspec
 
 import DNS.Auth.Algorithm
@@ -78,6 +78,15 @@ spec = describe "a referral to an unsigned subzone" $ do
         -- The one which used to need a gap needs none either.
         it "proves the other one the same way" $ do
             length (proofFor plain "www.parentlong.") `shouldBe` 1
+
+        -- RFC 5155 Sec 7.1: the bitmap says what is at the name.  A
+        -- delegation owns its NS, which the parent does not sign, so
+        -- there is no RRSIG at it to name -- and with no DS either, NS
+        -- is the whole of it.  This one is only reachable at all since
+        -- a chain without Opt-Out started carrying such delegations.
+        it "says NS and nothing else at a delegation it does not sign" $ do
+            let n3s = proofFor plain "www.parentbrief."
+            map (sort . nsec3_types) n3s `shouldBe` [[NS]]
 
 authorityFor :: DB -> Domain -> [ResourceRecord]
 authorityFor db dom = authority $ getAnswer db dnssecQuery{question = Question dom A IN}
