@@ -1,6 +1,7 @@
 module DNS.ZoneFile.IO where
 
 -- ghc packages
+import Control.Monad (zipWithM)
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as L8
 
@@ -8,7 +9,7 @@ import qualified Data.ByteString.Lazy.Char8 as L8
 import DNS.Types (Domain, ResourceRecord)
 
 -- this package
-import DNS.ZoneFile.Lexer (lexLine)
+import DNS.ZoneFile.Lexer (lexLine, lexLineAt)
 import DNS.ZoneFile.Parser (Context)
 import qualified DNS.ZoneFile.Parser as P
 import DNS.ZoneFile.Types as T
@@ -26,5 +27,5 @@ parseLine s cxt = do
 parseFile :: FilePath -> Domain -> IO [Record]
 parseFile fn dom = do
     bslines <- L8.lines <$> LB.readFile fn
-    tklines <- either fail pure $ mapM lexLine bslines
+    tklines <- either fail pure $ zipWithM lexLineAt [1 ..] bslines
     either fail (pure . fst) $ P.parseFile dom $ T.normTokens tklines

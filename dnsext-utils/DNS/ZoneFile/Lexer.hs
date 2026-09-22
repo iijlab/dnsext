@@ -203,4 +203,9 @@ lexerToken =
 -- >>> lexLine "example.com. 7200 IN A 203.0.113.3  ; example record"
 -- Right [CS "example",Dot,CS "com",Dot,Blank,CS "7200",Blank,CS "IN",Blank,CS "A",Blank,CS "203",Dot,CS "0",Dot,CS "113",Dot,CS "3",Blank,Comment]
 lexLine :: LB.ByteString -> Either String [Token]
-lexLine = (fst <$>) . runParser (many lexerToken <* eof)
+lexLine = lexLineAt 1
+
+-- | The same, told which line of the file this is, so that what it has
+--   to say about a line names the right one.
+lexLineAt :: Int -> LB.ByteString -> Either String [Token]
+lexLineAt lin = (fst <$>) . runParserAt (lin, 0) (many lexerToken <* eof)
