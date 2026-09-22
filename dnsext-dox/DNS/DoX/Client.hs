@@ -4,6 +4,7 @@
 module DNS.DoX.Client (
     -- * SVCB information
     lookupSVCBInfo,
+    svcbResolveInfos,
     SVCBInfo (..),
     modifyForDDR,
 
@@ -181,8 +182,32 @@ extractResolveInfo ntag ri s alpn = updateIPPort <$> ips
             { rinfoIP = x
             , rinfoPort = y
             , rinfoPath = mdohpath
-            , rinfoServerName = Just $ init $ toRepresentation target
+            , rinfoServerName = serverName target
             }
+
+-- | The name a certificate for the server would be in, taken from the
+--   TargetName of the SVCB record which pointed at it and written
+--   without the trailing dot a certificate does not carry.
+--
+--   RFC 9460 Sec 2.5 has a ServiceMode TargetName of @.@ stand for the
+--   owner name of the record itself, and the owner a resolver finds
+--   these under is @_dns.resolver.arpa@ -- a name no certificate is
+--   for.  So a record like that names no server, and this says so.
+--
+--   The empty string is not a way of saying it.  It is a name, and one
+--   nothing is called: it goes out as an empty SNI, and as an empty
+--   @:authority@ in every DoH request.  With no name at all the address
+--   stands in for it, which is what RFC 9462 Sec 6.3 asks of a client
+--   which found its resolver by address in the first place.
+--
+-- >>> serverName "dns.example."
+-- Just "dns.example"
+-- >>> serverName "."
+-- Nothing
+serverName :: Domain -> Maybe String
+serverName target = case toRepresentation target of
+    "." -> Nothing
+    rep -> Just $ init rep
 
 ----------------------------------------------------------------
 
