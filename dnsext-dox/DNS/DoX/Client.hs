@@ -15,6 +15,8 @@ module DNS.DoX.Client (
 
     -- * Oneshot resolver
     toResolveEnvs,
+    svcbResolveEnvs,
+    firstToAnswer,
     lookupRawDoX,
     makeOneshotResolver,
 
@@ -84,11 +86,35 @@ lookupRawDoX lenv@LookupEnv{..} q = do
     er <- lookupSVCBInfo lenv
     case er of
         Left err -> return $ Left err
-        Right addss -> case toResolveEnvs <$> addss of
-            [] -> return $ Left FormatError
-            adds : _ -> case adds of
-                [] -> return $ Left FormatError
-                add : _ -> resolve add q lenvQueryControls
+        Right addss -> firstToAnswer (svcbResolveEnvs addss) q lenvQueryControls
+
+-- | The designated resolvers a lookup would try, in the order it would
+--   try them.
+--
+--   The records arrive sorted by priority and each offers the protocols
+--   it would rather be spoken in, so this is already the order RFC 9460
+--   Sec 2.4.2 asks a client to work down.  All of them are on offer,
+--   which is what makes them worth keeping: a record this build has no
+--   way of speaking to drops out of the list rather than ending it.
+svcbResolveEnvs :: [[SVCBInfo]] -> [ResolveEnv]
+svcbResolveEnvs = concatMap toResolveEnvs
+
+-- | Asking each of these in turn until one answers, and giving back
+--   what the last of them said when none of them does.
+--
+--   A resolver which answers at all has answered, whatever the answer
+--   says: a refusal or a name error is the server's word and is not a
+--   reason to go and ask somebody else.  Only a resolver which could
+--   not be reached, or could not be understood, moves the lookup on.
+firstToAnswer :: [ResolveEnv] -> Resolver
+firstToAnswer [] _ _ = return $ Left FormatError
+firstToAnswer (add : adds) q qctl = do
+    er <- resolve add q qctl
+    case er of
+        Right _ -> return er
+        Left _
+            | null adds -> return er
+            | otherwise -> firstToAnswer adds q qctl
 
 ----------------------------------------------------------------
 
