@@ -15,6 +15,8 @@ module DNS.DoX.Client (
 
     -- * Oneshot resolver
     toResolveEnvs,
+    svcbResolveEnvs,
+    firstToAnswer,
     lookupRawDoX,
     makeOneshotResolver,
 
@@ -84,11 +86,19 @@ lookupRawDoX lenv@LookupEnv{..} q = do
     er <- lookupSVCBInfo lenv
     case er of
         Left err -> return $ Left err
-        Right addss -> case toResolveEnvs <$> addss of
-            [] -> return $ Left FormatError
-            adds : _ -> case adds of
-                [] -> return $ Left FormatError
-                add : _ -> resolve add q lenvQueryControls
+        Right addss -> firstToAnswer (svcbResolveEnvs addss) q lenvQueryControls
+
+-- | The designated resolvers a lookup would try, in the order it would
+--   try them.
+svcbResolveEnvs :: [[SVCBInfo]] -> [ResolveEnv]
+svcbResolveEnvs addss = case toResolveEnvs <$> addss of
+    [] -> []
+    adds : _ -> take 1 adds
+
+-- | Asking each of these in turn until one answers.
+firstToAnswer :: [ResolveEnv] -> Resolver
+firstToAnswer [] _ _ = return $ Left FormatError
+firstToAnswer (add : _) q qctl = resolve add q qctl
 
 ----------------------------------------------------------------
 
