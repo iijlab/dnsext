@@ -109,17 +109,30 @@ withServer udp tcp body =
 
 -- | One port for both transports: the datagram socket picks it and the
 --   stream socket is bound to the same one.
+--
+--   A number the kernel has free for a datagram socket says nothing
+--   about whether it is free for a stream socket, so the second bind
+--   can fail while the first has just succeeded -- and does, on a
+--   machine busy enough, as a test which has nothing to do with sockets
+--   failing with "Address already in use".  There is no way to ask for
+--   a number in both at once, so the answer is to ask again.
 openBoth :: IO (Socket, Socket, PortNumber)
-openBoth = do
-    us <- socket AF_INET Datagram defaultProtocol
-    bind us $ SockAddrInet 0 localhost
-    SockAddrInet port _ <- getSocketName us
-    ts <- socket AF_INET Stream defaultProtocol
-    setSocketOption ts ReuseAddr 1
-    bind ts $ SockAddrInet port localhost
-    listen ts 10
-    return (us, ts, port)
+openBoth = go (20 :: Int)
   where
+    go 0 = fail "FakeServer: no port free for both a datagram and a stream socket"
+    go n = do
+        us <- socket AF_INET Datagram defaultProtocol
+        bind us $ SockAddrInet 0 localhost
+        SockAddrInet port _ <- getSocketName us
+        ts <- socket AF_INET Stream defaultProtocol
+        setSocketOption ts ReuseAddr 1
+        taken <- E.try $ bind ts (SockAddrInet port localhost) >> listen ts 10
+        case taken of
+            Right () -> return (us, ts, port)
+            Left e -> do
+                close us
+                close ts
+                const (go (n - 1)) (e :: E.IOException)
     localhost = tupleToHostAddress (127, 0, 0, 1)
 
 serveUDP :: Socket -> IO ()
