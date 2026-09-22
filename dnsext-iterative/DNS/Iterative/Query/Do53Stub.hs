@@ -46,6 +46,19 @@ checkRespM' mixed q seqno resp
     | mixed, not (sameCase (qname q) (qname $ question resp)) = Just QuestionMismatch
     | otherwise = Nothing
 
+-- | Whether this is our answer with the case of the name folded: the
+--   identifier and the question are right and only the way the name is
+--   written is not.  A server which does that is one of those which
+--   does not keep the case a name arrived in, and mixing it is worth
+--   nothing against such a server.
+foldedTheCase :: Question -> Identifier -> DNSMessage -> Bool
+foldedTheCase q seqno resp = isNothing (checkRespM q seqno resp) && not (sameCase (qname q) (qname $ question resp))
+
+-- | The question with the name written in lower case, which is how it
+--   will come back from a server which folds.
+asFolded :: Question -> Question
+asFolded q = q{qname = fromWireLabels $ wireLabels $ qname q}
+
 caseNoEDNS :: Reply -> QueryControls -> Maybe QueryControls
 caseNoEDNS rply qctl0
     | rc == FormatErr && eh == NoEDNS && qctl /= qctl0 = Just qctl
@@ -124,15 +137,27 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
         let send bs = sblockingIO sock "send" (NSB.send sock bs)
             recv = sblockingIO sock "recv" (NSB.recv sock 2048)
         ident <- ractionGenId
-        sendQueryRecvAnswer ident qctl send recv
+        mrply <- sendQueryRecvAnswer q ident qctl send recv
+        case mrply of
+            Just rply -> return rply
+            {- The name came back folded, so this server does not keep
+               the case it was given and the mixture is worth nothing
+               against it.  Ask again as it likes to be asked, with a
+               fresh identifier: the one just used has been seen by
+               whoever sent that answer. -}
+            Nothing -> do
+                ractionLog Log.DEBUG Nothing ["udpResolver1: ", show rinfoIP, " does not keep the case of a name; asking again without mixing it"]
+                ident' <- ractionGenId
+                mplain <- sendQueryRecvAnswer (asFolded q) ident' qctl send recv
+                maybe (E.throwIO SequenceNumberMismatch) return mplain
 
-    sendQueryRecvAnswer ident qctl send recv = do
-        let qry = encodeQuery ident q qctl
+    sendQueryRecvAnswer q' ident qctl send recv = do
+        let qry = encodeQuery ident q' qctl
         _ <- send qry
         let tx = BS.length qry
-        recvAnswer ident recv tx
+        recvAnswer q' ident recv tx
 
-    recvAnswer ident recv tx = do
+    recvAnswer q' ident recv tx = do
         ans <- recv
         now <- ractionGetTime
         case decodeAt now ans of
@@ -145,22 +170,24 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
                      in ["udpResolver1.recvAnswer: decodeAt Left: ", show rinfoIP ++ ", ", dumpBS ans]
                 E.throwIO e
             Right msg
-                | checkResp (isJust ractionMixCase) q ident msg -> do
+                | checkResp (isJust ractionMixCase) q' ident msg -> do
                     let rx = BS.length ans
                     return $
-                        Reply
-                            { replyTag = tag
-                            , replyDNSMessage = msg
-                            , replyTxBytes = tx
-                            , replyRxBytes = rx
-                            }
+                        Just
+                            Reply
+                                { replyTag = tag
+                                , replyDNSMessage = msg
+                                , replyTxBytes = tx
+                                , replyRxBytes = rx
+                                }
+                | isJust ractionMixCase && foldedTheCase q' ident msg -> return Nothing
                 -- Just ignoring a wrong answer.
                 | otherwise -> do
                     ractionLog
                         Log.DEBUG
                         Nothing
                         ["udpResolver1.recvAnswer: checkResp error: ", show rinfoIP, ", ", show msg]
-                    recvAnswer ident recv tx
+                    recvAnswer q' ident recv tx
 
     open = do
         let host = show rinfoIP
@@ -202,32 +229,46 @@ vcResolver1 tag send recv ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0
   where
     logNoShort s = unless ractionShortLog (ractionLog Log.DEMO Nothing [s])
     ~qtag = queryTag q tag qctl0
-    go qctl = sendQueryRecvAnswer qctl
+    go qctl = do
+        mrply <- sendQueryRecvAnswer q qctl
+        case mrply of
+            Just rply -> return rply
+            {- As over UDP: a server which gives the name back folded
+               does not keep the case, so the mixture buys nothing
+               against it and the question goes again as it was written
+               in the first place. -}
+            Nothing -> do
+                ractionLog Log.DEBUG Nothing ["vcResolver1: the far end does not keep the case of a name; asking again without mixing it"]
+                mplain <- sendQueryRecvAnswer (asFolded q) qctl
+                maybe (E.throwIO SequenceNumberMismatch) return mplain
 
-    sendQueryRecvAnswer qctl = do
+    sendQueryRecvAnswer q' qctl = do
         -- Using a fresh identifier.
         ident <- ractionGenId
-        let qry = encodeQuery ident q qctl
+        let qry = encodeQuery ident q' qctl
         _ <- send qry
         let tx = BS.length qry
-        res <- recvAnswer ident tx
+        res <- recvAnswer q' ident tx
         return res
 
-    recvAnswer ident tx = do
+    recvAnswer q' ident tx = do
         bs <- recv
         now <- ractionGetTime
         case decodeAt now bs of
             Left e -> E.throwIO e
-            Right msg -> case checkRespM' (isJust ractionMixCase) q ident msg of
+            Right msg -> case checkRespM' (isJust ractionMixCase) q' ident msg of
                 Nothing ->
                     return $
-                        Reply
-                            { replyTag = tag
-                            , replyDNSMessage = msg
-                            , replyTxBytes = tx
-                            , replyRxBytes = BS.length bs
-                            }
-                Just err -> E.throwIO err
+                        Just
+                            Reply
+                                { replyTag = tag
+                                , replyDNSMessage = msg
+                                , replyTxBytes = tx
+                                , replyRxBytes = BS.length bs
+                                }
+                Just err
+                    | isJust ractionMixCase && foldedTheCase q' ident msg -> return Nothing
+                    | otherwise -> E.throwIO err
 
 withSockBucket :: Socket -> (Int -> IO a) -> IO a
 withSockBucket sock k = do
