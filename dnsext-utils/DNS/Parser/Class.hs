@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DNS.Parser.Class where
 
@@ -9,6 +10,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LB
 import Data.Char (chr)
 import Data.Functor
+import Data.Proxy (Proxy (..))
 import Data.Word (Word8)
 
 {- FOURMOLU_DISABLE -}
@@ -16,6 +18,13 @@ class ParserToken t where
     proceed :: t -> (Int, Int) -> (Int, Int)
     proceed _ (lin, col) = (lin, col + 1)
     {-# INLINEABLE proceed #-}
+    -- | What the second half of a position counts.  Characters, where
+    --   the parser reads them; a parser which reads what a lexer made
+    --   of them counts those instead and says so, an error at "column
+    --   60" of a six-line file being worse than no column at all.
+    posUnit :: Proxy t -> String
+    posUnit _ = "column"
+    {-# INLINEABLE posUnit #-}
 
 class ParserToken t => CaseCons t s | s -> t where
     caseCons :: (t -> s -> a) -> a -> s -> a
@@ -74,14 +83,14 @@ takeCons n s
     | n <= 0     = []
     | otherwise  = caseCons (\t ts -> t : takeCons (n-1) ts) [] s
 
-parseError :: MonadParser t s m => String -> m a
+parseError :: forall t s m a. MonadParser t s m => String -> m a
 parseError s = do
     (lin, col) <- getPos
     raiseParser $ showPos lin col ++ s
   where
     showPos lin col
         | lin < 0    = ""
-        | otherwise  = "line " ++ show lin ++ ", column " ++ show col ++ ": "
+        | otherwise  = "line " ++ show lin ++ ", " ++ posUnit (Proxy :: Proxy t) ++ " " ++ show col ++ ": "
 
 token :: MonadParser t s m => m t
 token = caseCons cons nil =<< getInput

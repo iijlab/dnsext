@@ -80,7 +80,22 @@ data Token
     | RSep
     deriving (Eq, Show)
 
-instance ParserToken Token
+{- FOURMOLU_DISABLE -}
+-- | The lexer puts an 'RSep' at the end of each record, which is where
+--   a line ends, so that is where the line number goes up.  Without
+--   this the instance was empty and took the default, which counts
+--   every token as a column and never leaves line one: an error in the
+--   sixth line of a zone file was reported at "line 1, column 60",
+--   which is a lie about the line and a lie about the column.
+--
+--   What is left of a character position by the time the lexer has
+--   been through it is nothing, so the second number counts tokens
+--   within the line and 'posUnit' says as much.
+instance ParserToken Token where
+    proceed RSep  (lin, _  )  = (lin + 1, 0)
+    proceed _     (lin, col)  = (lin, col + 1)
+    posUnit _                 = "token"
+{- FOURMOLU_ENABLE -}
 
 ---
 
