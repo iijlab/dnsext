@@ -1,0 +1,13 @@
+; An ordinary zone.  Nothing in it is wrong: what is wrong is the name
+; in the signer field of every signature over it, which says a zone
+; that did not sign them and whose key would not verify them.
+;
+; The parent carries a DS here, so a resolver has been told to check --
+; which is the difference between this and jp.sharp, where the same
+; signatures sit under a delegation with no DS and nobody looks.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1

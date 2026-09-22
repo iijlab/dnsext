@@ -56,6 +56,9 @@ extra-source-files:
     test/unsigned-record/*.args
     test/unsigned-record/*.conf
     test/unsigned-record/*.zone
+    test/signed-elsewhere/*.args
+    test/signed-elsewhere/*.conf
+    test/signed-elsewhere/*.zone
     test/sibling-glue/*.conf
     test/sibling-glue/*.zone
     test/qname-min/*.conf
@@ -100,6 +103,7 @@ test-suite spec
         PoisonedGlueSpec
         QnameMinSpec
         SiblingGlueSpec
+        SignedElsewhereSpec
         UnsignedRecordSpec
 
     default-language:   Haskell2010
