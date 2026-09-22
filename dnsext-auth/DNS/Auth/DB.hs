@@ -227,7 +227,20 @@ makeDBforSecondary zone (soarr : rrs0)
                 nsecdb
                     | null nsec3params = makeNSECDB nsecSigned
                     | otherwise = makeNSEC3DB zone nsecSigned
-            let allrr = [soarr] ++ rrs ++ [soarr] -- for AXFR
+            -- What a transfer out of here has to say, which is
+            -- whatever came in.  A zone may leave a secondary the same
+            -- way it arrived, and a server further down the line has
+            -- nothing else to go on: the NSECs and the signatures were
+            -- taken out of the list above to be indexed and have to go
+            -- back into this one, or the zone goes out unsigned under a
+            -- DS its parent still has.
+            --
+            -- RFC 5936 Sec 2.2 has the SOA first and last and nowhere
+            -- else, so the closing one is put on here and any which came
+            -- with the body -- an AXFR ends with one, a zone file does
+            -- not -- is left off.  Order is otherwise nobody's business.
+            let allrr = [soarr] ++ filter notSOA rrs ++ nsec ++ sigs ++ [soarr]
+                notSOA r = rrtype r /= SOA
                 mconv = case nsec3params of
                     [] -> Nothing
                     nsec3param : _ -> case fromRData $ rdata nsec3param of

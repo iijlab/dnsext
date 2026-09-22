@@ -38,6 +38,7 @@ test-suite spec
                         RFC4035Spec
                         RFC4592Spec
                         RFC5155Spec
+                        SecondarySpec
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
     build-depends:
