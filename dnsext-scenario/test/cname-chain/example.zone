@@ -1,0 +1,43 @@
+; A chain of CNAMEs, thirty of them, and a name at the end of it.
+; c1 points at c2, c2 at c3, and so on to c30, which points at the A
+; record.  How far a resolver follows such a chain is its own rule --
+; RFC 1034 Sec 3.6.2 says only that it must not loop for ever -- and
+; c1-c30.internot.jp is where that rule is asked about.
+;
+; See https://www.e-ontap.com/dns/samples.html
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+end	IN	A	192.0.2.30
+c1	IN	CNAME	c2.example.
+c2	IN	CNAME	c3.example.
+c3	IN	CNAME	c4.example.
+c4	IN	CNAME	c5.example.
+c5	IN	CNAME	c6.example.
+c6	IN	CNAME	c7.example.
+c7	IN	CNAME	c8.example.
+c8	IN	CNAME	c9.example.
+c9	IN	CNAME	c10.example.
+c10	IN	CNAME	c11.example.
+c11	IN	CNAME	c12.example.
+c12	IN	CNAME	c13.example.
+c13	IN	CNAME	c14.example.
+c14	IN	CNAME	c15.example.
+c15	IN	CNAME	c16.example.
+c16	IN	CNAME	c17.example.
+c17	IN	CNAME	c18.example.
+c18	IN	CNAME	c19.example.
+c19	IN	CNAME	c20.example.
+c20	IN	CNAME	c21.example.
+c21	IN	CNAME	c22.example.
+c22	IN	CNAME	c23.example.
+c23	IN	CNAME	c24.example.
+c24	IN	CNAME	c25.example.
+c25	IN	CNAME	c26.example.
+c26	IN	CNAME	c27.example.
+c27	IN	CNAME	c28.example.
+c28	IN	CNAME	c29.example.
+c29	IN	CNAME	c30.example.
+c30	IN	CNAME	end.example.

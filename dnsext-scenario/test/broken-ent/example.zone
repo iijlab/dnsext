@@ -1,0 +1,15 @@
+; a.b.c.example. is the only name here with any records.  c.example. and
+; b.c.example. exist because it does -- they are empty non-terminals,
+; and NOERROR with nothing in it is what each of them is owed.
+;
+; The configuration has the server deny them instead.  gouv.fr answered
+; an empty non-terminal that way and left a TXT record saying "broken
+; ENT was here"; what it costs depends on the resolver asking, and a
+; resolver which walks down a name one label at a time is the one with
+; most to lose.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+a.b.c	IN	A	192.0.2.1

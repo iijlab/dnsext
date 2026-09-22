@@ -1,0 +1,9 @@
+; A record for a name the zone does not have, put into the answer
+; section of everything the zone sends and signed by nothing.
+;
+; The zone it arrives from is signed and its parent carries a DS, so a
+; resolver knows every RRset in it is supposed to come with an RRSIG.
+; This one does not.  fake.ed448.mufj.jp and its neighbours are where a
+; signed zone serves data with no signature over it, among other ways
+; of being wrong about signatures.
+fake.example.	3600	IN	A	192.0.2.99

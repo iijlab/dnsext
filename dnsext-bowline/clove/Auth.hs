@@ -137,7 +137,7 @@ server env@Env{..} keys proto@Proto{..} zoneAlist = loop 0
                             _ -> sendReply sa $ seal $ refusal query
 
 response :: Proto -> Seal -> ZoneAlist -> SockAddr -> DNSMessage -> Domain -> IO ()
-response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlist of -- isSubDomainOf
+response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ question query) dom zoneAlist of -- isSubDomainOf
     Nothing -> sendReply sa $ seal $ refusal query
     Just (_, zoneref) -> do
         zone <- readIORef zoneref
@@ -148,8 +148,33 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneAlist dom zoneAlis
         -- names we simply know nothing about, and downstream caches
         -- would keep the denial.
         if zoneReady zone
-            then sendReply sa $ seal $ getAnswer (zoneDB zone) query
+            then sendReply sa $ seal $ spoofed (zoneSpoof zone) $ getAnswer (zoneDB zone) query
             else sendReply sa $ seal $ serverFailure query
+
+-- | Attaching to a reply what the zone was configured to send beyond
+--   what it has to say.  Nothing at all unless clove was started with
+--   @--insecure@, and nothing anybody would want in a server: a
+--   resolver is being handed a delegation or an address which is
+--   nobody's to give, so that a scenario can find out what it makes of
+--   one.  The records go on the end, after the zone's own, and are not
+--   signed -- neither is glue, which is why this cannot be seen through.
+spoofed :: Spoof -> DNSMessage -> DNSMessage
+spoofed Spoof{..} reply = attached $ denied reply
+  where
+    -- Only the rcode.  What the zone was going to say about the name is
+    -- left where it is, the signed proof of it included, so a signed
+    -- zone comes out saying one thing in the header and another below.
+    denied r
+        | qname (question r) `elem` spoofNxdomain = r{rcode = NXDomain}
+        | otherwise = r
+    attached r
+        | null spoofAnswer && null spoofAuthority && null spoofAdditional = r
+        | otherwise =
+            r
+                { answer = answer r ++ spoofAnswer
+                , authority = authority r ++ spoofAuthority
+                , additional = additional r ++ spoofAdditional
+                }
 
 -- | Someone says the zone has moved on (RFC 1996).  Whether to believe
 --   them is what allow-notify-key and allow-notify-addrs decide; the

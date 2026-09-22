@@ -7,4 +7,5 @@ packages:
   dnsext-dox
   dnsext-iterative
   dnsext-auth
+  dnsext-scenario
   dnsext-bowline

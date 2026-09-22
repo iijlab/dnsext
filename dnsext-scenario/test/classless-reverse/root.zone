@@ -1,0 +1,11 @@
+; The root delegates arpa. to the other server.  Everything from arpa.
+; down to the /24 lives there in one zone, so that the only cut which
+; matters here is the one below it.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+arpa.		IN	NS	ns.arpa.
+ns.arpa.	IN	{{AUTH_ADDR_RR}}
+arpa.		IN	DS	{{DS arpa}}

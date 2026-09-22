@@ -1,0 +1,14 @@
+; The middle zone.  It delegates sub.example. and carries no DS for it,
+; so everything below that delegation is insecure -- an unsigned island
+; underneath a signed chain, which is the ordinary way a zone opts out.
+;
+; sub.example. signs itself anyway.  Nothing says it may not; with no DS
+; above it, nobody has any reason to look.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+sub		IN	NS	ns.sub.example.
+ns.sub		IN	A	{{ROOT_ADDR}}

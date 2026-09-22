@@ -1,0 +1,19 @@
+; The root delegates two zones, and the first one's name server is a
+; name inside the second.
+;
+; ns.sibling. is below the sibling. delegation, so the root carries an
+; address for it: that is the glue sibling. needs.  The same record is
+; then the only address available for example., whose NS RRset names
+; that very host.  For example. it is not glue at all in the strict
+; sense -- it is not below example. -- but it is the parent's to hand
+; over, and a resolver has to decide what it is worth.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.sibling.
+example.	IN	DS	{{DS example}}
+sibling.	IN	NS	ns.sibling.
+ns.sibling.	IN	{{AUTH_ADDR_RR}}
+sibling.	IN	DS	{{DS sibling}}

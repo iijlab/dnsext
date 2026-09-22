@@ -1,0 +1,9 @@
+; The piece which was given away: the names the CNAMEs point at, held by
+; whoever holds those sixty-four addresses.
+$ORIGIN 0-63.6.42.150.in-addr.arpa.
+$TTL 3600
+@	IN	SOA	ns.0-63.6.42.150.in-addr.arpa. root.arpa. 1 3600 900 604800 3600
+@	IN	NS	ns.0-63.6.42.150.in-addr.arpa.
+ns	IN	A	{{ROOT_ADDR}}
+1	IN	PTR	one.example.
+2	IN	PTR	two.example.

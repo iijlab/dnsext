@@ -10,7 +10,7 @@ import Data.IP.RouteTable as IPRT
 import Network.Socket
 
 import DNS.Auth.Algorithm
-import DNS.Auth.DB (NSEC3Config (..))
+import DNS.Auth.DB (NSEC3Config (..), ZoneCheck (..))
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
@@ -36,8 +36,45 @@ data Signing = Signing
     -- ^ How many ZSKs are kept on disk.  Generating one beyond this
     --   removes the oldest.
     , signingN3P :: Maybe NSEC3Config -- Nothing for NSEC
+    , signingSigner :: Maybe Domain
+    -- ^ The zone to name in the signer field of the RRSIGs over this
+    --   zone's data, where it is to be a zone which did not sign them.
+    --   Only reachable with @--insecure@.
     }
     deriving (Eq, Show)
+
+-- | Records a zone puts into its responses which it has no business
+--   putting there: the additional section of a referral is where a
+--   resolver is handed addresses nobody is authoritative for, and the
+--   authority section is where it is handed a delegation, and the
+--   answer section is where an address rides along with the CNAME that
+--   points at it.  None of it is signed -- glue never is -- so a
+--   resolver cannot tell these from the real thing by looking.  What it
+--   does with them is the whole question, and this is how a scenario
+--   asks it.
+--
+--   Only reachable with @--insecure@.
+data Spoof = Spoof
+    { spoofAnswer :: [ResourceRecord]
+    , spoofAuthority :: [ResourceRecord]
+    , spoofAdditional :: [ResourceRecord]
+    , spoofNxdomain :: [Domain]
+    -- ^ Names to answer NXDOMAIN, whatever the right answer would have
+    --   been.  Everything else about the reply is left alone, the proof
+    --   of what is really there included, so a signed zone ends up
+    --   saying two things at once.
+    }
+    deriving (Eq, Show)
+
+-- | A zone which sends only what it should.
+noSpoof :: Spoof
+noSpoof =
+    Spoof
+        { spoofAnswer = []
+        , spoofAuthority = []
+        , spoofAdditional = []
+        , spoofNxdomain = []
+        }
 
 ----------------------------------------------------------------
 
@@ -48,6 +85,16 @@ data Zone = Zone
     { zoneName :: Domain
     , zoneSource :: Source
     , zoneSigning :: Maybe Signing
+    , zoneSignedChildren :: [Domain]
+    -- ^ The signed zones clove also serves which are delegated from
+    --   this one.  What the parent owes each of them is a DS.
+    , zoneSpoof :: Spoof
+    -- ^ What this zone attaches to its responses beyond what it has to
+    --   say.  Empty unless clove was started with @--insecure@.
+    , zoneCheck :: ZoneCheck
+    -- ^ Whether what a zone may not contain is refused.  'Unchecked'
+    --   only where clove was started with @--insecure@, which is for
+    --   showing a resolver a zone which is wrong on purpose.
     , zoneDB :: DB
     , zoneBatches :: IORef (Maybe [[ResourceRecord]])
     -- ^ How the zone is cut into messages for a transfer, once

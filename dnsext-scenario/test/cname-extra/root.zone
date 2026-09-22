@@ -1,0 +1,14 @@
+; The root delegates two zones away.  One of them has a CNAME pointing
+; into the other, which is the ordinary way a name in one zone is made
+; to stand for a name in another.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
+elsewhere.	IN	NS	ns.elsewhere.
+ns.elsewhere.	IN	{{AUTH_ADDR_RR}}
+elsewhere.	IN	DS	{{DS elsewhere}}

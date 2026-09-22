@@ -1,0 +1,11 @@
+; What example.'s server puts in the answer section of everything it
+; sends: an address for the name its CNAME points at.
+;
+; A server which holds the target zone as well would have this record to
+; hand and might send it as a kindness, saving the client a round trip.
+; This server does not hold it, and the address is not the one the zone
+; gives.  The record sits in the answer section beside the CNAME, where
+; it looks exactly like the kindness.
+;
+; f.uecac.jp is "CNAME に付随する A を信じてはいけない".
+www.elsewhere.	3600	IN	A	192.0.2.77

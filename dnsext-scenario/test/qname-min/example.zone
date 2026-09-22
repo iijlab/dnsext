@@ -1,0 +1,12 @@
+; One name, four labels below the zone apex.  c.example. and
+; b.c.example. exist only because something below them does: they are
+; empty non-terminals, with no records of their own.
+;
+; So a resolver walking down to a.b.c.example. has a choice about how
+; much of the name it puts in each question along the way.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+a.b.c	IN	A	192.0.2.1

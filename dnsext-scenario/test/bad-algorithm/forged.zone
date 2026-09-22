@@ -1,0 +1,21 @@
+; Two signatures which name an algorithm the zone does not have a key
+; for, written out as RFC 3597 Sec 5 generic RDATA because that is the
+; only way to put an RRSIG in a zone file with fields nobody would
+; compute: type covered A, algorithm 8 (RSA/SHA-256), two labels, an
+; original TTL of 3600, an expiration in 2030 and an inception in 2020,
+; key tag 12345, the signer example., and sixty-four bytes which are
+; not a signature of anything.
+;
+; The zone below is signed with an ED25519 key and has no other, so
+; there is no DNSKEY at example. with algorithm 8 to check either of
+; these with, whatever the bytes held.
+;
+; fake.example. is not in the zone, so this is all it ever has: an
+; address, and one signature which cannot be checked.
+fake.example.	3600	IN	A	192.0.2.99
+fake.example.	3600	IN	RRSIG	\# 91 0001080200000e1072957f005e0be1003039076578616d706c65000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40
+
+; www.example. is in the zone and is signed properly, so this is an
+; extra signature next to a good one.  RFC 4035 Sec 5.3.3 asks only
+; that one RRSIG verify, so the good one should still carry the RRset.
+www.example.	3600	IN	RRSIG	\# 91 0001080200000e1072957f005e0be1003039076578616d706c65000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40

@@ -1,0 +1,10 @@
+; Where the injection leads.  This server really is holding a zone by
+; this name and really will answer for it -- that is what makes the
+; injection worth anything -- but nobody delegated victim. to it, and
+; the root says the name is its own.
+$ORIGIN victim.
+$TTL 3600
+@	IN	SOA	ns.victim. root.victim. 1 3600 900 604800 3600
+@	IN	NS	ns.victim.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	198.51.100.1

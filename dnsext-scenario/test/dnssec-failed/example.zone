@@ -1,0 +1,17 @@
+; The parent: signed, and vouched for by the trust anchor the scenario
+; builds from the key clove generates for it.
+;
+; The delegation below carries a DS, so the child is a secure one and
+; the resolver is expected to check what it sends.  The DS is made up,
+; though, and matches no key the child has, which is what
+; dnssec-failed.mufj.jp is: a zone whose chain of trust is broken at the
+; first step.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+bogus		IN	NS	ns.bogus.example.
+ns.bogus	IN	{{AUTH_ADDR_RR}}
+bogus		IN	DS	12345 15 2 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20

@@ -1,0 +1,10 @@
+; The zone the root tells lies about.  It is signed, vouched for by a DS
+; in the root, and says that www.victim. is 198.51.100.1 -- which is
+; what a resolver should come back with, having no business believing
+; what the root said about a zone it had already delegated away.
+$ORIGIN victim.
+$TTL 3600
+@	IN	SOA	ns.victim. root.victim. 1 3600 900 604800 3600
+@	IN	NS	ns.victim.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	198.51.100.1

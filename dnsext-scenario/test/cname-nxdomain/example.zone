@@ -1,0 +1,19 @@
+; alias.example. is a CNAME for a name in another zone.  This server
+; knows nothing about that zone and is in no position to say whether the
+; name is there -- and says it is not.
+;
+; RFC 8020 Sec 2: where there is a chain of CNAMEs, the name which does
+; not exist is the last of the chain and not the name asked about.  So a
+; resolver reading this carefully learns nothing about alias.example.
+; from the header, and nothing it can use about www.elsewhere. either,
+; this server having no standing to say anything about that zone.
+;
+; c.uecac.jp and cname.small-is-beautiful.jp both ask 「この NXDOMAIN を
+; 信じてよい?」 of a response of this shape.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1
+alias	IN	CNAME	www.elsewhere.

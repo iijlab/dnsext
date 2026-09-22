@@ -1,0 +1,9 @@
+; The zone whose name server lives in another zone.  Its own apex says
+; the same thing the referral did, and it has no address to offer for
+; the name either: the name is not below this zone, so it could not
+; carry one that anybody should believe.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.sibling. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.sibling.
+www	IN	A	192.0.2.1

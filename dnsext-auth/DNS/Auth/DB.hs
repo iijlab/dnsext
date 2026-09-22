@@ -9,6 +9,7 @@ module DNS.Auth.DB (
     dbSOArr,
     getRRs,
     AuthException (..),
+    ZoneCheck (..),
     loadDB,
     NSEC3Config (..),
     nsec3Config,
@@ -31,6 +32,7 @@ module DNS.Auth.DB (
 ) where
 
 import qualified Control.Exception as E
+import Control.Monad (when)
 import qualified Data.ByteString.Short as Short
 import Data.Either
 import Data.Function (on)
@@ -132,11 +134,19 @@ instance E.Exception AuthException
 
 ----------------------------------------------------------------
 
+-- | Whether what a zone may not contain is refused.
+--
+--   'Unchecked' is for showing a resolver a zone which is wrong on
+--   purpose -- clove's @--insecure@ and nothing else -- so that what a
+--   resolver does with one can be found out.  Everything else uses
+--   'Checked'.
+data ZoneCheck = Checked | Unchecked deriving (Eq, Show)
+
 -- | This function throws 'AuthException'.
 loadDB :: Domain -> FilePath -> IO DB
 loadDB zone file = do
     rss <- loadZoneFile zone file
-    makeDBforSecondary zone $ filter (\r -> rrtype r /= DS) rss
+    makeDBforSecondary Checked zone $ filter (\r -> rrtype r /= DS) rss
 
 loadZoneFile :: Domain -> FilePath -> IO [ResourceRecord]
 loadZoneFile zone file = catMaybes . map fromResource <$> ZF.parseFile file zone
@@ -164,16 +174,17 @@ nsec3Config :: RD_NSEC3PARAM -> NSEC3Config
 nsec3Config n3p = NSEC3Config{nsec3Param = n3p, nsec3OptOut = False}
 
 makeDBforPrimary
-    :: Domain
+    :: ZoneCheck
+    -> Domain
     -> (Maybe NSEC3Config)
     -> Signer
     -> Signer
     -> [ResourceRecord]
     -> IO DB
-makeDBforPrimary _ _ _ _ [] = E.throwIO $ AuthException "No resource records"
+makeDBforPrimary _ _ _ _ _ [] = E.throwIO $ AuthException "No resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
+makeDBforPrimary check zone mn3p signKey signZone (soarr : rrs)
     | rrtype soarr /= SOA = E.throwIO $ AuthException "SOA does not exist"
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> E.throwIO $ AuthException "SOA is broken"
@@ -197,7 +208,7 @@ makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
                                 }
                     signZone True [n3prr]
             -- In-domain NS/DS should have NSEC.
-            node <- makeNode zone (ssSigned ++ n3pSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
+            node <- makeNode check zone (ssSigned ++ n3pSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
             (nsecSigned, nsecdb, mconv) <- case mn3p of
                 Nothing -> do
                     xs <- makeNSECforPrimary ttl signZone node
@@ -223,11 +234,11 @@ makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
             return db
 
 -- | This function throws 'AuthException'.
-makeDBforSecondary :: Domain -> [ResourceRecord] -> IO DB
-makeDBforSecondary _ [] = E.throwIO $ AuthException "No resource records"
+makeDBforSecondary :: ZoneCheck -> Domain -> [ResourceRecord] -> IO DB
+makeDBforSecondary _ _ [] = E.throwIO $ AuthException "No resource records"
 -- RFC 1035 Sec 5.2
 -- Exactly one SOA RR should be present at the top of the zone.
-makeDBforSecondary zone (soarr : rrs0)
+makeDBforSecondary check zone (soarr : rrs0)
     | rrtype soarr /= SOA = E.throwIO $ AuthException "SOA does not exist"
     | otherwise = case fromRData $ rdata soarr of
         Nothing -> E.throwIO $ AuthException "SOA is broken"
@@ -243,7 +254,7 @@ makeDBforSecondary zone (soarr : rrs0)
                 isSigned = groupAndSig sigDB is
                 ksSigned = groupAndSig sigDB ks
                 dsSigned = groupAndSig sigDB ds
-            node <- makeNode zone (ssSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
+            node <- makeNode check zone (ssSigned ++ isSigned ++ unsign ns ++ ksSigned ++ dsSigned ++ unsign gs)
             let nsecSigned = makeNSECforSecondary sigDB nsec
                 nsecdb
                     | null nsec3params = makeNSECDB nsecSigned
@@ -637,10 +648,10 @@ emptyNode dom =
         , nodeHasDS = False
         }
 
-makeNode :: Domain -> [RRSetSig] -> IO Node
-makeNode zone rrs0 = do
+makeNode :: ZoneCheck -> Domain -> [RRSetSig] -> IO Node
+makeNode check zone rrs0 = do
     let kvs = makeRRSetSigGroup zone rrs0
-    mapM_ checkRRSetSigGroup kvs
+    when (check == Checked) $ mapM_ checkRRSetSigGroup kvs
     return $ fromRRSetSigGroup zone kvs
 
 makeRRSetSigGroup :: Domain -> [RRSetSig] -> [((Domain, [Label]), [RRSetSig])]

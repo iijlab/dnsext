@@ -1,0 +1,14 @@
+; The parent: signed, and vouched for by the trust anchor the scenario
+; builds from the key clove generates for it.
+;
+; The delegation below carries NS and glue and no DS, which is what
+; makes insecure.example. an insecure delegation: whatever it signs its
+; data with, nothing here says a resolver should believe it.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+insecure	IN	NS	ns.insecure.example.
+ns.insecure	IN	{{AUTH_ADDR_RR}}

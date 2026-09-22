@@ -1,0 +1,9 @@
+; The delegation example.'s server injects.  example. is not the parent
+; of victim. -- nobody is, victim. having never been delegated -- so
+; this is a server saying where a zone lives when it has no standing to
+; say anything about it at all.
+;
+; A resolver which takes it moves every later question about victim.
+; off the root and onto whoever this names.  That is the shape of the
+; move injection flip.e-ontap.com is for.
+victim.	3600	IN	NS	ns.victim.

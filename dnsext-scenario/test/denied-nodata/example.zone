@@ -1,0 +1,18 @@
+; www.example. is in the zone and has an A.  Ask it for an AAAA and the
+; answer is NOERROR with nothing in it, and -- the zone being signed --
+; an NSEC saying which types the name does have.
+;
+; The configuration has the server deny the name instead.  The rcode is
+; all that changes: the NSEC still goes out, still signed, still saying
+; the name is there.  So the header and the proof below it say different
+; things, and only one of them is signed.
+;
+; other.example. is here to show that the server is otherwise sane and
+; that the deviation is exactly one name wide.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1
+other	IN	A	192.0.2.2

@@ -1,0 +1,128 @@
+cabal-version:      3.0
+name:               dnsext-scenario
+version:            0.0.0
+license:            BSD-3-Clause
+license-file:       LICENSE
+maintainer:         Kazu Yamamoto <kazu@iij.ad.jp>
+author:             Kazu Yamamoto
+synopsis:           Scenarios which put dnsext's servers in front of its resolver
+description:
+    Each scenario stands up clove as the primary for a world of its own
+    and bowline as the resolver for it, and asks what comes back.  What
+    is being tested is not a function but the two programs together,
+    over the wire, for cases the RFCs leave open -- a zone which is
+    wrong in a particular way, and what a resolver is supposed to make
+    of it.
+
+category:           Network
+build-type:         Simple
+-- A star is only allowed in the last part of a glob, so each scenario's
+-- directory is named.  A new scenario adds three lines here.
+extra-source-files:
+    CHANGELOG.md
+    test/diff-ns/*.conf
+    test/diff-ns/*.zone
+    test/deep-delegation/*.conf
+    test/deep-delegation/*.zone
+    test/denied-nodata/*.args
+    test/denied-nodata/*.conf
+    test/denied-nodata/*.zone
+    test/cache-ttl/*.conf
+    test/cache-ttl/*.zone
+    test/bad-algorithm/*.args
+    test/bad-algorithm/*.conf
+    test/bad-algorithm/*.zone
+    test/broken-ent/*.args
+    test/broken-ent/*.conf
+    test/broken-ent/*.zone
+    test/classless-reverse/*.conf
+    test/classless-reverse/*.zone
+    test/cname-nxdomain/*.args
+    test/cname-nxdomain/*.conf
+    test/cname-nxdomain/*.zone
+    test/cname-extra/*.args
+    test/cname-extra/*.conf
+    test/cname-extra/*.zone
+    test/cname-chain/*.conf
+    test/cname-chain/*.zone
+    test/dnssec-failed/*.conf
+    test/dnssec-failed/*.zone
+    test/ns-ttl/*.conf
+    test/ns-ttl/*.zone
+    test/optout-ent/*.conf
+    test/optout-ent/*.zone
+    test/orphan-glue/*.conf
+    test/orphan-glue/*.zone
+    test/injected-delegation/*.args
+    test/injected-delegation/*.conf
+    test/injected-delegation/*.zone
+    test/unsigned-record/*.args
+    test/unsigned-record/*.conf
+    test/unsigned-record/*.zone
+    test/signed-elsewhere/*.args
+    test/signed-elsewhere/*.conf
+    test/signed-elsewhere/*.zone
+    test/sibling-glue/*.conf
+    test/sibling-glue/*.zone
+    test/qname-min/*.conf
+    test/qname-min/*.zone
+    test/poisoned-glue/*.args
+    test/poisoned-glue/*.conf
+    test/poisoned-glue/*.zone
+    test/jp.sharp/*.args
+    test/jp.sharp/*.conf
+    test/jp.sharp/*.zone
+
+source-repository head
+    type:     git
+    location: https://github.com/iijlab/dnsext
+
+test-suite spec
+    type:               exitcode-stdio-1.0
+    main-is:            Spec.hs
+    build-tool-depends:
+        hspec-discover:hspec-discover,
+        dnsext-bowline:clove,
+        dnsext-bowline:bowline
+
+    hs-source-dirs:     test
+    other-modules:
+        BadAlgorithmSpec
+        BrokenEntSpec
+        CacheTtlSpec
+        CnameChainSpec
+        CnameExtraSpec
+        ClasslessReverseSpec
+        CnameNxdomainSpec
+        DeepDelegationSpec
+        DeniedNodataSpec
+        DiffNsSpec
+        DnssecFailedSpec
+        Harness
+        InjectedDelegationSpec
+        JpSharpSpec
+        NsTtlSpec
+        OptoutEntSpec
+        OrphanGlueSpec
+        PoisonedGlueSpec
+        QnameMinSpec
+        SiblingGlueSpec
+        SignedElsewhereSpec
+        UnsignedRecordSpec
+
+    default-language:   Haskell2010
+    ghc-options:        -Wall -threaded
+    build-depends:
+        base >=4 && <5,
+        bytestring,
+        directory,
+        dnsext-dnssec,
+        dnsext-do53,
+        dnsext-types,
+        filepath,
+        hspec,
+        network >=3.2.8 && <3.3,
+        process
+
+    if impl(ghc >=8)
+        default-extensions: Strict StrictData

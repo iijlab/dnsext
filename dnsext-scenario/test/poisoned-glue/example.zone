@@ -1,0 +1,8 @@
+; The zone a resolver is asking about when it is handed the poison.
+; There is nothing wrong with it.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1

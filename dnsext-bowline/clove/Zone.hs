@@ -6,6 +6,7 @@ module Zone (
     newZones,
     updateZone,
     findZoneAlist,
+    findZoneFor,
     toZoneAlist,
     zoneDirectory,
 ) where
@@ -46,10 +47,27 @@ import Types
 
 ----------------------------------------------------------------
 
-newZones :: Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
-newZones env keys zcs = do
-    checkDuplicate $ map (fromRepresentation . cnf_zone) zcs
-    mapM (newZone env keys) zcs
+newZones :: ZoneCheck -> Env -> TSIGKeys -> [ZoneConf] -> IO [Zone]
+newZones zcheck env keys zcs = do
+    checkDuplicate names
+    mapM (\zc -> newZone zcheck env keys (signedChildrenOf (fromRepresentation $ cnf_zone zc)) zc) zcs
+  where
+    names = map (fromRepresentation . cnf_zone) zcs
+    signed = [fromRepresentation (cnf_zone zc) | zc <- zcs, cnf_signing zc]
+    -- Which of the zones clove serves might be this one's to delegate.
+    -- Only the ones it is the nearest of: with example., a.example. and
+    -- b.a.example. all served, b.a.example. is a.example.'s to delegate
+    -- and not example.'s.  Nothing has been read at this point, so a
+    -- zone cut which clove does not serve cannot be seen from here and
+    -- the answer is only a candidate; 'checkChildDS' settles it against
+    -- what the zone turns out to say.
+    signedChildrenOf p =
+        [ c
+        | c <- signed
+        , c /= p
+        , c `isSubDomainOf` p
+        , not $ or [c /= m && c `isSubDomainOf` m | m <- names, m /= p, m `isSubDomainOf` p]
+        ]
 
 -- | Refusing to serve the same zone twice.  Two entries with the same
 --   name share a directory, so they overwrite each other's serial and
@@ -64,14 +82,15 @@ checkDuplicate zones = case nub (zones \\ nub zones) of
 
 ----------------------------------------------------------------
 
-newZone :: Env -> TSIGKeys -> ZoneConf -> IO Zone
-newZone env keys zoneconf@ZoneConf{..} = do
+newZone :: ZoneCheck -> Env -> TSIGKeys -> [Domain] -> ZoneConf -> IO Zone
+newZone zcheck env keys signedChildren zoneconf@ZoneConf{..} = do
     -- Whether the zone is signed is decided by the configuration alone.
     -- It must not depend on whether the initial load happens to succeed,
     -- otherwise a transient failure would silently turn the zone into an
     -- unsigned one for the whole life time of the process.  A bad signing
     -- configuration is fatal instead of being degraded into "unsigned".
-    msigning <- withZoneName $ readSigning env zone zoneconf
+    msigning <- withZoneName $ readSigning zcheck env zone zoneconf
+    spoof <- withZoneName $ readSpoof zcheck zoneconf
     notifyKey <- withZoneName $ namedKey keys "notify-key" cnf_notify_key
     allowNotifyKey <- withZoneName $ namedKey keys "allow-notify-key" cnf_allow_notify_key
     sourceKey <- withZoneName $ namedKey keys "source-key" cnf_source_key
@@ -103,7 +122,10 @@ newZone env keys zoneconf@ZoneConf{..} = do
     batches <- newIORef Nothing
     return $
         Zone
-            { zoneDB = emptyDB
+            { zoneSignedChildren = signedChildren
+            , zoneSpoof = spoof
+            , zoneCheck = zcheck
+            , zoneDB = emptyDB
             , zoneBatches = batches
             , zoneRRs = []
             , zoneReady = False
@@ -303,11 +325,45 @@ loadSourceWithSigning env z = case zoneSigning z of
         got <- loadSource env key zone (sinceSerial oldRRs mserial) source
         case got of
             Transferred rrs -> do
-                db <- makeDBforSecondary zone rrs
+                db <- makeDBforSecondary (zoneCheck z) zone rrs
                 saveSerial zoneDir $ soa_serial $ fst $ dbSOA db
                 loadedWith db rrs True
             Unchanged -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs True
             Unreachable -> return $ Loaded (zoneDB z) (zoneBatches z) oldRRs False
+
+    -- What a signed zone owes each signed zone below it which clove
+    -- also serves.  Without the DS the delegation is insecure, so the
+    -- child signs for nothing and a resolver has no way to tell the
+    -- child's data from anybody else's -- which is what
+    -- insecure.mufj.jp was.  clove can see both halves here, so it says
+    -- so rather than serving it.
+    checkChildDS rrs = do
+        refuse "delegated without a DS" [c | c <- ours, isCut c, not (hasDS c)]
+        refuse "served below this zone with nothing delegating them" [c | c <- ours, not (isCut c)]
+      where
+        refuse :: String -> [Domain] -> IO ()
+        refuse _ [] = return ()
+        refuse what cs =
+            E.throwIO $
+                AuthException $
+                    "signed zone(s) "
+                        ++ what
+                        ++ ": "
+                        ++ unwords (map toRepresentation cs)
+                        ++ " (--insecure serves it anyway)"
+        hasDS c = any (\r -> rrtype r == DS && rrname r == c) rrs
+        -- Where this zone hands off, its own apex aside.
+        cuts = [rrname r | r <- rrs, rrtype r == NS, rrname r /= zone]
+        isCut c = c `elem` cuts
+        -- Which of the candidates are this zone's business at all.
+        -- clove may hold a zone and its grandchild without holding what
+        -- is between them, and then the DS belongs in the zone clove
+        -- does not have -- where it could not see it in any case.  The
+        -- candidates were worked out from the zone names alone, before
+        -- any zone had been read, so this is the first point at which
+        -- that can be told.
+        ours = [c | c <- zoneSignedChildren z, not (cutAbove c)]
+        cutAbove c = or [c /= m && c `isSubDomainOf` m | m <- cuts]
 
     signed Signing{..} = do
         createDirectoryIfMissing True zoneDir
@@ -315,6 +371,7 @@ loadSourceWithSigning env z = case zoneSigning z of
         (answered, rrs0) <- reloadSource env key zone mserial source oldRRs
         (soa0, soarr0, rrs) <- checkRRs rrs0
         checkUnsigned rrs
+        when (zoneCheck z == Checked) $ checkChildDS rrs
         let soa
                 | byMySelf source = case mserial of
                     Nothing -> soa0 -- No serial file, serial from zone file
@@ -337,9 +394,10 @@ loadSourceWithSigning env z = case zoneSigning z of
         signKey <- makeSigner kskKeyConfig keyInfoKSK
         ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
             loadZSKInfo env fresh zoneDir signingZSKPreserve zskKeyConfig
-        signZone <- makeSigner zskKeyConfig keyInfoZSK1
+        signZone0 <- makeSigner zskKeyConfig keyInfoZSK1
+        let signZone = maybe signZone0 (`inNameOf` signZone0) signingSigner
         db <-
-            makeDBforPrimary zone signingN3P signKey signZone $
+            makeDBforPrimary (zoneCheck z) zone signingN3P signKey signZone $
                 soarr : rrs ++ [dnskeyrr, dnskeyrr0, dnskeyrr1, dnskeyrr2]
         -- Stored only after the zone has been built successfully so
         -- that a failure does not inflate the serial.
@@ -445,10 +503,79 @@ readSource ZoneConf{..}
     | Just a4 <- readMaybe cnf_source = FromUpstream4 a4 cnf_source_port
     | otherwise = FromFile cnf_source
 
-readSigning :: Env -> Domain -> ZoneConf -> IO (Maybe Signing)
-readSigning env dom ZoneConf{..}
+-- | The records a zone is to attach to its responses over and above
+--   what it has to say, where the configuration names files of them.
+--   Sending them is the whole point of the setting and there is no
+--   honest use for it, so it needs --insecure -- refused rather than
+--   ignored, as with 'readSigner'.
+--
+--   The files are read as zone files with the root for an origin, so
+--   every name in them is written out in full.  That is what they are
+--   for: a record a zone has any business sending is one below it, and
+--   these are the others.
+readSpoof :: ZoneCheck -> ZoneConf -> IO Spoof
+readSpoof zcheck ZoneConf{..} = do
+    answer <- section "spoof-answer" cnf_spoof_answer
+    authority <- section "spoof-authority" cnf_spoof_authority
+    additional <- section "spoof-additional" cnf_spoof_additional
+    nxdomain <- denied cnf_spoof_nxdomain
+    pure
+        Spoof
+            { spoofAnswer = answer
+            , spoofAuthority = authority
+            , spoofAdditional = additional
+            , spoofNxdomain = nxdomain
+            }
+  where
+    section _ "" = pure []
+    section setting file = insecureOnly setting file $ loadZoneFile "." file
+    -- The names to deny, whatever is really there.  Denying a name
+    -- which exists is not something a zone does by accident either, so
+    -- it is gated the same way and refused just as loudly.
+    denied :: [String] -> IO [Domain]
+    denied [] = pure []
+    denied ns =
+        insecureOnly "spoof-nxdomain" (unwords ns) $
+            pure $
+                map fromRepresentation ns
+    insecureOnly setting what action = case zcheck of
+        Checked ->
+            E.ioError $
+                E.userError $
+                    setting ++ ": " ++ what ++ ": sending what is not ours needs --insecure"
+        Unchecked -> action
+
+-- | The zone to name in the signer field of the RRSIGs, where the
+--   configuration says one.  Naming a zone which did not sign them is
+--   what insecure.mufj.jp served, so it is refused unless clove was
+--   started with --insecure -- refused rather than ignored, since a
+--   configuration which asks for it and does not get it is not a
+--   configuration anybody meant to write.
+readSigner :: ZoneCheck -> String -> IO (Maybe Domain)
+readSigner _ "" = return Nothing
+readSigner Checked s =
+    E.ioError $
+        E.userError $
+            "signer: " ++ s ++ ": naming another zone as the signer needs --insecure"
+readSigner Unchecked s = return $ Just $ fromRepresentation s
+
+-- | Signing in another zone's name: what is signed is signed as it
+--   always was, and the signer field of the RRSIG is then made to say a
+--   zone which did not sign it.  A resolver cannot verify the result
+--   with any key it can reach, which is the point.
+inNameOf :: Domain -> Signer -> Signer
+inNameOf name signer grouped rrs = map rename <$> signer grouped rrs
+  where
+    rename rs = rs{rrsetsigSig = renameRR <$> rrsetsigSig rs}
+    renameRR rr = case fromRData (rdata rr) of
+        Nothing -> rr
+        Just sig -> rr{rdata = toRData sig{rrsig_zone = name}}
+
+readSigning :: ZoneCheck -> Env -> Domain -> ZoneConf -> IO (Maybe Signing)
+readSigning zcheck env dom ZoneConf{..}
     | not cnf_signing = return Nothing
     | otherwise = do
+        signer <- readSigner zcheck cnf_signer
         checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
         checkPreserve cnf_zsk_preserve
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
@@ -495,6 +622,7 @@ readSigning env dom ZoneConf{..}
                 Signing
                     { signingKSKConfig = keyConfKSK
                     , signingZSKConfig = keyConfZSK
+                    , signingSigner = signer
                     , signingZSKRollover = cnf_zsk_rollover_duration
                     , signingZSKPreserve = cnf_zsk_preserve
                     , signingN3P = mn3p
@@ -648,6 +776,27 @@ findZoneAlist :: Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
 findZoneAlist dom alist = case filter (\(k, _) -> dom `isSubDomainOf` k) alist of
     [] -> Nothing
     xs -> Just $ maximumBy (compare `on` (labelsCount . fst)) xs
+
+-- | Finding the zone a question belongs to, which is not always the
+--   zone the name belongs to.
+--
+--   A DS lives on the upper side of the delegation, in the parent.  RFC
+--   4035 Sec 3.1.4.1 has a server which is authoritative for the child
+--   and not the parent answer \"no data\" for it, since it has no way of
+--   knowing better; a server which has the parent as well does know
+--   better and answers from there.  clove took the most specific zone
+--   whatever was asked, so where it was the primary for both halves it
+--   answered its own DS records away and made every delegation it
+--   served look unsigned.
+findZoneFor :: TYPE -> Domain -> ZoneAlist -> Maybe (Domain, IORef Zone)
+findZoneFor DS dom alist = case findZoneAlist dom above of
+    Just parent -> Just parent
+    -- No parent here: the child is all clove has, which is the case the
+    -- RFC has answer "no data" from the child's apex.
+    Nothing -> findZoneAlist dom alist
+  where
+    above = [e | e@(k, _) <- alist, k /= dom]
+findZoneFor _ dom alist = findZoneAlist dom alist
 
 toZoneAlist :: [Zone] -> IO ZoneAlist
 toZoneAlist zones = do

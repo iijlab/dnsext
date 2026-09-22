@@ -1,0 +1,9 @@
+; The other way round: the zone says an hour and the parent says two
+; seconds.
+$ORIGIN parentbrief.
+$TTL 3600
+@	3600	IN	SOA	ns.parentbrief. root.parentbrief. 1 3600 900 604800 3600
+@	3600	IN	NS	ns.parentbrief.
+ns	3600	IN	{{AUTH_ADDR_RR}}
+www	3600	IN	A	198.51.100.1
+other	3600	IN	A	198.51.100.2

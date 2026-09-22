@@ -144,7 +144,10 @@ jobs:
       shell: bash
       run: |
         set -x
-        for package in $(cat cabal.project | sed 's/packages://g' | sed 's/dnsext-bowline//g')
+        # dnsext-bowline and dnsext-scenario have no library to open a
+        # repl on: one is executables, the other a test suite which runs
+        # them.
+        for package in $(cat cabal.project | sed 's/packages://g' | sed 's/dnsext-bowline//g' | sed 's/dnsext-scenario//g')
         do
           DISABLE_V6_NS=1 cabal v2-repl $package               ${{ env.repl-doctest-param }}
         done

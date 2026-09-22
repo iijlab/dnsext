@@ -17,7 +17,7 @@ spec = describe "authoritative algorithm" $ do
     runIO $ runInitIO $ addResourceDataForDNSSEC
     db <- runIO $ loadDB zone "test/example.zone"
     doit db
-    db2 <- runIO (makeDBforSecondary zone $ dbAll db)
+    db2 <- runIO (makeDBforSecondary Checked zone $ dbAll db)
     doit db2
 
 doit :: DB -> Spec
