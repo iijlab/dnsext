@@ -61,9 +61,15 @@ norec_
 norec_ utimeout cxt wstat dnssecOK aservers name typ = do
     asps@(x:|xs) <- sequence [ (,) x <$> getBlockingStatOP | x <- aservers ]
     addTasks wstat [bstat | (_, bstat) <- x:xs]
+    {- The case of the name is mixed once for this query and every
+       server it is put to, so that an answer has to repeat the mixture
+       to be believed.  Where nothing is mixing it, the name goes as it
+       stands and the case which comes back is nobody's business. -}
+    name' <- maybe (pure name) ($ name) (mixCase_ cxt)
     let riActions bstatOP =
             defaultResolveActions
                 { ractionGenId        = idGen_ cxt
+                , ractionMixCase      = mixCase_ cxt
                 , ractionGetTime      = currentSeconds_ cxt
                 , ractionLog          = logLines_ cxt
                 , ractionShortLog     = shortLog_ cxt
@@ -86,7 +92,7 @@ norec_ utimeout cxt wstat dnssecOK aservers name typ = do
                 , renvConcurrent    = True -- should set True if multiple RIs are provided
                 , renvResolveInfos  = ris
                 }
-        q = Question name typ IN
+        q = Question name' typ IN
         doFlagSet
             | dnssecOK = FlagSet
             | otherwise = FlagClear

@@ -24,6 +24,7 @@ import System.Timeout (timeout)
 import Text.Printf (printf)
 
 -- dnsext-* deps
+import DNS.Do53.Internal (newConcurrentMixCase)
 import DNS.Iterative.Server as Server
 import qualified DNS.Log as Log
 import qualified DNS.RRCache as Cache
@@ -98,6 +99,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
             putStrLn $ "loading root-hints: " ++ path
             readRootHint path
     disable_v6_ns <- check_for_v6_ns
+    mix_case <- if cnf_mixed_case_query then Just <$> newConcurrentMixCase else pure Nothing
     (runLogger, putLines, stopLogger, reopenLog0) <- getLogger ruid conf tcache
     (runSSLKeyLogger, putSSLKeyLog, killSSLKeyLogger) <- getSSLKeyLogger ruid conf
     --
@@ -116,6 +118,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                         , logLines_ = putLines
                         , logDNSTAP_ = putDNSTAP
                         , disableV6NS_ = disable_v6_ns
+                        , mixCase_ = mix_case
                         , authPort_ = cnf_auth_port
                         , chaosZones_ = chaosZones
                         , localZones_ = getLocalZones cnf_local_zones

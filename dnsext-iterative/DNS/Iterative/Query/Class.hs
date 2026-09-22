@@ -111,6 +111,10 @@ data Env = Env
     , logLines_ :: Log.PutLines IO
     , logDNSTAP_ :: DNSTAP.Message -> IO ()
     , disableV6NS_ :: Bool
+    , mixCase_ :: Maybe (Domain -> IO Domain)
+    -- ^ How the name in a query to an authoritative server is written
+    --   before it is sent.  'Just' mixes its case and throws away an
+    --   answer which does not repeat the mixture (DNS-0x20).
     , authPort_ :: PortNumber
     -- ^ The port authoritative servers are asked on.  53 everywhere but
     --   in a test, where a world of one's own can be stood up without

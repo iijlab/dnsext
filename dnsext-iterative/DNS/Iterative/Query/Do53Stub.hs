@@ -33,8 +33,18 @@ import DNS.Iterative.Imports
 -- | Check response for a matching identifier and question.  If we ever do
 -- pipelined TCP, we'll need to handle out of order responses.  See:
 -- https://tools.ietf.org/html/rfc7766#section-7
-checkResp :: Question -> Identifier -> DNSMessage -> Bool
-checkResp q seqno = isNothing . checkRespM q seqno
+checkResp :: Bool -> Question -> Identifier -> DNSMessage -> Bool
+checkResp mixed q seqno = isNothing . checkRespM' mixed q seqno
+
+-- | 'checkRespM', and where the case of the name was mixed on purpose,
+--   that it has come back the way it went out.  'Eq' on a name folds
+--   case by design -- a name is the same name however it is written --
+--   so the echo has to be looked at separately or not at all.
+checkRespM' :: Bool -> Question -> Identifier -> DNSMessage -> Maybe DNSError
+checkRespM' mixed q seqno resp
+    | Just e <- checkRespM q seqno resp = Just e
+    | mixed, not (sameCase (qname q) (qname $ question resp)) = Just QuestionMismatch
+    | otherwise = Nothing
 
 caseNoEDNS :: Reply -> QueryControls -> Maybe QueryControls
 caseNoEDNS rply qctl0
@@ -135,7 +145,7 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
                      in ["udpResolver1.recvAnswer: decodeAt Left: ", show rinfoIP ++ ", ", dumpBS ans]
                 E.throwIO e
             Right msg
-                | checkResp q ident msg -> do
+                | checkResp (isJust ractionMixCase) q ident msg -> do
                     let rx = BS.length ans
                     return $
                         Reply
@@ -208,7 +218,7 @@ vcResolver1 tag send recv ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0
         now <- ractionGetTime
         case decodeAt now bs of
             Left e -> E.throwIO e
-            Right msg -> case checkRespM q ident msg of
+            Right msg -> case checkRespM' (isJust ractionMixCase) q ident msg of
                 Nothing ->
                     return $
                         Reply

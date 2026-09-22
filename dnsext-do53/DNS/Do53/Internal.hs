@@ -50,6 +50,9 @@ module DNS.Do53.Internal (
     -- * Generating identifier
     singleGenId,
     newConcurrentGenId,
+    newConcurrentMixCase,
+    mixCase,
+    sameCase,
 
     -- * Misc
     LookupEnv (..),

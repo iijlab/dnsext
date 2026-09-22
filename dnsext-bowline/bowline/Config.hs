@@ -43,6 +43,10 @@ data Config = Config
     , cnf_root_hints :: Maybe FilePath
     , cnf_cache_size :: Int
     , cnf_disable_v6_ns :: Bool
+    , cnf_mixed_case_query :: Bool
+    -- ^ Whether to mix the case of the name in a query to an
+    --   authoritative server and throw away an answer which does not
+    --   repeat the mixture (DNS-0x20).
     , cnf_auth_port :: PortNumber
     , cnf_hide_identity :: Bool
     , cnf_identity :: Maybe String
@@ -119,6 +123,7 @@ defaultConfig =
         , cnf_root_hints = Nothing
         , cnf_cache_size = 2 * 1024
         , cnf_disable_v6_ns = False
+        , cnf_mixed_case_query = False
         , cnf_auth_port = 53
         , cnf_hide_identity = False
         , cnf_identity = Nothing
@@ -228,6 +233,7 @@ showConfig2 conf =
     , field'_ "root hints" (maybe "<default>" id . cnf_root_hints)
     , field' "max cache size" cnf_cache_size
     , field' "disable queries to IPv6 NS" cnf_disable_v6_ns
+    , field' "mixed case query" cnf_mixed_case_query
     , field' "port of authoritative servers" cnf_auth_port
     , field'_ "domain insecures" (unwords . map show . cnf_domain_insecures)
     , field'_ "dns addrs" (unwords . cnf_dns_addrs)
@@ -298,6 +304,7 @@ makeConfig def conf = do
     cnf_root_hints <- get "root-hints" cnf_root_hints
     cnf_cache_size <- get "cache-size" cnf_cache_size
     cnf_disable_v6_ns <- get "disable-v6-ns" cnf_disable_v6_ns
+    cnf_mixed_case_query <- get "mixed-case-query" cnf_mixed_case_query
     cnf_auth_port <- get "auth-port" cnf_auth_port
     cnf_hide_identity <- get "hide-identity" cnf_hide_identity
     cnf_identity <- get "identity" cnf_identity
