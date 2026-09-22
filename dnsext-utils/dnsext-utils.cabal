@@ -93,6 +93,7 @@ test-suite spec
         dnsext-types,
         dnsext-utils,
         hspec,
+        network,
         network-run
 
     if impl(ghc >=8)
