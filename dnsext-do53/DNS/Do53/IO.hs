@@ -104,9 +104,32 @@ recvVCwith lim recvN = do
                     ++ show lim
                     ++ ") "
     bs <- recvN len
-    if BS.null bs
-        then E.throwIO $ DecodeError "message length is not enough"
-        else return bs
+    whole len bs
+  where
+    {- The whole of it, or none of it.  A read gives back what has
+       arrived, and a peer which sent the length and then went away
+       leaves some of the message behind: that is the beginning of a
+       message and not a short one, and the rest of it is never coming.
+       Handing it on only moves the failure to whoever decodes it, who
+       is in no position to say what went wrong and, on a connection
+       which is read in a loop, says it again for every message after
+       this one.
+
+       Nothing at all is the same thing said by a peer which went away
+       sooner, and includes the case of a length which did not arrive
+       either: `decodeVCLength` calls a prefix it could not read zero
+       octets long. -}
+    whole len bs
+        | BS.null bs = E.throwIO $ DecodeError "message length is not enough"
+        | BS.length bs /= len =
+            E.throwIO $
+                DecodeError $
+                    "message stopped short: should be "
+                        ++ show len
+                        ++ " octets, but "
+                        ++ show (BS.length bs)
+                        ++ " arrived"
+        | otherwise = return bs
 
 -- | Receiving data from a TCP socket.
 recvTCP :: Socket -> IO BS
