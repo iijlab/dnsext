@@ -4,6 +4,7 @@ module Auth (server, tcpAllowAXFR) where
 
 import DNS.Auth.Algorithm
 import DNS.Log
+import DNS.SEC
 import DNS.Types
 import DNS.Types.Decode
 import DNS.Types.Encode
@@ -159,8 +160,26 @@ response Proto{..} seal zoneAlist sa query dom = case findZoneFor (qtype $ quest
 --   one.  The records go on the end, after the zone's own, and are not
 --   signed -- neither is glue, which is why this cannot be seen through.
 spoofed :: Spoof -> DNSMessage -> DNSMessage
-spoofed Spoof{..} reply = attached $ denied reply
+spoofed Spoof{..} reply = attached $ stripped $ denied reply
   where
+    -- Types left out of the reply, with the RRSIGs over them, so that
+    -- what goes out says nothing where it should have said something.
+    -- An RRSIG is not held back for its own sake: it is held back for
+    -- the RRset it covers, there being no sense in a signature over
+    -- records which are not there.
+    stripped r
+        | null spoofStrip = r
+        | otherwise =
+            r
+                { answer = keep (answer r)
+                , authority = keep (authority r)
+                , additional = keep (additional r)
+                }
+    keep = filter (not . held)
+    held rr = rrtype rr `elem` spoofStrip || covers rr
+    covers rr = case fromRData (rdata rr) of
+        Just RD_RRSIG{..} -> rrsig_type `elem` spoofStrip
+        Nothing -> False
     -- Only the rcode.  What the zone was going to say about the name is
     -- left where it is, the signed proof of it included, so a signed
     -- zone comes out saying one thing in the header and another below.

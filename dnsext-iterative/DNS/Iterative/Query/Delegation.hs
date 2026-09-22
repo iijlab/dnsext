@@ -107,7 +107,20 @@ delegationWithCache zone dnskeys dom msg = do
     nullDS CheckDisabled   k =
         Verify.insecureLog (msgf "no DS, check disabled") $> k []
     nullDS NoCheckDisabled k = do
-        unsignedDelegationOrNoData $> ()
+        {- The witnesses the absence of the DS was proved by, if it was.
+           RFC 4035 Sec 5.2 has a resolver conclude that a child zone is
+           unsigned only from an authenticated denial of the DS RRset,
+           and an empty list is not one: there were no NSEC/NSEC3
+           records, or none of them proved anything about this name.
+           Going insecure on that would let anybody who can drop records
+           from a referral turn off validation for everything below it.
+
+           Only where this zone is signed, which is what a DNSKEY here
+           means.  An unsigned parent has no denial to give and is not
+           being asked for one. -}
+        witnesses <- unsignedDelegationOrNoData
+        when (null witnesses && not (null dnskeys)) $
+            Verify.bogusError (msgf "no DS, and nothing to say there is none")
         Verify.insecureLog (msgf "no DS, so no verification chain")
         cacheNoData dom DS (getRank rankedDS msg)
         caches $> k []
