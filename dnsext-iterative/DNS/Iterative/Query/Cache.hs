@@ -414,7 +414,12 @@ wildcardWitnessAction Delegation{..} qname qtype ncloser msg = witnessWildcardEx
         | otherwise  = Verify.getWildcardExpansion ncloser zone dnskeys rankedAuthority msg qname
                        nullK invalidK (noWitnessK "WildcardExpansion")
                        resultK resultK
-    nullK = pure []
+    {- RFC 4035 Sec 5.3.4, and RFC 5155 Sec 8.8 for NSEC3: a wildcard
+       answer is taken only with the record which says nothing closer
+       exists.  Only where this zone is signed, which a DNSKEY means. -}
+    nullK
+        | null dnskeys  = pure []
+        | otherwise     = failed $ "no NSEC/NSEC3 for wildcard expansion: " ++ qinfo
     invalidK s = failed $ "NSEC/NSEC3 WildcardExpansion: " ++ qinfo ++ " :\n" ++ s
     noWitnessK wn s = failed $ "cannot find " ++ wn ++ " witness: " ++ qinfo ++ " : " ++ s
     resultK  w rrsets _ = success w *> winfo (showWitness w) $> rrsets
