@@ -67,10 +67,13 @@ spec = aroundAll (withScenario "ns-ttl") $
             prim <- asked sc ThePrimary
             [n | (n, NS) <- prim] `shouldBe` []
 
-        -- The chain is whole in both zones, so nothing here turns on a
-        -- zone being treated as insecure.
-        it "validates both zones" $ \sc -> do
+        -- Both delegations carry no DS, so what comes back from below
+        -- them is not validated and nothing in the timing above turns
+        -- on DNSSEC.  The root still has to be able to say there is no
+        -- DS, which is a thing clove could not do when this scenario
+        -- was written -- it put a DS on both to get round it.
+        it "does not claim to have validated either zone" $ \sc -> do
             a <- ask sc "www.parentlong." A
             b <- ask sc "www.parentbrief." A
-            answerAuthentic a `shouldBe` True
-            answerAuthentic b `shouldBe` True
+            answerAuthentic a `shouldBe` False
+            answerAuthentic b `shouldBe` False

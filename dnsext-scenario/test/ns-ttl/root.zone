@@ -8,7 +8,9 @@
 ; it going back to the root after three seconds and the other will not.
 ;
 ; No DS on either: everything below is insecure, so the only thing
-; whose time runs out is the delegation itself.
+; whose time runs out is the delegation itself.  That wants a root which
+; can prove there is no DS, which is what clove learned to do; until
+; then this scenario put a DS on both and said otherwise here.
 $ORIGIN .
 $TTL 3600
 @			IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
@@ -16,7 +18,5 @@ $TTL 3600
 ns.root.		IN	A	{{ROOT_ADDR}}
 parentlong.		3600	IN	NS	ns.parentlong.
 ns.parentlong.		3600	IN	{{AUTH_ADDR_RR}}
-parentlong.		3600	IN	DS	{{DS parentlong}}
 parentbrief.		2	IN	NS	ns.parentbrief.
 ns.parentbrief.		2	IN	{{AUTH_ADDR_RR}}
-parentbrief.		2	IN	DS	{{DS parentbrief}}
