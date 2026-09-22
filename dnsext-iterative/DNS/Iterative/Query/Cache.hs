@@ -414,7 +414,20 @@ wildcardWitnessAction Delegation{..} qname qtype ncloser msg = witnessWildcardEx
         | otherwise  = Verify.getWildcardExpansion ncloser zone dnskeys rankedAuthority msg qname
                        nullK invalidK (noWitnessK "WildcardExpansion")
                        resultK resultK
-    nullK = pure []
+    {- No NSEC/NSEC3 records at all.  RFC 4035 Sec 5.3.4, and RFC 5155
+       Sec 8.8 for NSEC3, have a validator take a wildcard answer only
+       with the record which says nothing closer than the wildcard
+       exists -- without it the answer is any name's answer, including
+       one which has a record of its own it would be overriding.  A
+       witness which is there and proves nothing already fails, by
+       noWitnessK; one which is not there at all said no less.
+
+       Only where this zone is signed.  Without a DNSKEY there is no
+       denial to expect and none is asked for, as with the guards on
+       delegationDS and CD above. -}
+    nullK
+        | null dnskeys  = pure []
+        | otherwise     = failed $ "no NSEC/NSEC3 for wildcard expansion: " ++ qinfo
     invalidK s = failed $ "NSEC/NSEC3 WildcardExpansion: " ++ qinfo ++ " :\n" ++ s
     noWitnessK wn s = failed $ "cannot find " ++ wn ++ " witness: " ++ qinfo ++ " : " ++ s
     resultK  w rrsets _ = success w *> winfo (showWitness w) $> rrsets
