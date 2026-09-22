@@ -29,7 +29,19 @@ zipSigsets Impl{..} = zipSigsets_ nrangeTYPE nrangeTake
 zipSigsets_ :: TYPE -> (ResourceRecord -> Maybe r) -> [ResourceRecord] -> (String -> a) -> ([(ResourceRecord, r, [(RD_RRSIG, TTL)])] -> a) -> a
 zipSigsets_ nsecTy takeRange srrs leftK rightK = either leftK rightK $ zipSigs ranges sigsets
   where
-    ranges = sortOn (rrname . fst) [(rr, range) | rr <- srrs, rrtype rr == nsecTy, Just range <- [takeRange rr]]
+    {- One entry per owner name, as `sigsets` below is: the two are
+       walked side by side, so a name which appears twice among the
+       records and once among the signature sets puts them out of step
+       and the second record is reported as having no signature.  A name
+       carries one NSECx record, and a server which sends it twice has
+       sent no less than one -- RFC 2181 Sec 5 does not allow the
+       duplicate, and RFC 4034 Sec 6.3 drops it again when the RRset is
+       put in canonical form to be verified.  Two *different* records at
+       one name are a different matter and are left to fail: the
+       signature is over both, and whichever is kept will not verify
+       against it. -}
+    ranges = [r | r : _ <- groupBy ((==) `on` (rrname . fst)) sortedRanges]
+    sortedRanges = sortOn (rrname . fst) [(rr, range) | rr <- srrs, rrtype rr == nsecTy, Just range <- [takeRange rr]]
     sigsets = [(rrn, map snd g) | g@((rrn, _) : _) <- groupBy ((==) `on` fst) $ sortOn fst sigs]
     sigs =
         [ (rrname rr, (rd, rrttl rr))
