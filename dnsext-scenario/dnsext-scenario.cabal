@@ -53,6 +53,9 @@ extra-source-files:
     test/injected-delegation/*.args
     test/injected-delegation/*.conf
     test/injected-delegation/*.zone
+    test/unsigned-record/*.args
+    test/unsigned-record/*.conf
+    test/unsigned-record/*.zone
     test/sibling-glue/*.conf
     test/sibling-glue/*.zone
     test/qname-min/*.conf
@@ -97,6 +100,7 @@ test-suite spec
         PoisonedGlueSpec
         QnameMinSpec
         SiblingGlueSpec
+        UnsignedRecordSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded

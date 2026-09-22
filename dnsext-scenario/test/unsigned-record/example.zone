@@ -1,0 +1,8 @@
+; An ordinary signed zone.  fake.example. is not in it; what answers for
+; that name is attached from outside and carries no signature.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1
