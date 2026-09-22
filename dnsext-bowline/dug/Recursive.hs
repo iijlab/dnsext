@@ -43,6 +43,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Either
 import Data.IP (IP (..))
 import qualified Data.List as List
+import Data.Maybe (mapMaybe)
 import qualified Network.QUIC.Client as QUIC
 import Network.Socket (HostName, PortNumber)
 import qualified Network.TLS as TLS
@@ -312,9 +313,12 @@ saveResumption file lock tq name bs = do
     ok False = "NG"
 
 loadResumption :: FilePath -> IO [(NameTag, ByteString)]
-loadResumption file = map toKV . C8.lines <$> C8.readFile file
+loadResumption file = mapMaybe toKV . C8.lines <$> C8.readFile file
   where
-    toKV l = (toNameTag $ C8.unpack k, fromRight "" $ BS16.decode $ C8.drop 1 v)
+    -- A line which is not one of ours is passed over.  The file is one
+    -- this wrote, but it can be older than the program, or half-written
+    -- where the last run was stopped in the middle of appending.
+    toKV l = (\tag -> (tag, fromRight "" $ BS16.decode $ C8.drop 1 v)) <$> toNameTag (C8.unpack k)
       where
         (k, v) = BS.break (== 32) l
 

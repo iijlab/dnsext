@@ -231,8 +231,20 @@ eov :: MonadParser W8 s m => m ()
 eov = void (lookAhead $ choice [char '#', char ' ', char '\n']) <|> eof
 
 -- Trailing should be included in try to allow IP addresses.
+--
+-- The digits are read as an Integer and then have to fit: 'read' at Int
+-- takes as many digits as it is given and wraps what will not fit, so
+-- a number typed with one too many noughts came out as another number
+-- -- 99999999999999999999 as 7766279631452241919, and one past the top
+-- as a negative.  A setting nobody meant is worse than one nobody can
+-- parse, so this is not a number here rather than the wrong one.
 cv_int :: MonadParser W8 s m => m ConfValue
-cv_int = CV_Int . read <$> some digit <* eov
+cv_int = CV_Int <$> (fits =<< (read <$> some digit)) <* eov
+  where
+    fits :: MonadParser W8 s m => Integer -> m Int
+    fits n
+        | n <= toInteger (maxBound :: Int) = pure $ fromInteger n
+        | otherwise = parseError $ show n ++ " is too large a number"
 
 {- FOURMOLU_DISABLE -}
 cv_bool :: MonadParser W8 s m => m ConfValue

@@ -46,6 +46,7 @@ import Network.Socket (setSocketOption, SocketOption(..))
 #endif
 import System.Environment (lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
+import Text.Read (readMaybe)
 import Prelude
 
 import DNS.Do53.Id
@@ -267,13 +268,20 @@ nameTag ResolveInfo{..} proto =
 fromNameTag :: NameTag -> String
 fromNameTag NameTag{..} = show nameTagIP ++ "#" ++ show nameTagPort ++ "/" ++ nameTagProto
 
-toNameTag :: String -> NameTag
-toNameTag str =
-    NameTag
-        { nameTagIP = read ip
-        , nameTagPort = read port
-        , nameTagProto = proto
-        }
+-- | The tag 'fromNameTag' wrote, read back.  A string which is not one
+--   of those gives 'Nothing' rather than an error out of pure code: it
+--   comes from a file, and a file can be older than the program, or
+--   half-written, or edited by somebody.
+toNameTag :: String -> Maybe NameTag
+toNameTag str = do
+    ip' <- readMaybe ip
+    port' <- readMaybe port
+    pure
+        NameTag
+            { nameTagIP = ip'
+            , nameTagPort = port'
+            , nameTagProto = proto
+            }
   where
     (ip, portProto') = break ('#' ==) str
     portProto = drop 1 portProto'
