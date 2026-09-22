@@ -17,8 +17,8 @@
 --   fake.ed448.mufj.jp and its neighbours are where a signed zone is
 --   wrong about its signatures -- missing them, forging them, or naming
 --   an algorithm which does not match.  This is the first of the three;
---   the other two want an RRSIG written out in a zone file, which the
---   parser cannot read.
+--   "SignedElsewhereSpec" is the second and "BadAlgorithmSpec" the
+--   third.
 --
 --   See https://www.e-ontap.com/dns/samples.html
 module UnsignedRecordSpec (spec) where

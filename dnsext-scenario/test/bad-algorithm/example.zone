@@ -1,0 +1,12 @@
+; An ordinary signed zone, signed with an ED25519 key -- that being the
+; only key it has, and so the only algorithm anything in it can have
+; been signed with.
+;
+; fake.example. is not in it.  www.example. is, and is signed properly.
+; The signatures which name algorithm 8 arrive from outside.
+$ORIGIN example.
+$TTL 3600
+@	IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.example.
+ns	IN	{{AUTH_ADDR_RR}}
+www	IN	A	192.0.2.1

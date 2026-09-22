@@ -29,6 +29,9 @@ extra-source-files:
     test/denied-nodata/*.zone
     test/cache-ttl/*.conf
     test/cache-ttl/*.zone
+    test/bad-algorithm/*.args
+    test/bad-algorithm/*.conf
+    test/bad-algorithm/*.zone
     test/broken-ent/*.args
     test/broken-ent/*.conf
     test/broken-ent/*.zone
@@ -84,6 +87,7 @@ test-suite spec
 
     hs-source-dirs:     test
     other-modules:
+        BadAlgorithmSpec
         BrokenEntSpec
         CacheTtlSpec
         CnameChainSpec

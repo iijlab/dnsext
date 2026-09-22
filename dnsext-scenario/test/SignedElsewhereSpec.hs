@@ -18,6 +18,9 @@
 --   The pair is what the fake.ed448.mufj.jp family is about: a signed
 --   zone whose signatures do not hold up.  Which of the two a resolver
 --   is looking at is the difference between an answer and a refusal.
+--   "UnsignedRecordSpec" and "BadAlgorithmSpec" are the other two ways
+--   that family is wrong: no signature at all, and one naming an
+--   algorithm the zone has no key for.
 --
 --   See https://www.e-ontap.com/dns/samples.html
 module SignedElsewhereSpec (spec) where
