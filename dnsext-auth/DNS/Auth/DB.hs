@@ -440,7 +440,14 @@ makeNSEC3forPrimary ttl zone signZone n3p@RD_NSEC3PARAM{..} root = signZone Fals
             , rrclass = IN
             , rrtype = NSEC3
             , rrttl = ttl
-            , rdata = rd_nsec3 nsec3param_hashalg [] nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
+            , -- RFC 5155 Sec 6: the chain leaves out every delegation
+              -- which carries no DS, which is Opt-Out, and a zone using
+              -- it has to say so on each NSEC3 -- there being no other
+              -- way for a resolver to tell a name left out on purpose
+              -- from one forged away.  dnsext's own validator will not
+              -- take the proof of an insecure delegation without it
+              -- (see step_unsignedDelegation in DNS.SEC.Verify.NSEC3).
+              rdata = rd_nsec3 nsec3param_hashalg [OptOut] nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
             }
     skipUnderDelegated Node{..} = (xs, not nodeDelegated)
       where

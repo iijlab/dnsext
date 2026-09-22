@@ -34,6 +34,7 @@ test-suite spec
                         AlgorithmSpec
                         Common
                         DBSpec
+                        OptOutSpec
                         RFC4035Spec
                         RFC4592Spec
                         RFC5155Spec

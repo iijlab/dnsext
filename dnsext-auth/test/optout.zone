@@ -1,0 +1,24 @@
+; A root zone with two delegations, neither carrying a DS, and few
+; enough names that the NSEC3 chain has wide ranges in it.
+;
+; With no salt and no extra iterations the hashes fall like this:
+;
+;   .              bekjp7dgpvsjukll47bk43i3urmq4u2f
+;   parentbrief.   dfk7v8g3ugbvgb0o267hvsfptuv5h2oo   (left out: Opt-Out)
+;   ns.root.       j3ihac4chhortl4i66cskf33tjspt07s
+;   parentlong.    o9mqeo1srm7m4f8dku0toboo9jhovie6   (left out: Opt-Out)
+;   root.          t7fdr1jgljkjuc4nj7isp4pvupvo48tm   (an empty non-terminal)
+;
+; So the NSEC3 which covers parentbrief. is the one at the apex, which
+; is also the one which matches the closest encloser of it.  One record
+; has both jobs, and a proof which names it twice sends it twice.
+; parentlong. falls in another range and does not.
+$ORIGIN .
+$TTL 3600
+@			IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@			IN	NS	ns.root.
+ns.root.		IN	A	127.0.0.1
+parentbrief.		IN	NS	ns.parentbrief.
+ns.parentbrief.		IN	AAAA	::1
+parentlong.		IN	NS	ns.parentlong.
+ns.parentlong.		IN	AAAA	::1
