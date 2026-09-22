@@ -228,17 +228,27 @@ processDelegation db Question{..} acc0 reply rrs = makePositiveReply reply acc
                 -- RFC 4035
                 -- Sec 3.1.4.  Including DS RRs in a Response
                 Nothing -> lookupN qname db
-                -- RFC 5155
-                -- Sec 7.2.7.  Referrals to Unsigned Subzones
-                -- fixme
+                -- RFC 5155 Sec 7.2.7: Referrals to Unsigned Subzones
                 Just conv -> case decideNSEC3Proof qname db of
                     Nothing -> []
                     Just NSEC3Proof{..} ->
-                        lookupN (conv closestEncloser) db
-                            ++ lookupN (conv proofNextCloser) db
+                        unsignedProof (conv closestEncloser) (conv proofNextCloser)
         | otherwise = allrrs
     add = findAdditional db dnssecOK auth
     acc = updateAccumulator acc0 [] auth add NoErr
+    -- RFC 5155 Sec 7.2.7: the closest encloser has to be matched and
+    -- the next closer covered.  One NSEC3 can do both -- it is the only
+    -- one there is where nothing of the zone hashes between them -- and
+    -- then it goes in once: an RRset with the same record in it twice
+    -- is something RFC 2181 Sec 5 has nobody send, and a resolver
+    -- reading the section as RRsets cannot pair the records up with the
+    -- signatures.  Which one was found is told by the name it is at,
+    -- rather than by comparing records which carry a signature each.
+    unsignedProof closest next = case (lookupNSet closest db, lookupNSet next db) of
+        (Just x, Just y)
+            | rrsetsigName x == rrsetsigName y -> getRRs True x
+            | otherwise -> getRRs True x ++ getRRs True y
+        (mx, my) -> concatMap (getRRs True) $ catMaybes [mx, my]
 
 ----------------------------------------------------------------
 

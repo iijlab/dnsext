@@ -16,6 +16,7 @@ module DNS.Auth.DB (
     loadZoneFile,
     NSECDB,
     lookupN,
+    lookupNSet,
     lookupN',
     DomainRange (..),
     Result (..),
@@ -440,7 +441,14 @@ makeNSEC3forPrimary ttl zone signZone n3p@RD_NSEC3PARAM{..} root = signZone Fals
             , rrclass = IN
             , rrtype = NSEC3
             , rrttl = ttl
-            , rdata = rd_nsec3 nsec3param_hashalg [] nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
+            , -- RFC 5155 Sec 6: the chain leaves out every delegation
+              -- which carries no DS, which is Opt-Out, and a zone using
+              -- it has to say so on each NSEC3 -- there being no other
+              -- way for a resolver to tell a name left out on purpose
+              -- from one forged away.  dnsext's own validator will not
+              -- take the proof of an insecure delegation without it
+              -- (see step_unsignedDelegation in DNS.SEC.Verify.NSEC3).
+              rdata = rd_nsec3 nsec3param_hashalg [OptOut] nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
             }
     skipUnderDelegated Node{..} = (xs, not nodeDelegated)
       where
@@ -476,13 +484,19 @@ instance Ord DomainRange where
 
 newtype NSECDB = NSECDB (M.Map DomainRange RRSetSig) deriving (Eq, Show)
 
-lookupN :: Domain -> DB -> [ResourceRecord]
-lookupN dom db = case M.lookup key nsecdb of
-    Nothing -> []
-    Just n -> getRRs True n
+-- | The NSEC or NSEC3 whose range this name falls in, where there is
+--   one, as the set it is held in rather than as records.  A caller
+--   which asks twice can tell whether it got the same one back by the
+--   name it is at, which is cheaper and surer than looking at what is
+--   in it -- an NSEC3 carries a signature, and there is exactly one of
+--   them at any name.
+lookupNSet :: Domain -> DB -> Maybe RRSetSig
+lookupNSet dom db = M.lookup (Exact dom) nsecdb
   where
-    key = Exact dom
     NSECDB nsecdb = dbNsecMap db
+
+lookupN :: Domain -> DB -> [ResourceRecord]
+lookupN dom db = maybe [] (getRRs True) $ lookupNSet dom db
 
 lookupN' :: Domain -> DB -> [ResourceRecord]
 lookupN' dom db = case M.lookup key nsecdb of

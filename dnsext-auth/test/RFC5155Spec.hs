@@ -37,6 +37,18 @@ spec = describe "authoritative algorithm" $ do
 
 doit :: DB -> Spec
 doit db = do
+    -- RFC 5155 Sec 6: a zone which leaves its insecure delegations out
+    -- of the chain is using Opt-Out and has to say so, there being no
+    -- other way for a resolver to tell that a name it cannot find a
+    -- matching NSEC3 for was left out on purpose rather than forged
+    -- away.  dnsext's own validator will not take the proof without it.
+    it "says Opt-Out on the proof of an insecure delegation" $ do
+        let query = dnssecQuery{question = Question "mc.c.example." MX IN}
+            ans = getAnswer db query
+            n3s = [n3 | rr <- authority ans, rrtype rr == NSEC3, Just n3 <- [fromRData $ rdata rr]]
+        n3s `shouldSatisfy` not . null
+        n3s `shouldSatisfy` all (\n3 -> OptOut `elem` nsec3_flags n3)
+
     it "builds two entries for the last range" $ do
         lookupN "00000000000000000000000000000000.example." db `shouldSatisfy` include "t644ebqk9bibcna874givr6joj62mlhv.example." NSEC3
     it "passes the test in Appendix B.1 (Name Error)" $ do
