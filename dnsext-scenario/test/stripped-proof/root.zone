@@ -1,0 +1,13 @@
+; The root vouches for example. with a DS, so bowline has its key and is
+; meant to check everything it says.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
+intact.		IN	NS	ns.intact.
+ns.intact.	IN	{{AUTH_ADDR_RR}}
+intact.		IN	DS	{{DS intact}}

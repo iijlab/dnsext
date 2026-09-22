@@ -1,0 +1,12 @@
+; An ordinary signed zone with a wildcard in it.  absent.example. is not
+; here and neither is a TXT at www.example., so both are denials the
+; zone would otherwise prove; anything under wild.example. is answered
+; from the wildcard, which is an answer the zone would otherwise have to
+; say is one.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+*.wild		IN	A	192.0.2.7
