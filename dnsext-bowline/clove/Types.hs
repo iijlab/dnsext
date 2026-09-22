@@ -63,6 +63,12 @@ data Spoof = Spoof
     --   been.  Everything else about the reply is left alone, the proof
     --   of what is really there included, so a signed zone ends up
     --   saying two things at once.
+    , spoofStrip :: [TYPE]
+    -- ^ Types to leave out of every response, along with the RRSIGs
+    --   over them.  Taking the NSEC3s out of a referral is how a signed
+    --   zone is made to hand over a delegation with nothing to say
+    --   whether the child has a DS -- which is what an attacker who can
+    --   drop records from a message leaves behind.
     }
     deriving (Eq, Show)
 
@@ -74,6 +80,7 @@ noSpoof =
         , spoofAuthority = []
         , spoofAdditional = []
         , spoofNxdomain = []
+        , spoofStrip = []
         }
 
 ----------------------------------------------------------------
