@@ -4,6 +4,7 @@
 module DNS.DoX.Client (
     -- * SVCB information
     lookupSVCBInfo,
+    svcbResolveInfos,
     SVCBInfo (..),
     modifyForDDR,
 
