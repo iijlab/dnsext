@@ -16,6 +16,7 @@ module DNS.Auth.DB (
     loadZoneFile,
     NSECDB,
     lookupN,
+    lookupNSet,
     lookupN',
     DomainRange (..),
     Result (..),
@@ -483,13 +484,19 @@ instance Ord DomainRange where
 
 newtype NSECDB = NSECDB (M.Map DomainRange RRSetSig) deriving (Eq, Show)
 
-lookupN :: Domain -> DB -> [ResourceRecord]
-lookupN dom db = case M.lookup key nsecdb of
-    Nothing -> []
-    Just n -> getRRs True n
+-- | The NSEC or NSEC3 whose range this name falls in, where there is
+--   one, as the set it is held in rather than as records.  A caller
+--   which asks twice can tell whether it got the same one back by the
+--   name it is at, which is cheaper and surer than looking at what is
+--   in it -- an NSEC3 carries a signature, and there is exactly one of
+--   them at any name.
+lookupNSet :: Domain -> DB -> Maybe RRSetSig
+lookupNSet dom db = M.lookup (Exact dom) nsecdb
   where
-    key = Exact dom
     NSECDB nsecdb = dbNsecMap db
+
+lookupN :: Domain -> DB -> [ResourceRecord]
+lookupN dom db = maybe [] (getRRs True) $ lookupNSet dom db
 
 lookupN' :: Domain -> DB -> [ResourceRecord]
 lookupN' dom db = case M.lookup key nsecdb of

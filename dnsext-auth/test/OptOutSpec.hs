@@ -10,6 +10,7 @@
 module OptOutSpec where
 
 import Data.Either (fromRight)
+import Data.List (nub)
 import Test.Hspec
 
 import DNS.Auth.Algorithm
@@ -43,6 +44,17 @@ spec = describe "a referral to an unsigned subzone" $ do
         n3s `shouldSatisfy` not . null
         n3s `shouldSatisfy` all (\n3 -> OptOut `elem` nsec3_flags n3)
 
+    -- The interesting one: both jobs fall to the same record.
+    it "sends the one NSEC3 once when it has both jobs to do" $ do
+        let auth = authorityFor db "www.parentbrief."
+        auth `shouldSatisfy` (not . null)
+        auth `shouldBe` nub auth
+
+    -- And the other, where they do not, still carries both.
+    it "sends both where the two jobs fall to different records" $ do
+        let auth = authorityFor db "www.parentlong."
+        auth `shouldBe` nub auth
+        length (proofFor db "www.parentlong.") `shouldBe` 2
 
 authorityFor :: DB -> Domain -> [ResourceRecord]
 authorityFor db dom = authority $ getAnswer db dnssecQuery{question = Question dom A IN}
