@@ -10,6 +10,8 @@ module DNS.Auth.DB (
     getRRs,
     AuthException (..),
     loadDB,
+    NSEC3Config (..),
+    nsec3Config,
     makeDBforPrimary,
     makeDBforSecondary,
     emptyDB,
@@ -142,9 +144,28 @@ loadZoneFile zone file = catMaybes . map fromResource <$> ZF.parseFile file zone
 ----------------------------------------------------------------
 
 -- | This function throws 'AuthException'.
+-- | How a zone is to be signed with NSEC3.
+data NSEC3Config = NSEC3Config
+    { nsec3Param :: RD_NSEC3PARAM
+    , nsec3OptOut :: Bool
+    -- ^ Whether to leave out of the chain the delegations which carry
+    --   no DS.  It makes the chain shorter by as many records as there
+    --   are such delegations, which is worth having in a zone that is
+    --   mostly delegations and nothing at all in a zone that is not;
+    --   what it costs is that a name in one of those gaps can no longer
+    --   be denied, so somebody who can answer for the zone can put a
+    --   delegation in it.  RFC 9276 Sec 3.2 asks most zones not to, and
+    --   'nsec3Config' does not.
+    }
+    deriving (Eq, Show)
+
+-- | NSEC3 with these parameters and no Opt-Out.
+nsec3Config :: RD_NSEC3PARAM -> NSEC3Config
+nsec3Config n3p = NSEC3Config{nsec3Param = n3p, nsec3OptOut = False}
+
 makeDBforPrimary
     :: Domain
-    -> (Maybe RD_NSEC3PARAM)
+    -> (Maybe NSEC3Config)
     -> Signer
     -> Signer
     -> [ResourceRecord]
@@ -163,7 +184,7 @@ makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
             isSigned <- signZone True is
             ksSigned <- signKey True ks
             dsSigned <- signZone True ds
-            n3pSigned <- case mn3p of
+            n3pSigned <- case nsec3Param <$> mn3p of
                 Nothing -> return []
                 Just n3p -> do
                     let n3prr =
@@ -182,10 +203,10 @@ makeDBforPrimary zone mn3p signKey signZone (soarr : rrs)
                     xs <- makeNSECforPrimary ttl signZone node
                     let ndb = makeNSECDB xs
                     return (xs, ndb, Nothing)
-                Just n3p -> do
-                    xs <- makeNSEC3forPrimary ttl zone signZone n3p node
+                Just n3c -> do
+                    xs <- makeNSEC3forPrimary ttl zone signZone n3c node
                     let ndb = makeNSEC3DB zone xs
-                        conv = hashedDomain zone n3p
+                        conv = hashedDomain zone $ nsec3Param n3c
                     return (xs, ndb, Just conv)
             let allrr =
                     getRRs True (unsafeHead ssSigned)
@@ -435,10 +456,10 @@ makeNSEC3forPrimary
     :: TTL
     -> Domain
     -> Signer
-    -> RD_NSEC3PARAM
+    -> NSEC3Config
     -> Node
     -> IO [RRSetSig]
-makeNSEC3forPrimary ttl zone signZone n3p@RD_NSEC3PARAM{..} root = signZone False $ map pack zipped
+makeNSEC3forPrimary ttl zone signZone NSEC3Config{nsec3Param = n3p@RD_NSEC3PARAM{..}, nsec3OptOut = optOut} root = signZone False $ map pack zipped
   where
     packedNameTypes :: [(Domain, [TYPE])]
     packedNameTypes = foldNode skipUnderDelegated root
@@ -454,21 +475,27 @@ makeNSEC3forPrimary ttl zone signZone n3p@RD_NSEC3PARAM{..} root = signZone Fals
             , rrclass = IN
             , rrtype = NSEC3
             , rrttl = ttl
-            , -- RFC 5155 Sec 6: the chain leaves out every delegation
-              -- which carries no DS, which is Opt-Out, and a zone using
-              -- it has to say so on each NSEC3 -- there being no other
-              -- way for a resolver to tell a name left out on purpose
-              -- from one forged away.  dnsext's own validator will not
-              -- take the proof of an insecure delegation without it
-              -- (see step_unsignedDelegation in DNS.SEC.Verify.NSEC3).
-              rdata = rd_nsec3 nsec3param_hashalg [OptOut] nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
+            , -- RFC 5155 Sec 6: a chain which leaves out the
+              -- delegations carrying no DS is Opt-Out and has to say so
+              -- on each NSEC3 -- there being no other way for a
+              -- resolver to tell a name left out on purpose from one
+              -- forged away.  dnsext's own validator will not take the
+              -- proof of an insecure delegation without it (see
+              -- step_unsignedDelegation in DNS.SEC.Verify.NSEC3).
+              rdata = rd_nsec3 nsec3param_hashalg flags nsec3param_iterations nsec3param_salt nxt (RRSIG : types)
             }
+    flags
+        | optOut = [OptOut]
+        | otherwise = []
     skipUnderDelegated Node{..} = (xs, not nodeDelegated)
       where
         types = map rrsetsigType nodeRRs
         xs
-            -- fixme: OptOut flag
-            | nodeDelegated = if DS `elem` types then [(nodeName, types)] else []
+            -- A delegation with no DS is the one thing Opt-Out leaves
+            -- out.  Without it every name in the zone is in the chain,
+            -- which is what lets such a delegation be proved rather
+            -- than merely skipped over.
+            | nodeDelegated && not (DS `elem` types) = [(nodeName, types) | not optOut]
             | otherwise = [(nodeName, types)]
 
 makeNSECforSecondary

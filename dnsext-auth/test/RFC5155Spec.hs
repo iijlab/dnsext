@@ -26,7 +26,9 @@ spec = describe "authoritative algorithm" $ do
         let salt = fromRight (error "fromBase16") $ Opaque.fromBase16 "aabbccdd"
             n3p = RD_NSEC3PARAM Hash_SHA1 0 12 salt
 
-        makeDBforPrimary zone (Just n3p) doSign doSign (rrs ++ [dnskey])
+        -- The zone in the RFC's Appendix B is Opt-Out, which is what
+        -- the tests below are of.
+        makeDBforPrimary zone (Just (nsec3Config n3p){nsec3OptOut = True}) doSign doSign (rrs ++ [dnskey])
     doit db
     db2 <- runIO (makeDBforSecondary zone $ dbAll db)
     doit db2

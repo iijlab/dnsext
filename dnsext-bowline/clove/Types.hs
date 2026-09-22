@@ -10,6 +10,7 @@ import Data.IP.RouteTable as IPRT
 import Network.Socket
 
 import DNS.Auth.Algorithm
+import DNS.Auth.DB (NSEC3Config (..))
 import DNS.Log
 import DNS.SEC
 import DNS.SEC.Verify
@@ -34,7 +35,7 @@ data Signing = Signing
     , signingZSKPreserve :: Int
     -- ^ How many ZSKs are kept on disk.  Generating one beyond this
     --   removes the oldest.
-    , signingN3P :: Maybe RD_NSEC3PARAM -- Nothing for NSEC
+    , signingN3P :: Maybe NSEC3Config -- Nothing for NSEC
     }
     deriving (Eq, Show)
 

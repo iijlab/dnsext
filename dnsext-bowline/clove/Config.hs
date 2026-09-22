@@ -81,6 +81,14 @@ data ZoneConf = ZoneConf
     , cnf_zsk_size              :: Int
     , cnf_ds_digest             :: String
     , cnf_nsec3_hash            :: String
+    , cnf_nsec3_optout          :: Bool
+    -- ^ Whether to leave the delegations which carry no DS out of the
+    --   NSEC3 chain.  RFC 9276 Sec 3.2 asks most zones not to: it
+    --   shortens the chain by as many records as there are such
+    --   delegations, which is worth having in a zone that is mostly
+    --   delegations and nothing at all in a zone that is not, and what
+    --   it costs is that a name in one of the gaps can no longer be
+    --   denied.
     , cnf_rrsig_lifetime        :: Int
     , cnf_zsk_rollover_duration :: Int
     , cnf_zsk_preserve          :: Int
@@ -112,6 +120,7 @@ defaultZoneConf =
         , cnf_zsk_size              = 0
         , cnf_ds_digest             = "SHA-256"
         , cnf_nsec3_hash            = "SHA-1"
+        , cnf_nsec3_optout          = False
         , cnf_rrsig_lifetime        = 864000 -- 10 days
         , cnf_zsk_rollover_duration = 604800 -- 7 days
         , cnf_zsk_preserve          = 10
@@ -189,6 +198,7 @@ makeZoneConf def conf = do
     cnf_ksk_size              <- get "ksk-size"              cnf_ksk_size
     cnf_ds_digest             <- get "ds-digest"             cnf_ds_digest
     cnf_nsec3_hash            <- get "nsec3-hash"            cnf_nsec3_hash
+    cnf_nsec3_optout          <- get "nsec3-optout"          cnf_nsec3_optout
     cnf_rrsig_lifetime        <- get "rrsig-lifetime"        cnf_rrsig_lifetime
     cnf_zsk_rollover_duration <- get "zsk-rollover-duration" cnf_zsk_rollover_duration
     cnf_zsk_preserve          <- get "zsk-preserve"          cnf_zsk_preserve

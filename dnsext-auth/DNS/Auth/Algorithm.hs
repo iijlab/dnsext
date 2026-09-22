@@ -231,8 +231,17 @@ processDelegation db Question{..} acc0 reply rrs = makePositiveReply reply acc
                 -- RFC 5155 Sec 7.2.7: Referrals to Unsigned Subzones
                 Just conv -> case decideNSEC3Proof qname db of
                     Nothing -> []
-                    Just NSEC3Proof{..} ->
-                        unsignedProof (conv closestEncloser) (conv proofNextCloser)
+                    Just NSEC3Proof{..} -> case lookupN' (conv proofNextCloser) db of
+                        -- The delegation is in the chain, so its own
+                        -- NSEC3 says it is there and has no DS, and
+                        -- that is the whole proof.  Which is to say the
+                        -- zone is not Opt-Out -- read off the chain
+                        -- rather than out of a setting, since a
+                        -- secondary has the chain and not the setting.
+                        matched@(_ : _) -> matched
+                        -- It is not, so it was left out on purpose and
+                        -- what can be said is where it would have been.
+                        [] -> unsignedProof (conv closestEncloser) (conv proofNextCloser)
         | otherwise = allrrs
     add = findAdditional db dnssecOK auth
     acc = updateAccumulator acc0 [] auth add NoErr
