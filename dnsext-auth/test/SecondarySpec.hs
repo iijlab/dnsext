@@ -28,8 +28,8 @@ spec = describe "a zone which came in by transfer" $ do
         rrs <- loadZoneFile zone "test/example.zone"
         (_pub, _pri, dnskey, _ds, doSign) <-
             prepareDNSSEC $ defaultKeyConfig{keyConfZone = zone}
-        p <- makeDBforPrimary zone Nothing doSign doSign (rrs ++ [dnskey])
-        s <- makeDBforSecondary zone $ dbAll p
+        p <- makeDBforPrimary Checked zone Nothing doSign doSign (rrs ++ [dnskey])
+        s <- makeDBforSecondary Checked zone $ dbAll p
         pure (p, s)
 
     it "goes out again as it came in" $

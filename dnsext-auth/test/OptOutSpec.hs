@@ -36,7 +36,7 @@ spec = describe "a referral to an unsigned subzone" $ do
             let salt = fromRight (error "fromBase16") $ Opaque.fromBase16 ""
                 n3p = RD_NSEC3PARAM Hash_SHA1 0 0 salt
                 n3c = (nsec3Config n3p){nsec3OptOut = optOut}
-            makeDBforPrimary zone (Just n3c) doSign doSign (rrs ++ [dnskey])
+            makeDBforPrimary Checked zone (Just n3c) doSign doSign (rrs ++ [dnskey])
     db <- runIO $ build True
 
     -- Without this a resolver has no way to tell a name left out on
