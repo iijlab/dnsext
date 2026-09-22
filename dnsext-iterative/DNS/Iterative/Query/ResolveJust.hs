@@ -136,7 +136,7 @@ resolveExactDC dc n typ
     | otherwise = do
         anchor <- getAnchor
         liftIO $ TStat.eventLog ("iter.rec " ++ show dc ++ " " ++ show n ++ " " ++ show typ)
-        (mmsg, nss) <- iterative dc anchor $ DNS.superDomains' (delegationZone anchor) n
+        (mmsg, nss) <- iterative dc anchor $ stopAbove $ DNS.superDomains' (delegationZone anchor) n
         let reuseMsg msg
                 | typ == requestDelegationTYPE  = do
                       logLn Log.DEMO $ unwords ["resolve-exact: skip exact query", show n, show typ, "for last no-delegation"]
@@ -145,6 +145,18 @@ resolveExactDC dc n typ
         maybe (request nss) reuseMsg mmsg
   where
     mdc = maxNotSublevelDelegation
+    {- A DS belongs to the parent.  RFC 4034 Sec 5 has it appear only on
+       the parental side of a delegation and RFC 4035 Sec 2.4 has it not
+       appear at the zone's apex, so the zone the name delegates to is
+       the one server certain not to have it -- it answers NODATA, every
+       time, and a delegation whose servers have stopped answering makes
+       the question fail outright.  So for a DS the walk stops at the
+       delegation above the name rather than at the name's own. -}
+    stopAbove ds
+        | typ == DS = dropLast ds
+        | otherwise = ds
+    dropLast [] = []
+    dropLast ds = init ds
     getAnchor = do
         stub <- asksEnv stubZones_
         maybe refreshRoot (fillDelegationDNSKEY 0) $ Stub.lookupStub stub n
