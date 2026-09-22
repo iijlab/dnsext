@@ -99,6 +99,7 @@ test-suite spec
         LookupSpec
         MixCaseSpec
         IOSpec
+        RecvVCSpec
         UDPSpec
         VCSpec
 
