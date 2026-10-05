@@ -202,15 +202,11 @@ verifyRRSIGsorted now dnskey rrsig name typ cls sortedRDatas =
     verify impl = verifyRRSIGwith impl now dnskey rrsig name typ cls sortedRDatas
 
 {- FOURMOLU_DISABLE -}
--- | Verifying the signature (RRSIG) of RRSet using the public key (DNSKEY).
---   RRSet is canonicalized automatically.
+-- | `verifyRRSIG` exists only as an example of how to use `verifyRRSIGsorted`.
 --
---   An RRset which is a wildcard expansion was signed under the name it
---   was expanded from, not the name it is answered under, and RFC 4035
---   Sec 5.3.2 says how to get back to it: where the RRSIG Labels field
---   counts fewer labels than the owner name has, the name to put in the
---   signed data is \"*.\" and the rightmost that many labels.  It is the
---   same section as the original TTL, which was already applied here.
+--    Sorting is a one-time normalization step to obtain a canonical RRset.
+--    A full resolver normally handles already-normalized RRsets for efficiency,
+--    so this API is not suitable for its processing path.
 verifyRRSIG
     :: DNSTime
     -- ^ The current time
@@ -240,13 +236,8 @@ verifyRRSIG now zone dnskey owner rrsig@RD_RRSIG{..} rrs = do
                         ++ show rrset_dom
                         ++ " =/= "
                         ++ show owner
-            {- "Reconstructing the Signed Data"
-               https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.2
-               applying the wildcard owner name on verification.  More
-               labels in the RRSIG than in the owner name is what that
-               section calls a signature which "MUST NOT be used to
-               authenticate this RRset". -}
             signed_dom <-
+                -- For wildcard case
                 withWildcard rrset_dom rrsig_num_labels
                     (Left . ("verifyRRSIG: " ++)) (Right rrset_dom) (\wild _nextCloser -> Right wild)
             verifyRRSIGsorted now dnskey rrsig signed_dom typ cls sortedRDatas
