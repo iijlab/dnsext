@@ -9,6 +9,7 @@ module DNS.Iterative.Internal (
     noopWorkerStat,
     --
     newTestCache,
+    newTestEnv,
     runResolve,
     runResolveExact,
     runResolveJust,
@@ -21,6 +22,8 @@ module DNS.Iterative.Internal (
     --
     rrWithRRSIG,
     sepDNSKEY,
+    canonicalNSECx,
+    nsec3WithValid,
 ) where
 
 import DNS.Iterative.Query.API

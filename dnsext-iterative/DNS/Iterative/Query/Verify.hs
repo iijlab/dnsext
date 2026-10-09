@@ -13,6 +13,7 @@ module DNS.Iterative.Query.Verify (
     cases,
     casesCanoicalize,
     casesVerify,
+    canonicalNSECx,
 
     -- * RRSIG, sep DNSKEY verification, for tests
     rrWithRRSIG,
@@ -427,7 +428,7 @@ nsecWithValid
     -> ([NSEC_Range] -> [RRset] -> m () -> m a)
     -> m a
 {- FOURMOLU_ENABLE -}
-nsecWithValid = nsecxWithValid SEC.zipSigsNSEC "NSEC"
+nsecWithValid = nsecxWithValid SEC.zipSigsNSEC NSEC
 
 {- FOURMOLU_DISABLE -}
 nsec3WithValid
@@ -438,22 +439,22 @@ nsec3WithValid
     -> ([NSEC3_Range] -> [RRset] -> m () -> m a)
     -> m a
 {- FOURMOLU_ENABLE -}
-nsec3WithValid = nsecxWithValid SEC.zipSigsNSEC3 "NSEC3"
+nsec3WithValid = nsecxWithValid SEC.zipSigsNSEC3 NSEC3
 
 type WithZippedSigs r a = [RR] -> (String -> a) -> ([(RR, r, [(RD_RRSIG, TTL)])] -> a) -> a
 
 {- FOURMOLU_DISABLE -}
 nsecxWithValid
     :: MonadEnv m
-    => WithZippedSigs range (m a) -> String
+    => WithZippedSigs range (m a) -> TYPE
     -> [RD_DNSKEY]
     -> (msg -> ([RR], Ranking)) -> msg
     -> m a -> (String -> m a)
     -> ([range] -> [RRset] -> m () -> m a)
     -> m a
 {- FOURMOLU_ENABLE -}
-nsecxWithValid withZippedSigs tag dnskeys getRanked msg nullK invalidK validK0 =
-    nsecxWithValid' withZippedSigs tag dnskeys getRanked msg nullK ncK invalidK validK
+nsecxWithValid withZippedSigs nsecTy dnskeys getRanked msg nullK invalidK validK0 =
+    nsecxWithValid' withZippedSigs nsecTy dnskeys getRanked msg nullK ncK invalidK validK
   where
     ncK = invalidK . ("not canonical NSEC/NSEC3, something wrong: " ++)
     validK = uncurry validK0 . unzip
@@ -461,15 +462,15 @@ nsecxWithValid withZippedSigs tag dnskeys getRanked msg nullK invalidK validK0 =
 {- FOURMOLU_DISABLE -}
 nsecxWithValid'
     :: MonadEnv m
-    => WithZippedSigs range (m a) -> String
+    => WithZippedSigs range (m a) -> TYPE
     -> [RD_DNSKEY]
     -> (msg -> ([RR], Ranking)) -> msg
     -> m a -> (String -> m a) -> (String -> m a)
     -> ([(range, RRset)] -> m () -> m a)
     -> m a
 {- FOURMOLU_ENABLE -}
-nsecxWithValid' withZippedSigs tag dnskeys getRanked msg nullK ncK invalidK validK =
-    nsecxWithRanges withZippedSigs dnskeys getRanked msg nullK ncK runVerified
+nsecxWithValid' withZippedSigs nsecTy dnskeys getRanked msg nullK ncK invalidK validK =
+    nsecxWithRanges withZippedSigs nsecTy dnskeys getRanked msg nullK ncK runVerified
   where
     runVerified rps doCache
         | valid = validK rps doCache
@@ -479,7 +480,7 @@ nsecxWithValid' withZippedSigs tag dnskeys getRanked msg nullK ncK invalidK vali
         valid = all rrsetValid rrsets
 
         notValidErrors = header : esInvalid ++ esNoSig
-        header = tag ++ " verify errors: "
+        header = show nsecTy ++ " verify errors: "
         esInvalid = [ie | set <- rrsets, NotValidRRS (NV_Invalid ie) <- [rrsMayVerified set]]
         esNoSig = "no-sig RRset list:" : ["  " ++ showRRset set | set <- rrsets, NotValidRRS NV_NoSig <- [rrsMayVerified set]]
         showRRset RRset{..} = unwords [show rrsName, show rrsType, show rrsRDatas]
@@ -487,18 +488,19 @@ nsecxWithValid' withZippedSigs tag dnskeys getRanked msg nullK ncK invalidK vali
 {- FOURMOLU_DISABLE -}
 nsecxWithRanges
     :: MonadEnv m
-    => WithZippedSigs range (m a)
+    => WithZippedSigs range (m a) -> TYPE
     -> [RD_DNSKEY]
     -> (msg -> ([RR], Ranking)) -> msg
     -> m a -> (String -> m a)
     -> ([(range, RRset)] -> m () -> m a)
     -> m a
 {- FOURMOLU_ENABLE -}
-nsecxWithRanges withZippedSigs dnskeys getRanked msg nullK leftK rightK = do
+nsecxWithRanges withZippedSigs nsecTy dnskeys getRanked msg nullK leftK rightK = do
     now <- liftIO =<< asksEnv currentSeconds_
     withSection getRanked msg $ runSection now
   where
-    runSection now srrs rank = withZippedSigs srrs leftK $ runSigned now rank
+    runSection now srrs rank =
+        either leftK (\() -> withZippedSigs srrs leftK $ runSigned now rank) $ canonicalNSECx nsecTy srrs
 
     runSigned _now _rank [] = nullK
     runSigned now rank rs@(_ : _) = either leftK (runVerified rank) $ mapM (verify now) rs
@@ -513,6 +515,14 @@ nsecxWithRanges withZippedSigs dnskeys getRanked msg nullK leftK rightK = do
             Right $ withVerifiedRRset NoCheckDisabled now dnskeys (rrsName rrset) rrset sortedRDatas sigs ((,) range)
 
 ---
+
+{- Each NSECx record is verified on its own, so the RRsets a section
+   carries are checked here, as casesCanoicalize does for other types. -}
+canonicalNSECx :: TYPE -> [RR] -> Either String ()
+canonicalNSECx nsecTy srrs = mapM_ owner $ groupBy ((==) `on` rrname) $ sortOn rrname [rr | rr <- srrs, rrtype rr == nsecTy]
+  where
+    owner rrs = canonicalRRset rrs (Left . notCanonical) (\_ _ -> Right ())
+    notCanonical s = "not canonical " ++ show nsecTy ++ " RRset: " ++ s
 
 {- get not verified canonical RRset -}
 canonicalRRset :: [RR] -> (String -> a) -> (RRset -> [(Int, DNS.Builder ())] -> a) -> a
