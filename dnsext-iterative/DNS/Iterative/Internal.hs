@@ -22,6 +22,7 @@ module DNS.Iterative.Internal (
     --
     rrWithRRSIG,
     sepDNSKEY,
+    canonicalNSECx,
     nsec3WithValid,
 ) where
 

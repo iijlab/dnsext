@@ -5,6 +5,7 @@
 module NSECxSpec where
 
 import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
+import Data.Either (isRight)
 import Data.List (isInfixOf)
 import Test.Hspec
 
@@ -16,6 +17,7 @@ import qualified DNS.Types.Opaque as Opaque
 import DNS.Iterative.Internal (
     Env,
     MonadEnv (..),
+    canonicalNSECx,
     newTestEnv,
     noopWorkerStat,
     nsec3WithValid,
@@ -29,12 +31,34 @@ spec :: Spec
 spec = do
     runIO $ runInitIO addResourceDataForDNSSEC
 
+    -- Each NSECx record is verified on its own, as a one record RRset,
+    -- so nothing else looks at the RRsets a section carries.
+    describe "the NSECx RRsets of a section" $ do
+        it "takes a record of each owner name" $
+            canonicalNSECx NSEC3 [nsec3 "h1.example.", nsec3 "h2.example."]
+                `shouldSatisfy` isRight
+
+        it "refuses an NSEC3 RRset which holds its record twice" $
+            canonicalNSECx NSEC3 [nsec3 "h1.example.", nsec3 "h1.example."]
+                `shouldSatisfy` notCanonical
+
+        it "refuses an NSEC RRset which holds its record twice" $
+            canonicalNSECx NSEC [nsec "x.example.", nsec "x.example."]
+                `shouldSatisfy` notCanonical
+
+        it "leaves the other types of the section alone" $
+            canonicalNSECx NSEC3 [nsec3 "h1.example.", nsec "x.example.", nsec "x.example."]
+                `shouldSatisfy` isRight
+
     -- A section which holds one NSEC3 record twice is no canonical
     -- RRset, and the RRSIG over it is there.
     describe "an NSEC3 proof read out of a section" $
         it "fails over the RRset, not over a missing RRSIG" $ do
             e <- nsec3Section [nsec3 "h1.example.", sigNSEC3 "h1.example.", nsec3 "h1.example."]
             e `shouldSatisfy` isInfixOf "unique RData"
+
+notCanonical :: Either String a -> Bool
+notCanonical = either ("not canonical" `isInfixOf`) (const False)
 
 {- the reason nsec3WithValid gives for refusing a section -}
 nsec3Section :: [ResourceRecord] -> IO String
@@ -48,6 +72,9 @@ nsec3 :: Domain -> ResourceRecord
 nsec3 name =
     ResourceRecord name NSEC3 IN 3600 $
         rd_nsec3 Hash_SHA1 [] 0 (Opaque.fromByteString "") (Opaque.fromByteString "next") [A]
+
+nsec :: Domain -> ResourceRecord
+nsec name = ResourceRecord name NSEC IN 3600 $ rd_nsec "z.example." [A]
 
 sigNSEC3 :: Domain -> ResourceRecord
 sigNSEC3 name =
