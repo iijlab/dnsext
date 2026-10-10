@@ -164,7 +164,9 @@ withVerifiedRRset reqCD now maxTTL dnskeys0 wildcard RRset{..} sortedRDatas sigs
   where
     mayVerified_ NoCheckDisabled  = notValidNoSig
     mayVerified_ CheckDisabled    = notValidCheckDisabled
-    ttl = rrsTTL
+    {- The ceiling on how long this RRset may be kept.  Only the
+       smallest is taken from here on, so it holds for every case. -}
+    ttl = min maxTTL rrsTTL
     noverify = (ttl, mayVerified_ reqCD)
     invalid err = (ttl, notValidInvalid err)
     valid goodSigs = (minimum $ ttl : sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)

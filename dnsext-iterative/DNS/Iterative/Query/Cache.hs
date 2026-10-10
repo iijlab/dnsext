@@ -239,7 +239,7 @@ cacheNoRRSIG rrs0 rank = do
         insertRRSet <- asksEnv insert_
         maxTTL <- asksEnv maxCacheTTL_
         hrrs $ \dom typ cls ttl0 rds -> do
-            let ttl = ttl0
+            let ttl = min maxTTL ttl0
             plogLn Log.DEBUG $ unwords ["RRset:", show (((dom, typ, cls), ttl), rank), ' ' : show rds]
             liftIO $ Cache.noSig rds (pure ()) $ \crs -> insertRRSet (DNS.Question dom typ cls) ttl crs rank
     (_, sortedRRs) = unzip $ SEC.sortRDataCanonical rrs0
