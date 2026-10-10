@@ -43,6 +43,16 @@ spec = aroundAll (withScenario "stripped-proof") $
             answerRcode a `shouldBe` ServFail
             answerAuthentic a `shouldBe` False
 
+        -- Refusing it once is not enough: verifying the RRset is what
+        -- caches it, so every client after the refused one is handed
+        -- the answer with AD set.
+        it "cannot be believed the second time either" $ \sc -> do
+            _ <- ask sc "twice.wild.example." A
+            a <- ask sc "twice.wild.example." A
+            answerRcode a `shouldBe` ServFail
+            answerAuthentic a `shouldBe` False
+            rdataOf A a `shouldBe` []
+
         -- The same answer from a zone which sends what it signs is
         -- taken.  intact. is example. again with the setting left off.
         it "takes a wildcard answer which came with the record for it" $ \sc -> do
