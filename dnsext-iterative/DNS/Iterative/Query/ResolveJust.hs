@@ -399,9 +399,16 @@ queryDS dc src@Delegation{..} dom = do
     short <- asksEnv shortLog_
     let ainfo sas = ["require-ds: query", show zone, show DS] ++ [w | short, w <- "to" : [pprAddr sa | sa <- sas]]
     (msg, _) <- delegationFallbacks dc True (logLn Log.DEMO . unwords . ainfo) src dom DS
-    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) nullDS ncDS withDS
+    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) (nullDS msg) ncDS withDS
   where
-    nullDS = insecure "no DS, so no verify" $> []
+    {- RFC 4035 Sec 5.2: a child is unsigned only where the absence of
+       its DS was proved, and no witness is no proof.  Only where this
+       zone is signed, which a DNSKEY here means. -}
+    nullDS msg = do
+        witnesses <- unsignedDelegationOrNoDataAction zone dnskeys dom DS msg
+        when (null witnesses && not (null dnskeys)) $
+            bogus "no DS, and nothing to say there is none"
+        insecure "no DS, so no verify" $> []
     ncDS ncLog = ncLog *> bogus "not canonical DS"
     withDS rds = Verify.withResult DS msgf (\_ _ _ _ -> pure rds) rds  {- not reach for no-verify and check-disabled cases -}
     insecure ~vmsg = Verify.insecureLog (msgf vmsg)
