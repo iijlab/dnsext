@@ -13,6 +13,7 @@ module DNS.Iterative.Query.Verify (
     cases,
     casesCanoicalize,
     casesVerify,
+    withVerifiedRRset,
 
     -- * RRSIG, sep DNSKEY verification, for tests
     rrWithRRSIG,
