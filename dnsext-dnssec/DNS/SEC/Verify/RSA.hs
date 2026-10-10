@@ -10,6 +10,7 @@ module DNS.SEC.Verify.RSA (
     rsaDecodePriKey,
     rsaDecodePubKey,
     rsaEncodePubKey,
+    maxRSAKeyBits,
 )
 where
 
@@ -68,6 +69,12 @@ rsaEncodePriKey = BL.toStrict . serialise
 rsaDecodePriKey :: ByteString -> Either String PrivateKey
 rsaDecodePriKey = Right . deserialise . BL.fromStrict
 
+-- | Most bits of modulus, and of exponent, taken from a DNSKEY.
+--   RFC 5702 Sec 2.1 and 2.2 hold an RSA key to 4096 bits, and RFC 3110
+--   Sec 2 puts the same bound on the exponent.
+maxRSAKeyBits :: Int
+maxRSAKeyBits = 4096
+
 rsaDecodePubKey :: PubKey -> Either String PublicKey
 rsaDecodePubKey (PubKey o)
     | byteSize <= 0 =
@@ -76,6 +83,8 @@ rsaDecodePubKey (PubKey o)
         Left $
             "RSASHA.rsaDecodePubKey: size in bits is not multiple of 8 : bit-size = "
                 ++ show bitSize
+    | bitSize > maxRSAKeyBits = tooLarge "modulus" bitSize
+    | expBits > maxRSAKeyBits = tooLarge "exponent" expBits
     | otherwise =
         Right
             PublicKey
@@ -84,6 +93,15 @@ rsaDecodePubKey (PubKey o)
                 , public_e = os2ip $ Opaque.toByteString e
                 }
   where
+    tooLarge what bits =
+        Left $
+            "RSASHA.rsaDecodePubKey: "
+                ++ what
+                ++ " is larger than "
+                ++ show maxRSAKeyBits
+                ++ " bits: "
+                ++ show bits
+    expBits = Opaque.length e * 8
     (bitSize, e, n) = case Opaque.uncons o of
         Just (0, r0) -> fromJust $ do
             (x, r1) <- Opaque.uncons r0
