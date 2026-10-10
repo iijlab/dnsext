@@ -61,6 +61,17 @@ spec = aroundAll (withScenario "stripped-proof") $
             answerAuthentic a `shouldBe` True
             rdataOf A a `shouldBe` [rd_a "192.0.2.8"]
 
+        -- And keeps it: the witness is asked for before the RRset is
+        -- verified, and verifying is what caches it, so a wildcard
+        -- answer which has its record must still reach the cache.
+        it "keeps a wildcard answer which came with the record for it" $ \sc -> do
+            a <- ask sc "kept.wild.intact." A
+            answerAuthentic a `shouldBe` True
+            b <- ask sc "kept.wild.intact." A
+            answerRcode b `shouldBe` NoErr
+            answerAuthentic b `shouldBe` True
+            rdataOf A b `shouldBe` [rd_a "192.0.2.8"]
+
         -- With CD the querier has said it will check for itself.
         it "hands what it has over unchecked when the querier says CD" $ \sc -> do
             a <- askChecking sc "anything.wild.example." A
