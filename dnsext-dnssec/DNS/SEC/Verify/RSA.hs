@@ -34,7 +34,6 @@ import qualified DNS.Types.Opaque as Opaque
 import Codec.Serialise
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BL
-import Data.Maybe (fromJust)
 
 instance Serialise RSA.PublicKey
 instance Serialise RSA.PrivateKey
@@ -76,23 +75,29 @@ maxRSAKeyBits :: Int
 maxRSAKeyBits = 4096
 
 rsaDecodePubKey :: PubKey -> Either String PublicKey
-rsaDecodePubKey (PubKey o)
-    | byteSize <= 0 =
-        Left $ "RSASHA.rsaDecodePubKey: key size must be positive: " ++ show byteSize
-    | r /= 0 =
-        Left $
-            "RSASHA.rsaDecodePubKey: size in bits is not multiple of 8 : bit-size = "
-                ++ show bitSize
-    | bitSize > maxRSAKeyBits = tooLarge "modulus" bitSize
-    | expBits > maxRSAKeyBits = tooLarge "exponent" expBits
-    | otherwise =
-        Right
-            PublicKey
-                { public_size = byteSize
-                , public_n = os2ip $ Opaque.toByteString n
-                , public_e = os2ip $ Opaque.toByteString e
-                }
+rsaDecodePubKey (PubKey o) = maybe tooShort fields $ split o
   where
+    tooShort =
+        Left "RSASHA.rsaDecodePubKey: too short to hold the length of an exponent"
+    fields (bitSize, e, n)
+        | byteSize <= 0 =
+            Left $ "RSASHA.rsaDecodePubKey: key size must be positive: " ++ show byteSize
+        | r /= 0 =
+            Left $
+                "RSASHA.rsaDecodePubKey: size in bits is not multiple of 8 : bit-size = "
+                    ++ show bitSize
+        | bitSize > maxRSAKeyBits = tooLarge "modulus" bitSize
+        | expBits > maxRSAKeyBits = tooLarge "exponent" expBits
+        | otherwise =
+            Right
+                PublicKey
+                    { public_size = byteSize
+                    , public_n = os2ip $ Opaque.toByteString n
+                    , public_e = os2ip $ Opaque.toByteString e
+                    }
+      where
+        (byteSize, r) = bitSize `quotRem` 8
+        expBits = Opaque.length e * 8
     tooLarge what bits =
         Left $
             "RSASHA.rsaDecodePubKey: "
@@ -101,15 +106,17 @@ rsaDecodePubKey (PubKey o)
                 ++ show maxRSAKeyBits
                 ++ " bits: "
                 ++ show bits
-    expBits = Opaque.length e * 8
-    (bitSize, e, n) = case Opaque.uncons o of
-        Just (0, r0) -> fromJust $ do
+
+    {- RFC 3110 Sec 2: the exponent's length comes first, in one octet,
+       or in two behind a zero octet.  A key with fewer octets than that
+       has no length to read, which is Nothing and not an error. -}
+    split o0 = case Opaque.uncons o0 of
+        Just (0, r0) -> do
             (x, r1) <- Opaque.uncons r0
             (y, r2) <- Opaque.uncons r1
-            let elen = 256 * fromIntegral x + fromIntegral y
-            return $ divide elen r2
-        Just (l, r0) -> divide (fromIntegral l) r0
-        _ -> error "toPubKey_RSA"
+            pure $ divide (256 * fromIntegral x + fromIntegral y) r2
+        Just (l, r0) -> Just $ divide (fromIntegral l) r0
+        Nothing -> Nothing
 
     divide elen o' =
         let (e', n') = Opaque.splitAt elen o'
@@ -117,7 +124,6 @@ rsaDecodePubKey (PubKey o)
             , e'
             , n'
             )
-    (byteSize, r) = bitSize `quotRem` 8
 
 rsaEncodePubKey :: PublicKey -> PubKey
 rsaEncodePubKey PublicKey{..}
