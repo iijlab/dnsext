@@ -121,6 +121,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         CtlRecvSpec
+        MaxCacheTTLSpec
         QuerySpec
         SessionPropSpec
         SessionSpec
