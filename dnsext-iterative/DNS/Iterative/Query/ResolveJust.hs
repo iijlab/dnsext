@@ -427,11 +427,14 @@ refreshRoot = do
     checkLife
   where
     getRoot = do
+        hint <- primingHint
+        {- The hint carries the trust anchor and the root's verified
+           key, so a priming failure costs the list of root servers the
+           root signed, and nothing else. -}
         let fallback s = do
-                {- fallback to rootHint -}
                 logLn Log.WARN $ "refreshRoot: " ++ s
-                asksEnv rootHint_
-        either fallback return =<< rootPriming
+                pure hint
+        either fallback return =<< rootPrimingWith hint
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -442,8 +445,21 @@ steps of root priming
 3. verify NS RRset of root-domain with RRSIGa
  -}
 rootPriming :: MonadQuery m => m (Either String Delegation)
-rootPriming =
-    priming =<< fillDelegationDNSKEY 0 =<< getHint
+rootPriming = rootPrimingWith =<< primingHint
+
+-- | What a priming starts from: the root servers we were configured
+--   with, carrying the trust anchor, and the root's key fetched and
+--   verified against it.
+primingHint :: MonadQuery m => m Delegation
+primingHint = fillDelegationDNSKEY 0 =<< getHint
+  where
+    getHint = do
+        hint <- asksEnv rootHint_
+        anchor <- asksEnv rootAnchor_
+        pure hint{delegationDS = anchor}
+
+rootPrimingWith :: MonadQuery m => Delegation -> m (Either String Delegation)
+rootPrimingWith = priming
   where
     left s = Left $ "root-priming: " ++ s
     logResult delegationNS color s = do
@@ -477,10 +493,6 @@ rootPriming =
         anchor = delegationDS hint
         dnskeys = delegationDNSKEY hint
 
-    getHint = do
-        hint <- asksEnv rootHint_
-        anchor <- asksEnv rootAnchor_
-        pure hint{delegationDS = anchor}
     priming hint = do
         let short = False
         let zone = "."
