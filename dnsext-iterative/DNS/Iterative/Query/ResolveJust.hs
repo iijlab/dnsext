@@ -136,7 +136,7 @@ resolveExactDC dc n typ
     | otherwise = do
         anchor <- getAnchor
         liftIO $ TStat.eventLog ("iter.rec " ++ show dc ++ " " ++ show n ++ " " ++ show typ)
-        (mmsg, nss) <- iterative dc anchor $ DNS.superDomains' (delegationZone anchor) n
+        (mmsg, nss) <- iterative dc anchor $ stopAbove $ DNS.superDomains' (delegationZone anchor) n
         let reuseMsg msg
                 | typ == requestDelegationTYPE  = do
                       logLn Log.DEMO $ unwords ["resolve-exact: skip exact query", show n, show typ, "for last no-delegation"]
@@ -145,6 +145,14 @@ resolveExactDC dc n typ
         maybe (request nss) reuseMsg mmsg
   where
     mdc = maxNotSublevelDelegation
+    {- RFC 4034 Sec 5, RFC 4035 Sec 2.4: a DS lives on the parent's
+       side and never at an apex, so a DS is asked of the delegation
+       above the name, not of the name's own -}
+    stopAbove ds
+        | typ == DS = dropLast ds
+        | otherwise = ds
+    dropLast [] = []
+    dropLast ds = init ds
     getAnchor = do
         stub <- asksEnv stubZones_
         maybe refreshRoot (fillDelegationDNSKEY 0) $ Stub.lookupStub stub n

@@ -1,0 +1,11 @@
+; The root delegates example. and vouches for it with a DS made of the
+; key clove generated for that zone, so there is a whole chain down to
+; it and the DS this scenario asks about is one which exists.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
