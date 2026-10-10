@@ -352,16 +352,20 @@ getCheckEnabled = noCD <$> asksQP requestCD_
 -- >>> childSig = ResourceRecord "mew.org." RRSIG IN 3600 $ toRData $ RD_RRSIG DS RSASHA256 2 3600 (toDNSTime 4000000000) (toDNSTime 1700000000) 25488 "org." dummyDS_
 -- >>> signedDS = [childDS, childSig]
 --
--- A parent with no DS for the child says the child is insecure, so the
--- DS is filled with nothing at all -- whichever way it was left
--- unfilled, and without a query where it was filled already:
+-- A parent with a DS already filled in is not asked anything, whatever
+-- it would have said:
 --
--- >>> fmap isFilled <$> (runChild noDS $ mkChild $ NotFilledDS CachedDelegation)
--- Right True
--- >>> fmap isFilled <$> (runChild noDS $ mkChild $ NotFilledDS ServsChildZone)
--- Right True
 -- >>> fmap isFilled <$> (runChild noDS $ mkChild $ FilledDS [])
 -- Right True
+--
+-- A parent which answers with no DS and nothing to say there is none
+-- is not saying the child is insecure.  RFC 4035 Sec 5.2 wants an
+-- authenticated denial of the DS RRset, and an empty answer is not one:
+--
+-- >>> isBogus <$> (runChild noDS $ mkChild $ NotFilledDS CachedDelegation)
+-- True
+-- >>> isBogus <$> (runChild noDS $ mkChild $ NotFilledDS ServsChildZone)
+-- True
 --
 -- A DS which does not verify is an error.  The parent's key here cannot
 -- verify anything, which is what the real @org.@ DS of a signed
@@ -395,9 +399,16 @@ queryDS dc src@Delegation{..} dom = do
     short <- asksEnv shortLog_
     let ainfo sas = ["require-ds: query", show zone, show DS] ++ [w | short, w <- "to" : [pprAddr sa | sa <- sas]]
     (msg, _) <- delegationFallbacks dc True (logLn Log.DEMO . unwords . ainfo) src dom DS
-    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) nullDS ncDS withDS
+    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) (nullDS msg) ncDS withDS
   where
-    nullDS = insecure "no DS, so no verify" $> []
+    {- RFC 4035 Sec 5.2: a child is unsigned only where the absence of
+       its DS was proved, and no witness is no proof.  Only where this
+       zone is signed, which a DNSKEY here means. -}
+    nullDS msg = do
+        witnesses <- unsignedDelegationOrNoDataAction zone dnskeys dom DS msg
+        when (null witnesses && not (null dnskeys)) $
+            bogus "no DS, and nothing to say there is none"
+        insecure "no DS, so no verify" $> []
     ncDS ncLog = ncLog *> bogus "not canonical DS"
     withDS rds = Verify.withResult DS msgf (\_ _ _ _ -> pure rds) rds  {- not reach for no-verify and check-disabled cases -}
     insecure ~vmsg = Verify.insecureLog (msgf vmsg)

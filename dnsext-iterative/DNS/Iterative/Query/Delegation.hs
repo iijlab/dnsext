@@ -9,6 +9,7 @@ module DNS.Iterative.Query.Delegation (
     noDelegation,
     hasDelegation,
     mayDelegation,
+    unsignedDelegationOrNoDataAction,
 ) where
 
 -- GHC packages
