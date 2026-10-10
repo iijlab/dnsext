@@ -1,0 +1,5 @@
+; One more name server for the root, which the root never signed.  It
+; joins the NS RRset of "." and so the RRSIG over that RRset no longer
+; covers what arrives: the priming query is what breaks, and nothing
+; else.
+.	3600	IN	NS	ns.nobody.
