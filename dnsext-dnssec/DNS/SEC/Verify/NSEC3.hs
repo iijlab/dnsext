@@ -102,9 +102,8 @@ get_noData :: TYPE -> Logic NSEC3_NoData
 get_noData _ _ [] = Just $ Left "NSEC3.NoData: no prop-set"
 get_noData qtype _ (exists : _) = notElemBitmap <$> propMatch exists
   where
-    notElemBitmap m@(Matches ((_, RD_NSEC3{..}), _))
-        | qtype `elem` nsec3_types = Left $ "NSEC3.NoData: type bitmap has query type `" ++ show qtype ++ "`."
-        | otherwise = Right $ n3_noData m
+    notElemBitmap m@(Matches ((_, RD_NSEC3{..}), _)) =
+        maybe (Right $ n3_noData m) Left $ NRange.noDataRefusal "NSEC3.NoData" qtype nsec3_types
 
 get_unsignedDelegation :: Logic NSEC3_UnsignedDelegation
 get_unsignedDelegation = n3GetNonExistence $ \_ props -> step_unsignedDelegation props
@@ -134,9 +133,15 @@ n3GetNonExistence neStep getPropSet props = {- longest result -} msum $ map step
 
 step_nameError :: (Domain -> [RangeProp]) -> RangeProps -> Maybe (Either String NSEC3_NameError)
 step_nameError getPropSet =
-    n3StepNonExistence $ \nextCloser closest@(Matches (_, clname)) -> do
+    n3StepNonExistence $ \nextCloser closest@(Matches ((_, RD_NSEC3{..}), clname)) -> do
         let wildcardProps = getPropSet (fromString "*" <> clname)
-        Right . n3_nameError closest nextCloser <$> propCover wildcardProps
+            {- RFC 6840 Sec 4.1: the closest encloser is where the
+               name stops existing, and a delegation or a DNAME there
+               leaves the rest of it to somebody else. -}
+            nameError w =
+                maybe (Right $ n3_nameError closest nextCloser w) Left $
+                    NRange.encloserRefusal "NSEC3.NameError" nsec3_types
+        nameError <$> propCover wildcardProps
 
 step_unsignedDelegation :: RangeProps -> Maybe (Either String NSEC3_UnsignedDelegation)
 step_unsignedDelegation =
@@ -150,9 +155,9 @@ step_wildcardNoData :: TYPE -> (Domain -> [RangeProp]) -> RangeProps -> Maybe (E
 step_wildcardNoData qtype getPropSet =
     n3StepNonExistence $ \nextCloser closest@(Matches (_, clname)) -> do
         let wildcardProps = getPropSet (fromString "*" <> clname)
-            notElemBitmap m@(Matches ((_, RD_NSEC3{..}), _))
-                | qtype `elem` nsec3_types = Left $ "NSEC3.WildcardNoData: type bitmap has query type `" ++ show qtype ++ "`."
-                | otherwise = Right $ n3_wildcardNoData closest nextCloser m
+            notElemBitmap m@(Matches ((_, RD_NSEC3{..}), _)) =
+                maybe (Right $ n3_wildcardNoData closest nextCloser m) Left $
+                    NRange.noDataRefusal "NSEC3.WildcardNoData" qtype nsec3_types
         notElemBitmap <$> propMatch wildcardProps
 
 {- step to find non-existence of RRset.
