@@ -519,12 +519,14 @@ readSpoof zcheck ZoneConf{..} = do
     authority <- section "spoof-authority" cnf_spoof_authority
     additional <- section "spoof-additional" cnf_spoof_additional
     nxdomain <- denied cnf_spoof_nxdomain
+    strip <- stripped cnf_spoof_strip
     pure
         Spoof
             { spoofAnswer = answer
             , spoofAuthority = authority
             , spoofAdditional = additional
             , spoofNxdomain = nxdomain
+            , spoofStrip = strip
             }
   where
     section _ "" = pure []
@@ -538,6 +540,16 @@ readSpoof zcheck ZoneConf{..} = do
         insecureOnly "spoof-nxdomain" (unwords ns) $
             pure $
                 map fromRepresentation ns
+    -- The types to leave out, gated like the rest.  'readMaybe' so a
+    -- name which is not a type is refused rather than thrown over.
+    stripped :: [String] -> IO [TYPE]
+    stripped [] = pure []
+    stripped ts =
+        insecureOnly "spoof-strip" (unwords ts) $
+            mapM typeNamed ts
+    typeNamed t = case readMaybe t of
+        Just ty -> pure ty
+        Nothing -> E.ioError $ E.userError $ "spoof-strip: " ++ t ++ ": not a type"
     insecureOnly setting what action = case zcheck of
         Checked ->
             E.ioError $
