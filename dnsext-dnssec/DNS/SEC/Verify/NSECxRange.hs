@@ -52,6 +52,34 @@ zipSigsets_ nsecTy takeRange srrs leftK rightK = either leftK rightK $ zipSigs r
 
 ---
 
+{- | The delegation point as the /parent/ holds it: NS set, SOA clear.
+     RFC 6840 Sec 4.1 calls it an ancestor delegation.  The apex of the
+     child has both bits, so this does not catch it. -}
+ancestorDelegation :: [TYPE] -> Bool
+ancestorDelegation types = NS `elem` types && SOA `notElem` types
+
+{- | Why a bitmap at a name cannot prove a name below it is absent:
+     an ancestor delegation, or a DNAME, neither of which RFC 6840
+     Sec 4.1 lets speak for anything below. -}
+encloserRefusal :: String -> [TYPE] -> Maybe String
+encloserRefusal tag types
+    | ancestorDelegation types = Just $ tag ++ ": ancestor delegation, says nothing below the zone cut"
+    | DNAME `elem` types = Just $ tag ++ ": DNAME, says nothing about a subdomain"
+    | otherwise = Nothing
+
+{- | Why a bitmap at the name itself cannot prove there is no RRset of
+     this type: the type is there, a CNAME is there (RFC 6840 Sec 4.3),
+     or it is an ancestor delegation and the type is not the DS. -}
+noDataRefusal :: String -> TYPE -> [TYPE] -> Maybe String
+noDataRefusal tag qtype types
+    | qtype `elem` types = Just $ tag ++ ": type bitmap has query type `" ++ show qtype ++ "`."
+    | CNAME `elem` types = Just $ tag ++ ": type bitmap has `CNAME`, so this is not a NODATA."
+    | qtype /= DS && ancestorDelegation types =
+        Just $ tag ++ ": ancestor delegation, says nothing about `" ++ show qtype ++ "` below the zone cut"
+    | otherwise = Nothing
+
+---
+
 uniqueSorted :: Show refined => Impl range refined -> [refined] -> Either String ()
 uniqueSorted Impl{..} = uniqueSorted_ nrangeLower nrangeUpper
 
