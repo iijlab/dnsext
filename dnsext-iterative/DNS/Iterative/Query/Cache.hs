@@ -372,7 +372,13 @@ cacheAnswer d@Delegation{..} dom typ msg = do
         doVerify s owner = Verify.casesVerify reqCD dnskeys sigs rank owner crrset sortedRDatas (withX (vlf s) fromRDs)
         errWild s = Verify.bogusError $ vlf (show dom) $ "verification failed - " ++ s
         noWild = doVerify (show dom) dom <&> \rrs -> (rrs, [])
-        wild wname ncloser = (,) <$> doVerify (show wname ++ " => " ++ show dom) wname <*> wildcardWitnessAction d dom typ ncloser msg
+        {- The witness first: verifying the RRset is what puts it in
+           the cache, so asking afterwards refuses only the querier who
+           asked.  Neither order costs anything. -}
+        wild wname ncloser = do
+            ws   <- wildcardWitnessAction d dom typ ncloser msg
+            rrs  <- doVerify (show wname ++ " => " ++ show dom) wname
+            pure (rrs, ws)
     withX vl = Verify.withResult typ vl $ \_xs xRRset logK _cacheX -> logK $> [xRRset]
 
     rcode = DNS.rcode msg
@@ -414,7 +420,12 @@ wildcardWitnessAction Delegation{..} qname qtype ncloser msg = witnessWildcardEx
         | otherwise  = Verify.getWildcardExpansion ncloser zone dnskeys rankedAuthority msg qname
                        nullK invalidK (noWitnessK "WildcardExpansion")
                        resultK resultK
-    nullK = pure []
+    {- RFC 4035 Sec 5.3.4, and RFC 5155 Sec 8.8 for NSEC3: a wildcard
+       answer is taken only with the record which says nothing closer
+       exists.  Only where this zone is signed, which a DNSKEY means. -}
+    nullK
+        | null dnskeys  = pure []
+        | otherwise     = failed $ "no NSEC/NSEC3 for wildcard expansion: " ++ qinfo
     invalidK s = failed $ "NSEC/NSEC3 WildcardExpansion: " ++ qinfo ++ " :\n" ++ s
     noWitnessK wn s = failed $ "cannot find " ++ wn ++ " witness: " ++ qinfo ++ " : " ++ s
     resultK  w rrsets _ = success w *> winfo (showWitness w) $> rrsets
