@@ -23,6 +23,9 @@ data Impl range refined = forall bound . Ord bound =>
 
 ---
 
+-- | Pairing the NSECx records of a section with the RRSIGs over them.
+--   Requires each owner name to carry one NSECx record, as a canonical
+--   RRset does.
 zipSigsets :: Impl range refined -> [ResourceRecord] -> (String -> a) -> ([(ResourceRecord, range, [(RD_RRSIG, TTL)])] -> a) -> a
 zipSigsets Impl{..} = zipSigsets_ nrangeTYPE nrangeTake
 

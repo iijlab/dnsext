@@ -121,6 +121,7 @@ test-suite spec
     hs-source-dirs:     test
     other-modules:
         CtlRecvSpec
+        NSECxSpec
         QuerySpec
         SessionPropSpec
         SessionSpec
@@ -141,7 +142,8 @@ test-suite spec
         dnsext-utils,
         hspec,
         hspec-expectations,
-        stm
+        stm,
+        transformers
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
