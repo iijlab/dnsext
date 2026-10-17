@@ -24,6 +24,7 @@ module DNS.SEC.Internal (
     getDNSTime,
     rsaDecodePubKey,
     rsaEncodePubKey,
+    maxRSAKeyBits,
     rsaDecodePriKey,
     rsaEncodePriKey,
     ed25519toPubKey,
