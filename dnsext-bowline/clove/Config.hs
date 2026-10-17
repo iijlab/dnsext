@@ -116,6 +116,10 @@ data ZoneConf = ZoneConf
     -- ^ A zone file whose records are put into the additional section
     --   of every response this zone sends.  Only with --insecure: the
     --   additional section of a referral is where poisoned glue goes.
+    , cnf_spoof_strip          :: [String]
+    -- ^ Types this zone leaves out of every response, with the RRSIGs
+    --   over them.  Only with --insecure: a referral stripped of its
+    --   NSEC3s says nothing about whether the child has a DS.
     }
     deriving (Show)
 
@@ -153,6 +157,7 @@ defaultZoneConf =
         , cnf_spoof_answer         = ""
         , cnf_spoof_authority      = ""
         , cnf_spoof_additional     = ""
+        , cnf_spoof_strip          = []
         }
 
 ----------------------------------------------------------------
@@ -224,6 +229,7 @@ makeZoneConf def conf = do
     cnf_spoof_answer          <- get "spoof-answer"          cnf_spoof_answer
     cnf_spoof_authority       <- get "spoof-authority"       cnf_spoof_authority
     cnf_spoof_additional      <- get "spoof-additional"      cnf_spoof_additional
+    cnf_spoof_strip           <- get "spoof-strip"           cnf_spoof_strip
     cnf_signing               <- get "signing"               cnf_signing
     cnf_nsec3                 <- get "nsec3"                 cnf_nsec3
     cnf_zsk_algo              <- get "zsk-algo"              cnf_zsk_algo
