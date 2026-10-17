@@ -9,6 +9,7 @@ module DNS.Iterative.Query.Env (
     newReloadInfo,
     --
     cropMaxNegativeTTL,
+    cropMaxCacheTTL,
     cropFailureRcodeTTL,
     --
     setRRCacheOps,
@@ -116,6 +117,7 @@ newEmptyEnv = do
         , stubZones_ = mempty
         , negativeTrustAnchors_ = mempty
         , maxNegativeTTL_ = 3600
+        , maxCacheTTL_ = 86400
         , failureRcodeTTL_ = 180
         , maxQueryCount_ = 64
         , udpLimit_ = 1200
@@ -201,6 +203,16 @@ cropMaxNegativeTTL nttl
     | nttl > 21600  = 21600
     | nttl <    30  =    30
     | otherwise     = fromIntegral nttl
+{- FOURMOLU_ENABLE -}
+
+{- FOURMOLU_DISABLE -}
+cropMaxCacheTTL :: Integral a => a -> TTL
+cropMaxCacheTTL ttl
+    {- RFC 2181 Sec 8: "the TTL is a 31 bit unsigned number" -}
+    | ttl > 0x7fffffff  = 0x7fffffff
+    {- keeping an answer for less than this is hardly keeping it -}
+    | ttl <         30  =         30
+    | otherwise         = fromIntegral ttl
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
