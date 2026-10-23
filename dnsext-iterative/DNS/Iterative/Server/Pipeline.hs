@@ -229,10 +229,20 @@ encodeWithTC env peer reqEH res = handleUdpLimit (udpLimit_ env) reqEH res (hand
       the reply needs the omitted data, it can construct a query for that
       data and send that separately.
      " -}
+-- | An answer which exactly fills the buffer is sent whole.
+--
+-- >>> :seti -XOverloadedStrings
+-- >>> import Network.Socket (SockAddr (..))
+-- >>> rr n ty rd = ResourceRecord n ty IN 3600 rd
+-- >>> r0 = defaultResponse{answer = [rr "example." NS $ rd_ns "ns1.example."], additional = [rr "ns1.example." A $ rd_a "192.0.2.1"]}
+-- >>> fit lim = handleTC (PeerInfoUDP (SockAddrInet 53 0) []) (\r _ -> length $ additional r) lim r0
+-- >>> len = fromIntegral $ BS.length $ DNS.encode r0
+-- >>> (fit len, fit (len - 1))
+-- (1,0)
 handleTC :: Peer -> (DNSMessage -> BS -> a) -> Word16 -> DNSMessage -> a
 handleTC (PeerInfoUDP {}) h lim' r0
     | lim < BS.length bs1            = h tc (DNS.encode tc)  {- case: lim < len r1                               -}
-    | BS.length bs0 < lim            = h r0 bs0              {- case:                              len r0 <= lim -}
+    | BS.length bs0 <= lim           = h r0 bs0              {- case:                              len r0 <= lim -}
     | otherwise                      = h r1 bs1              {- case:       len r1 <= lim && lim < len r0        -}
   where
     ~bs0 = DNS.encode r0
