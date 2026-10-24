@@ -430,14 +430,17 @@ syncZone env zoneref = do
     go = do
         Zone{..} <- readIORef zoneref
         let refresh
-                -- Source is from file. No timeout.
+                -- Source is from file. No timeout, except to retry a reload
+                -- which failed before the signatures of the old one expire.
+                | zoneFromFile, zoneReady, zoneFailing = Just retry
                 | zoneFromFile = Nothing
                 | not zoneReady = Just 10 -- retry
                 -- RFC 1035 Sec 3.3.13: what comes after an attempt which
                 -- failed is the retry interval, which is the shorter of
                 -- the two and is there to get the zone back sooner.
-                | zoneFailing = Just $ fromIntegral $ soa_retry $ dbRD_SOA zoneDB
+                | zoneFailing = Just retry
                 | otherwise = Just $ fromIntegral $ soa_refresh $ dbRD_SOA zoneDB
+            retry = fromIntegral $ soa_retry $ dbRD_SOA zoneDB
             -- Key rollover.  A signed zone has to wake up for this even
             -- when its source never changes.
             rollover = signingZSKRollover <$> zoneSigning
