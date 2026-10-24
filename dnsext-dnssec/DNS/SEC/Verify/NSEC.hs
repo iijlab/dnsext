@@ -58,14 +58,20 @@ detect zone qtype qnames coverwild =
 ---
 
 get_nameError :: Logic NSEC_NameError
-get_nameError qnames coverwild = Right <$> (nsec_NameError <$> propCover qnames <*> propCover coverwild)
+get_nameError qnames coverwild = do
+    c@(Covers ((owner, RD_NSEC{..}), qn)) <- propCover qnames
+    w <- propCover coverwild
+    {- RFC 6840 Sec 4.1: where the name is under the covering record's
+       owner, that owner may not be a delegation or carry a DNAME. -}
+    pure $ case [e | qn `isSubDomainOf` owner, Just e <- [NRange.encloserRefusal "NSEC.NameError" nsec_types]] of
+        e : _ -> Left e
+        [] -> Right $ nsec_NameError c w
 
 get_noData :: TYPE -> Logic NSEC_NoData
 get_noData qtype qnames _coverwild = notElemBitmap <$> propMatch qnames
   where
-    notElemBitmap m@(Matches ((_, RD_NSEC{..}), _))
-        | qtype `elem` nsec_types = Left $ "NSEC.NoData: type bitmap has query type `" ++ show qtype ++ "`."
-        | otherwise = Right $ nsec_NoData m
+    notElemBitmap m@(Matches ((_, RD_NSEC{..}), _)) =
+        maybe (Right $ nsec_NoData m) Left $ NRange.noDataRefusal "NSEC.NoData" qtype nsec_types
 
 get_unsignedDelegation :: Domain -> Logic NSEC_UnsignedDelegation
 get_unsignedDelegation zone qnames _coverwild = do
@@ -81,9 +87,9 @@ get_wildcardExpansion qnames _coverwild = Right . nsec_WildcardExpansion <$> pro
 get_wildcardNoData :: TYPE -> Logic NSEC_WildcardNoData
 get_wildcardNoData qtype qnames _coverwild = do
     c <- propCover qnames
-    let notElemBitmap w@(Wilds ((_, RD_NSEC{..}), _))
-            | qtype `elem` nsec_types = Left $ "NSEC.WildcardNoData: type bitmap has query type `" ++ show qtype ++ "`."
-            | otherwise = Right $ nsec_WildcardNoData c w
+    let notElemBitmap w@(Wilds ((_, RD_NSEC{..}), _)) =
+            maybe (Right $ nsec_WildcardNoData c w) Left $
+                NRange.noDataRefusal "NSEC.WildcardNoData" qtype nsec_types
     notElemBitmap <$> propWild qnames
 
 ---
