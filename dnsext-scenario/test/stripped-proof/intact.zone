@@ -1,0 +1,7 @@
+; The same shape as example., sending everything it signs.
+$ORIGIN intact.
+$TTL 3600
+@		IN	SOA	ns.intact. root.intact. 1 3600 900 604800 3600
+@		IN	NS	ns.intact.
+ns		IN	{{AUTH_ADDR_RR}}
+*.wild		IN	A	192.0.2.8
