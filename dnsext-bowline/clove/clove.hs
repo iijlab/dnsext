@@ -296,7 +296,7 @@ tcpServer
     -> IO ()
 tcpServer env keys zoneAlist port TCPConf{..} addr =
     runTCPServerWithSettings settings tcpClientTimeout (Just addr) port $
-        \_tmgr alive s -> withClientSlot env tcpClients s $ do
+        \_tmgr alive s -> withClientSlot env tcpClients alive s $ do
             -- What a read brought back beyond the message it was
             -- asked for.  It belongs to the next one and has to be
             -- kept, or a peer which sends its next query without
@@ -327,7 +327,7 @@ tcpServer env keys zoneAlist port TCPConf{..} addr =
   where
     settings =
         defaultServerSettings
-            { settingsGracefulCloseTimeout = tcpDrainTimeout
+            { settingsGracefulCloseTimeout = 0 -- withClientSlot drains it
             , settingsOnException = mishap env tcpSeldom
             }
 
@@ -389,11 +389,14 @@ mishap env seldom mpeer se = case E.fromException se of
 --   first so that the peer hears immediately, rather than waiting out
 --   the close grace of a connection which is not going to say
 --   anything.
-withClientSlot :: Env -> Slots -> Socket -> IO () -> IO ()
-withClientSlot env clients s body = do
+--
+--   A connection served keeps its slot until it has been drained and
+--   closed, so that the count bounds the descriptors held.
+withClientSlot :: Env -> Slots -> T.Handle -> Socket -> IO () -> IO ()
+withClientSlot env clients alive s body = do
     got <- takeSlot clients
     case got of
-        Just release -> body `E.finally` release
+        Just release -> (body `E.finally` drain) `E.finally` release
         Nothing -> do
             peer <- trySync $ getPeerName s
             envPutLines
@@ -404,6 +407,10 @@ withClientSlot env clients s body = do
                     ++ either (const "") (\sa -> ", from " ++ show sa) peer
                 ]
             void $ trySync $ shutdown s ShutdownSend
+  where
+    drain = do
+        T.pause alive
+        void $ trySync $ gracefulClose s tcpDrainTimeout
 
 ----------------------------------------------------------------
 
