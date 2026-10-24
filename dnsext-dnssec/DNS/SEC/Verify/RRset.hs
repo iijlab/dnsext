@@ -88,6 +88,12 @@ sortRDataCanonical rrs =
 {- FOURMOLU_DISABLE -}
 {- assume sorted input. generalized RRset with CPS -}
 -- | Checking the sorted RRSet and passing the sorted RRset to the function.
+--   The TTL is the lowest of the RRset (RFC 2181 Sec 5.2).
+--
+-- >>> :seti -XOverloadedStrings
+-- >>> rr ttl ip = ResourceRecord "www.example." A IN ttl $ rd_a ip
+-- >>> canonicalRRsetSorted [rr 300 "192.0.2.1", rr 60 "192.0.2.2"] (const Nothing) (\_ _ _ ttl _ -> Just ttl)
+-- Just 60(1 min)
 canonicalRRsetSorted
     :: [ResourceRecord]
     -> (String -> a) -> (Domain -> TYPE -> CLASS -> TTL -> [RData] -> a) -> a
@@ -101,7 +107,7 @@ canonicalRRsetSorted rrs leftK rightK = either leftK id $ do
     let rds = [rdata rr | rr <- rrs]
     unless (all ((== 1) . length) $ group rds) $
         Left "canonicalRRsetSorted: requires unique RData set"
-    return $ rightK (rrname hd) (rrtype hd) (rrclass hd) (rrttl hd) rds
+    return $ rightK (rrname hd) (rrtype hd) (rrclass hd) (minimum $ map rrttl rrs) rds
 {- FOURMOLU_ENABLE -}
 
 -- | Checking the sorted RRSet and returning a continuation.
