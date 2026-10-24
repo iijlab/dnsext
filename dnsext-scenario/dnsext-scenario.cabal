@@ -59,6 +59,9 @@ extra-source-files:
     test/unsigned-record/*.args
     test/unsigned-record/*.conf
     test/unsigned-record/*.zone
+    test/stripped-denial/*.args
+    test/stripped-denial/*.conf
+    test/stripped-denial/*.zone
     test/signed-elsewhere/*.args
     test/signed-elsewhere/*.conf
     test/signed-elsewhere/*.zone
@@ -108,6 +111,7 @@ test-suite spec
         QnameMinSpec
         SiblingGlueSpec
         SignedElsewhereSpec
+        StrippedDenialSpec
         UnsignedRecordSpec
 
     default-language:   Haskell2010
