@@ -62,6 +62,8 @@ data Spoof = Spoof
     --   been.  Everything else about the reply is left alone, the proof
     --   of what is really there included, so a signed zone ends up
     --   saying two things at once.
+    , spoofStrip :: [TYPE]
+    -- ^ Types to leave out of every response, with the RRSIGs over them.
     }
     deriving (Eq, Show)
 
@@ -73,6 +75,7 @@ noSpoof =
         , spoofAuthority = []
         , spoofAdditional = []
         , spoofNxdomain = []
+        , spoofStrip = []
         }
 
 ----------------------------------------------------------------
