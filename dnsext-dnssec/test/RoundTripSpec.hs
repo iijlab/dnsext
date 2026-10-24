@@ -85,9 +85,13 @@ genPubKey_RSA_bin =
             ]
   where
     genE1 = example_estring <$> frequency [(1, pure 1), (1, pure 255), (3, choose (2, 254))]
-    genE2 = example_estring <$> frequency [(1, pure 256), (3, choose (257, 65535))]
+    {- The two-octet form of the exponent length, from 256 octets up to
+       the largest exponent there is.  A key over that is refused rather
+       than decoded, so it is not what this property is about. -}
+    genE2 = example_estring <$> frequency [(1, pure 256), (3, choose (257, maxOctets))]
 
-    genBSize = elements [64, 128, 256, 512]
+    genBSize = elements [64, 128, 256, maxOctets]
+    maxOctets = maxRSAKeyBits `div` 8
 
 example_estring :: Int -> Opaque
 example_estring len
