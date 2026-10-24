@@ -148,6 +148,12 @@ casesVerify reqCD dnskeys sigs rank wildcard crrset sortedRDatas rightK0 = do
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
+-- | The TTL of the result is the received one, lowered by the RRSIGs and their expiration.
+--
+-- >>> :seti -XOverloadedStrings
+-- >>> rrset = RRset "www.example." A IN 0xffffffff [rd_a "192.0.2.1"] notValidNoSig
+-- >>> withVerifiedRRset NoCheckDisabled 0 [] "www.example." rrset [] [] rrsTTL
+-- 0(secs)
 withVerifiedRRset
     :: RequestCD
     -> EpochTime
@@ -160,9 +166,10 @@ withVerifiedRRset reqCD now dnskeys0 wildcard RRset{..} sortedRDatas sigs0 vk =
   where
     mayVerified_ NoCheckDisabled  = notValidNoSig
     mayVerified_ CheckDisabled    = notValidCheckDisabled
-    noverify = (rrsTTL, mayVerified_ reqCD)
-    invalid err = (rrsTTL, notValidInvalid err)
-    valid goodSigs = (minimum $ rrsTTL : sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)
+    ttl = receivedTTL rrsTTL
+    noverify = (ttl, mayVerified_ reqCD)
+    invalid err = (ttl, notValidInvalid err)
+    valid goodSigs = (minimum $ ttl : map receivedTTL sigTTLs ++ map fromIntegral expireTTLs, ValidRRS sigrds)
       where
         (sigrds, sigTTLs) = unzip goodSigs
         expireTTLs = [exttl | sig <- sigrds, let exttl = fromDNSTime (rrsig_expiration sig) - now, exttl > 0]
