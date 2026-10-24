@@ -31,6 +31,7 @@ import qualified DNS.Types as DNS
 import DNS.Types.Time (EpochTime)
 import Data.IORef
 import Data.List (isPrefixOf)
+import Data.Word (Word16)
 
 import qualified Auth
 import Config
@@ -191,8 +192,12 @@ udpServer env keys zoneAlist s = Auth.server env keys proto zoneAlist
 --   a responder must not send more than what was offered.
 udpReplyLimit :: DNSMessage -> Int
 udpReplyLimit query = fromIntegral $ case ednsHeader query of
-    EDNSheader edns -> maxUdpSize `min` (minUdpSize `max` ednsUdpSize edns)
+    EDNSheader edns -> udpReplyMax `min` (minUdpSize `max` ednsUdpSize edns)
     _ -> minUdpSize
+
+-- | The largest UDP reply, which fits in the IPv6 minimum MTU.
+udpReplyMax :: Word16
+udpReplyMax = 1232
 
 ----------------------------------------------------------------
 
