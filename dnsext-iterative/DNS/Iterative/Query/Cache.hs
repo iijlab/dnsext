@@ -97,6 +97,9 @@ handleHits1 = Cache.hitCases1
 -- >>> pos1 = cacheNoRRSIG [ResourceRecord "p2.example.com." A IN 7200 $ rd_a "10.0.0.3"] Cache.RankAnswer *> lookupRR "p2.example.com." A
 -- >>> fmap (map rdata . fst) <$> runCxt pos1
 -- Just [10.0.0.3]
+-- >>> pos2 = cacheNoRRSIG [ResourceRecord "p3.example.com." A IN 864000 $ rd_a "192.0.2.1"] Cache.RankAnswer *> lookupRR "p3.example.com." A
+-- >>> fmap (all ((<= 86400) . rrttl) . fst) <$> runCxt pos2
+-- Just True
 -- >>> nodata1 = cacheNegative "example.com." [] "nodata1.example.com." A 7200 Cache.RankAnswer *> lookupRR "nodata1.example.com." A
 -- >>> fmap fst <$> runCxt nodata1
 -- Just []
@@ -237,7 +240,9 @@ cacheNoRRSIG rrs0 rank = do
         logLines Log.WARN $ prefix "no caching RR set:" : map (("\t" ++) . show) rrs0
     insert hrrs = do
         insertRRSet <- asksEnv insert_
-        hrrs $ \dom typ cls ttl rds -> do
+        maxTTL <- asksEnv maxCacheTTL_
+        hrrs $ \dom typ cls ttl0 rds -> do
+            let ttl = min maxTTL $ receivedTTL ttl0
             plogLn Log.DEBUG $ unwords ["RRset:", show (((dom, typ, cls), ttl), rank), ' ' : show rds]
             liftIO $ Cache.noSig rds (pure ()) $ \crs -> insertRRSet (DNS.Question dom typ cls) ttl crs rank
     (_, sortedRRs) = unzip $ SEC.sortRDataCanonical rrs0
