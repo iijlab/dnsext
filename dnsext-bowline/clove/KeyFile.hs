@@ -157,6 +157,11 @@ loadKey
     -> IO (KeyInfo, ResourceRecord)
 loadKey zoneDir keyConf fn = do
     ki <- loadKeyInfo (zoneDir </> fn)
+    -- The signer takes the algorithm from the configuration, the DNSKEY from the file.
+    when (keyInfoAlgorithm ki /= keyConfPubAlg keyConf) $
+        E.ioError $
+            E.userError $
+                fn ++ " is a key of " ++ show (keyInfoAlgorithm ki) ++ ", but the configuration asks for " ++ show (keyConfPubAlg keyConf)
     let (_, _, dnskeyrr, _) = fromKeyInfo ki $ keyConfTTL keyConf
     return (ki, dnskeyrr)
 
