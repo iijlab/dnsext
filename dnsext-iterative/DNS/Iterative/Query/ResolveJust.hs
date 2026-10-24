@@ -335,10 +335,11 @@ getCheckEnabled = noCD <$> asksQP requestCD_
 -- >>> newtype ParentIO a = ParentIO { runParentIO :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
 -- >>> instance MonadQuery (QueryT ParentIO) where { queryNorec _ _ name typ = pure $ Right defaultResponse{question = Question name typ IN, answer = []} }
 -- >>> runChild child = runParentIO $ evalQueryT (fillDelegationDS 0 parent child) env noopWorkerStat (queryParamIN "ns1.a.example." A mempty)
--- >>> fmap isFilled <$> (runChild $ mkChild $ NotFilledDS CachedDelegation)
--- Right True
--- >>> fmap isFilled <$> (runChild $ mkChild $ NotFilledDS ServsChildZone)
--- Right True
+-- >>> isBogus r = case r of { Left (ExtraError (ErrorBogus _) _ _) -> True; _ -> False }
+-- >>> isBogus <$> (runChild $ mkChild $ NotFilledDS CachedDelegation)
+-- True
+-- >>> isBogus <$> (runChild $ mkChild $ NotFilledDS ServsChildZone)
+-- True
 -- >>> fmap isFilled <$> (runChild $ mkChild $ FilledDS [])
 -- Right True
 fillDelegationDS :: MonadQuery m => Int -> Delegation -> Delegation -> m Delegation
@@ -367,9 +368,14 @@ queryDS dc src@Delegation{..} dom = do
     short <- asksEnv shortLog_
     let ainfo sas = ["require-ds: query", show zone, show DS] ++ [w | short, w <- "to" : [pprAddr sa | sa <- sas]]
     (msg, _) <- delegationFallbacks dc True (logLn Log.DEMO . unwords . ainfo) src dom DS
-    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) nullDS ncDS withDS
+    Verify.cases NoCheckDisabled zone dnskeys rankedAnswer msg dom DS (DNS.fromRData . rdata) (nullDS msg) ncDS withDS
   where
-    nullDS = insecure "no DS, so no verify" $> []
+    {- RFC 4035 Sec 5.2: a missing DS is insecure only with a proof of its absence -}
+    nullDS msg = do
+        witnesses <- unsignedDelegationOrNoDataAction zone dnskeys dom DS msg
+        when (null witnesses && not (null dnskeys)) $
+            bogus "no DS, and nothing to say there is none"
+        insecure "no DS, so no verify" $> []
     ncDS ncLog = ncLog *> bogus "not canonical DS"
     withDS rds = Verify.withResult DS msgf (\_ _ _ _ -> pure rds) rds  {- not reach for no-verify and check-disabled cases -}
     insecure ~vmsg = Verify.insecureLog (msgf vmsg)
