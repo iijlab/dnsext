@@ -31,6 +31,7 @@ import qualified Network.HTTP2.TLS.Server as H2
 -- this package
 import DNS.Iterative.Internal (DNSQuery, FoldResponse, Env (..))
 import DNS.Iterative.Server.Pipeline
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Stats (incStatsDoT, sessionStatsDoT)
 
@@ -48,7 +49,12 @@ tlsServer :: VcServerConfig -> Env -> Synthesis
     -> (ToCacher -> IO ()) -> Socket -> IO [IO ()]
 tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/tls")
-    let tlsserver = withLocationIOE name $ H2.runTLSWithSocket settings vc_credentials s "dot" go
+    let tlsserver = withLocationIOE name $ do
+            sessions <- newSessions
+            stoppable vc_stop $ \install ->
+                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install} vc_credentials s "dot" $
+                    \mgr backend -> withSession sessions $ go mgr backend
+            waitSessions sessions
     return [tlsserver]
   where
     maxSize = fromIntegral vc_query_max_size

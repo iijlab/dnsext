@@ -32,6 +32,7 @@ import qualified Network.QUIC as QUIC
 -- this package
 import DNS.Iterative.Internal (DNSQuery, FoldResponse, Env (..))
 import DNS.Iterative.Server.Pipeline
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Stats (incStatsDoH2, incStatsDoH2C, sessionStatsDoH2, sessionStatsDoH2C)
 
@@ -47,8 +48,12 @@ http2Server :: VcServerConfig -> Env -> Synthesis
     -> (ToCacher -> IO ()) -> Socket -> IO [IO ()]
 http2Server VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/h2")
-    let http2server = withLocationIOE name $ H2TLS.runIO settings vc_credentials s
-                      $ doHTTP "h2" sbracket incQuery env toCacher H2 synth foldCached foldIterative
+    let http2server = withLocationIOE name $ do
+            sessions <- newSessions
+            stoppable vc_stop $ \install ->
+                H2TLS.runIO settings{H2TLS.settingsInstallShutdownHandler = install} vc_credentials s
+                    $ fmap (withSession sessions) . doHTTP "h2" sbracket incQuery env toCacher H2 synth foldCached foldIterative
+            waitSessions sessions
     return [http2server]
   where
     sbracket = sessionStatsDoH2 (stats_ env)
@@ -74,8 +79,12 @@ http2cServer :: VcServerConfig -> Env -> Synthesis
     -> (ToCacher -> IO ()) -> Socket -> IO [IO ()]
 http2cServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/h2c")
-    let http2server = withLocationIOE name $ H2TLS.runIOH2C settings s
-                      $ doHTTP "h2c" sbracket incQuery env toCacher H2C synth foldCached foldIterative
+    let http2server = withLocationIOE name $ do
+            sessions <- newSessions
+            stoppable vc_stop $ \install ->
+                H2TLS.runIOH2C settings{H2TLS.settingsInstallShutdownHandler = install} s
+                    $ fmap (withSession sessions) . doHTTP "h2c" sbracket incQuery env toCacher H2C synth foldCached foldIterative
+            waitSessions sessions
     return [http2server]
   where
     sbracket = sessionStatsDoH2C (stats_ env)
