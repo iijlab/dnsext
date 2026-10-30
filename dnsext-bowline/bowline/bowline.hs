@@ -205,6 +205,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                 , vc_session_manager = sm
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
+                , vc_stop = waitQuit mng0
                 }
     conc = mapConcurrently_ id
     udpconf =

@@ -27,6 +27,7 @@ module DNS.Iterative.Server.Types (
 ) where
 
 -- GHC
+import Control.Concurrent.STM (STM)
 import Data.ByteString (ByteString)
 import System.IO.Error (ioeSetLocation, tryIOError)
 
@@ -111,6 +112,8 @@ data VcServerConfig = VcServerConfig
     , vc_session_manager :: SessionManager
     , vc_early_data_size :: Int
     , vc_interface_automatic :: Bool
+    , vc_stop :: STM ()
+    -- ^ Fires when the server is told to stop.
     }
 
 withLocationIOE :: String -> IO a -> IO a

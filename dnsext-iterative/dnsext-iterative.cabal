@@ -48,6 +48,7 @@ library
         DNS.Iterative.Server.Pipeline
         DNS.Iterative.Server.PrometheusHisto
         DNS.Iterative.Server.QUIC
+        DNS.Iterative.Server.Stop
         DNS.Iterative.Server.TCP
         DNS.Iterative.Server.TLS
         DNS.Iterative.Server.Types
