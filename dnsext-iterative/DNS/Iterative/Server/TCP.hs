@@ -10,7 +10,10 @@ where
 
 -- GHC packages
 import Control.Concurrent.STM (atomically)
+import qualified Control.Exception as E
+import Control.Monad (join)
 import Data.Functor
+import Data.IORef
 
 -- dnsext-utils packages
 import qualified DNS.Log as Log
@@ -22,7 +25,7 @@ import qualified DNS.Do53.Internal as DNS
 
 -- other packages
 import Network.Run.TCP
-import Network.Socket (getPeerName, getSocketName, waitReadSocketSTM)
+import Network.Socket (getPeerName, getSocketName, waitAndCancelReadSocketSTM)
 import qualified Network.Socket.ByteString as Network
 
 -- this package
@@ -53,17 +56,23 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
   where
     maxSize = fromIntegral vc_query_max_size
     tmicro = vc_idle_timeout * 1_000_000
+    ignoreIOE :: E.IOException -> IO ()
+    ignoreIOE _ = pure ()
     go sock = sessionStatsTCP53 (stats_ env) $ do
         mysa <- getSocketName sock
         peersa <- getPeerName sock
         logLn env Log.DEBUG $ "tcp-srv: accept: " ++ show peersa
         let peerInfo = PeerInfoVC peersa
-        -- "cancel" action is not used.
-        -- However, "closeFd" is eventually called.
-        -- It deletes the entry relating to the socket from the table
-        -- of IOManager.
-        (vcSess, toSender, fromX) <- initVcSession (waitReadSocketSTM sock)
-        withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+        -- Each wait cancels the one before it, and the last is cancelled at the end.
+        cancelRef <- newIORef $ pure ()
+        let cancelWait = join (readIORef cancelRef) `E.catch` ignoreIOE
+            waitRead = do
+                cancelWait
+                (readable, cancel) <- waitAndCancelReadSocketSTM sock
+                writeIORef cancelRef cancel
+                pure readable
+        (vcSess, toSender, fromX) <- initVcSession waitRead
+        flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = Network.recv sock
             let onRecv bs = do
                     checkReceived vc_slowloris_size vcTimer bs
