@@ -210,6 +210,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     udpconf =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
+            , udp_stop = waitQuit mng0
             }
 
 main :: IO ()

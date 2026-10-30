@@ -461,7 +461,7 @@ receiverVCnonBlocking name env lim vcs@VcSession{..} peerInfo recvN onRecv toCac
             toCacher $ mkInput_ bs peerInfo pop ts
 
 receiverLogic
-    :: Env -> SockAddr -> IO (BS, Peer) -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
+    :: Env -> SockAddr -> IO (Maybe (BS, Peer)) -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
     -> (forall b . DNSQuery b -> FoldResponse IO b)
     -> (forall b . FoldResponse IO b)
     -> IO ()
@@ -470,8 +470,8 @@ receiverLogic
     mysa recv toCacher toSender dox synth
     foldCached foldIterative
     =
-    handledLoop env "receiverUDP" $ void $
-    receiverLogic' env mysa recv toCacher toSender dox synth foldCached foldIterative
+    handledLoopWhile env "receiverUDP" $
+    maybe (pure False) (\x -> True <$ receiverLogic' env mysa (pure x) toCacher toSender dox synth foldCached foldIterative) =<< recv
 
 receiverLogic'
     :: Env
@@ -525,9 +525,10 @@ senderVC name env vcs send fromX = loop `E.catch` onError
     step = E.bracket fromX finalize $ \(Output bs _ peerInfo) -> send bs peerInfo
     finalize (Output _ VcPendingOp{..} _) = vpDelete
 
-senderLogic :: Env -> (BS -> Peer -> IO ()) -> IO FromX -> IO ()
+senderLogic :: Env -> (BS -> Peer -> IO ()) -> IO (Maybe FromX) -> IO ()
 senderLogic env send fromX =
-    handledLoop env "senderUDP" $ senderLogic' send fromX
+    handledLoopWhile env "senderUDP" $
+    maybe (pure False) (\x -> True <$ senderLogic' send (pure x)) =<< fromX
 
 senderLogic' :: (BS -> Peer -> IO ()) -> IO FromX -> IO ()
 senderLogic' send fromX = do
@@ -746,13 +747,20 @@ mkConnector' = do
 
 {- FOURMOLU_DISABLE -}
 handledLoop :: Env -> String -> IO () -> IO ()
-handledLoop env tag body = forever $ handle (\e -> loggingExp env Log.DEBUG tag e >> takeEx e) body
+handledLoop env tag body = handledLoopWhile env tag (True <$ body)
+
+-- | Looping until the body returns False.
+handledLoopWhile :: Env -> String -> IO Bool -> IO ()
+handledLoopWhile env tag body = loop
   where
+    loop = do
+        continue <- handle (\e -> loggingExp env Log.DEBUG tag e >> takeEx e) body
+        when continue loop
     -- SomeException: asynchronous exceptions are re-thrown
-    takeEx :: SomeException -> IO ()
+    takeEx :: SomeException -> IO Bool
     takeEx e
         | Just (SomeAsyncException _) <- E.fromException e  = throwIO e
-        | otherwise                                         = pure ()
+        | otherwise                                         = pure True
 {- FOURMOLU_ENABLE -}
 
 warnOnError :: Env -> String -> SomeException -> IO ()
