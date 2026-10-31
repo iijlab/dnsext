@@ -52,7 +52,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     let tlsserver = withLocationIOE name $ do
             sessions <- newSessions
             stoppable vc_stop $ \install ->
-                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install} vc_credentials s "dot" $
+                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install, H2.settingsUnsafeClose = True} vc_credentials s "dot" $
                     \mgr backend -> withSession sessions $ go mgr backend
             waitSessions sessions
     return [tlsserver]

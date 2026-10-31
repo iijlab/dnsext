@@ -55,7 +55,7 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
                 sessions <- newSessions
                 stoppable vc_stop $ \install ->
                     runTCPServerWithSocketAndSettings
-                        defaultServerSettings{settingsInstallShutdownHandler = install}
+                        defaultServerSettings{settingsInstallShutdownHandler = install, settingsUnsafeClose = True}
                         s
                         (withSession sessions . go)
                 waitSessions sessions
