@@ -36,7 +36,7 @@ quicServers :: VcServerConfig -> ServerActions
 quicServers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
-    let quicserver = withLocationIOE "QUIC" $ stoppable vc_stop $ \install ->
+    let quicserver = withLocationIOE "QUIC" $ stopWithoutWaiting "bw.quic-srv" vc_stop $ \install ->
             QUIC.runWithSockets ss sconf{scInstallShutdownHandler = install} go
     return [quicserver]
   where
