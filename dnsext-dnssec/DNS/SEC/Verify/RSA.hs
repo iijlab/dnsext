@@ -68,6 +68,32 @@ rsaEncodePriKey = BL.toStrict . serialise
 rsaDecodePriKey :: ByteString -> Either String PrivateKey
 rsaDecodePriKey = Right . deserialise . BL.fromStrict
 
+-- $setup
+-- >>> :seti -XOverloadedStrings
+-- >>> import qualified Data.ByteString as BS
+-- >>> import Data.Either (isRight)
+-- >>> :{
+-- rsaPubKey eBits nBits = PubKey $ Opaque.concat [elen, e, ones $ (nBits + 7) `div` 8]
+--   where
+--     e = ones $ (eBits + 7) `div` 8
+--     ones k = Opaque.fromByteString $ BS.replicate k 0xff
+--     len = Opaque.length e
+--     elen
+--         | len < 256 = Opaque.singleton $ fromIntegral len
+--         | otherwise = Opaque.fromByteString $ BS.pack [0, fromIntegral $ len `div` 256, fromIntegral $ len `mod` 256]
+-- :}
+
+-- | The RSA public key of a DNSKEY, laid out as RFC 3110 Sec 2 asks:
+--   the exponent's length, the exponent, then the modulus.
+--
+-- >>> isRight $ rsaDecodePubKey $ rsaPubKey 17 2048
+-- True
+-- >>> isRight $ rsaDecodePubKey $ rsaPubKey 4096 4096
+-- True
+-- >>> rsaDecodePubKey $ rsaPubKey 17 8192
+-- Left "RSASHA.rsaDecodePubKey: modulus is larger than 4096 bits: 8192"
+-- >>> rsaDecodePubKey $ rsaPubKey 8192 2048
+-- Left "RSASHA.rsaDecodePubKey: exponent is larger than 4096 bits: 8192"
 rsaDecodePubKey :: PubKey -> Either String PublicKey
 rsaDecodePubKey (PubKey o)
     | byteSize <= 0 =
