@@ -100,6 +100,12 @@ maxRSAKeyBits = 4096
 -- Left "RSASHA.rsaDecodePubKey: modulus is larger than 4096 bits: 8192"
 -- >>> rsaDecodePubKey $ rsaPubKey 8192 2048
 -- Left "RSASHA.rsaDecodePubKey: exponent is larger than 4096 bits: 8192"
+-- >>> rsaDecodePubKey $ PubKey ""
+-- Left "RSASHA.rsaDecodePubKey: too short to hold the length of an exponent"
+-- >>> rsaDecodePubKey $ PubKey "\0"
+-- Left "RSASHA.rsaDecodePubKey: too short to hold the length of an exponent"
+-- >>> rsaDecodePubKey $ PubKey "\0\1"
+-- Left "RSASHA.rsaDecodePubKey: too short to hold the length of an exponent"
 rsaDecodePubKey :: PubKey -> Either String PublicKey
 rsaDecodePubKey (PubKey o)
     | byteSize <= 0 =
