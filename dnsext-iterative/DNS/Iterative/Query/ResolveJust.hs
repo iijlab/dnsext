@@ -383,6 +383,28 @@ queryDS dc src@Delegation{..} dom = do
 ---
 
 {- FOURMOLU_DISABLE -}
+-- | Prime the root delegation when the NS RRset of "." is not cached,
+--   and keep the current one otherwise.  When priming fails, the hint
+--   it started from is kept: the trust anchor, the root's verified
+--   key, and the configured root servers.
+--
+-- >>> Right dummyKey = Opaque.fromBase64 "dummykey///dummykey///dummykey///dummykey///"
+-- >>> dummyDNSKEY = RD_DNSKEY [ZONE] 3 RSASHA256 $ toPubKey dummyKey
+-- >>> dummyRRSIG = RD_RRSIG DNSKEY RSASHA256 0 3600 (toDNSTime 0) (toDNSTime 0) 0 "." dummyKey
+-- >>> hint = Delegation "." (DEwithA4 "ns.root." ("192.0.2.1":|[]) :| []) (FilledDS []) [] CachedD
+-- >>> env0 <- newTestEnv _noLogging True 64
+-- >>> env = env0{rootHint_ = hint, rootAnchor_ = AnchorSEP [] (dummyDNSKEY:|[])}
+-- >>> Cache.valid [toRData dummyDNSKEY] [dummyRRSIG] (pure ()) $ \hit -> insert_ env (Question "." DNSKEY IN) 3600 hit Cache.RankAnswer  {- the root's key, verified -}
+-- >>> unsignedNS = defaultResponse{question = Question "." NS IN, answer = [ResourceRecord "." NS IN 3600 $ rd_ns "ns.nobody."], additional = [ResourceRecord "ns.nobody." A IN 3600 $ rd_a "192.0.2.2"]}
+-- >>> newtype RootIO a = RootIO { runRootIO :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
+-- >>> instance MonadQuery (QueryT RootIO) where { queryNorec _ _ _ _ = pure $ Right unsignedNS }  {- the root does not sign its NS RRset, so priming fails -}
+-- >>> Right root <- runRootIO $ evalQueryT refreshRoot env noopWorkerStat (queryParamIN "." NS mempty)
+-- >>> putStrLn $ case delegationDS root of { AnchorSEP _ _ -> "anchor kept"; FilledDS [] -> "anchor lost"; _ -> "other" }
+-- anchor kept
+-- >>> length $ delegationDNSKEY root
+-- 1
+-- >>> [ns | DEwithA4 ns _ <- NE.toList $ delegationNS root]
+-- ["ns.root."]
 refreshRoot :: MonadQuery m => m Delegation
 refreshRoot = do
     curRef <- asksEnv currentRoot_
