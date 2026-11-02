@@ -85,7 +85,9 @@ genPubKey_RSA_bin =
             ]
   where
     genE1 = example_estring <$> frequency [(1, pure 1), (1, pure 255), (3, choose (2, 254))]
-    genE2 = example_estring <$> frequency [(1, pure 256), (3, choose (257, 65535))]
+    -- The two-octet form of the exponent length, up to the 512 octets
+    -- rsaDecodePubKey takes (RFC 3110 Sec 2).
+    genE2 = example_estring <$> frequency [(1, pure 256), (3, choose (257, 512))]
 
     genBSize = elements [64, 128, 256, 512]
 
