@@ -60,6 +60,14 @@ import DNS.Iterative.Query.TestEnv
 -- >>> import DNS.RRCache
 -- >>> import Control.Monad.Trans.Reader (ReaderT)
 -- >>> instance MonadIO m => MonadEnv (ReaderT Env m) where { asksEnv = asks; asksWS f = pure (f testWorkerStat) }
+-- >>> :{
+-- instance MonadIO m => MonadContext (ReaderT Env (ExceptT QueryError (ReaderT QueryParam (ReaderT QueryState m)))) where
+--     asksQP = lift . lift . asks
+--     localQP f = mapReaderT (mapExceptT (local f))
+--     asksQS = lift . lift . lift . asks
+--     throwQuery = lift . throwE
+--     catchQuery m h = ReaderT $ \e -> runReaderT m e `catchE` (\x -> runReaderT (h x) e)
+-- :}
 
 _newTestEnv :: IO Env
 _newTestEnv = newTestEnv (const $ pure ()) False 2048
@@ -344,6 +352,35 @@ cacheNegativeNoSOA rc dom typ ttl rank = do
     liftIO $ cpsInsertNegativeNoSOA rc dom typ ttl rank insertRRSet
 
 {- FOURMOLU_DISABLE -}
+-- | Cache the answer RRsets, with the witness RRsets when the answer is a wildcard expansion.
+--
+-- >>> Just (pub, pri) <- SEC.genKeyPair ED25519 0
+-- >>> dnskey = SEC.makeDNSKEY ED25519 pub [ZONE]
+-- >>> signed typ labels = SEC.sign' pri (RD_RRSIG typ ED25519 labels 3600 (toDNSTime 0x7FFFFFFF) (toDNSTime 0) (SEC.keyTag dnskey) "example." "")
+-- >>> deleg = Delegation "example." (DEwithA4 "ns.example." ("192.0.2.1" :| []) :| []) (AnchorSEP [] (dnskey :| [])) [dnskey] FreshD
+-- >>> qn = "anything.wild.example."
+-- >>> wildA = ResourceRecord "*.wild.example." A IN 3600 $ rd_a "192.0.2.7"
+-- >>> sigA <- signed A 2 [wildA]  {- labels=2: signed under *.wild.example. -}
+-- >>> expanded = [wildA{rrname = qn}, ResourceRecord qn RRSIG IN 3600 $ toRData sigA]
+-- >>> nsec = ResourceRecord "*.wild.example." NSEC IN 3600 $ rd_nsec "www.example." [A, RRSIG, NSEC]
+-- >>> sigN <- signed NSEC 2 [nsec]  {- the * label is not counted -}
+-- >>> witness = [nsec, nsec{rrtype = RRSIG, rdata = toRData sigN}]
+-- >>> reply auth = defaultResponse{question = Question qn A IN, answer = expanded, authority = auth}
+-- >>> env <- _newTestEnv
+-- >>> qp cd = QueryParam (Question qn A IN) NoDnssecOK cd NoAuthenticatedData
+-- >>> runQ cd q = (runReaderT (runReaderT (runExceptT (runReaderT q env)) (qp cd)) =<< newQueryState) :: IO (Either QueryError ([RRset], [RRset]))
+-- >>> run cd msg = either (const "ServFail") (const "accepted") <$> runQ cd (cacheAnswer deleg qn A msg) :: IO String
+-- >>> cached = fmap (map rdata . fst) <$> runReaderT (lookupValidRR "test" qn A) env
+-- >>> run NoCheckDisabled (reply [])  {- no NSEC/NSEC3 for the expansion -}
+-- "ServFail"
+-- >>> cached  {- and nothing cached before that was found out -}
+-- Nothing
+-- >>> run NoCheckDisabled (reply witness)
+-- "accepted"
+-- >>> cached
+-- Just [192.0.2.7]
+-- >>> run CheckDisabled (reply [])  {- CD: the querier checks for itself -}
+-- "accepted"
 cacheAnswer :: MonadContext m => Delegation -> Domain -> TYPE -> DNSMessage -> m ([RRset], [RRset])
 cacheAnswer d@Delegation{..} dom typ msg = do
     verify =<< asksQP requestCD_
