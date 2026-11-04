@@ -98,15 +98,17 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
            `finally`
            atomically (writeTVar vsRunning False)
           ) $ \_ ->
-            reader backend (readTVar vsRunning) inpq
+            reader backend vc_stop (readTVar vsRunning) inpq
         logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
 
-reader :: H2.IOBackend -> STM VsRunning -> TBQueue ByteString -> IO ()
-reader backend vsRunning inpq = loop
+-- | Stopping the server ends the session as the peer's EOF does: the
+--   queries read so far are answered first.
+reader :: H2.IOBackend -> STM () -> STM VsRunning -> TBQueue ByteString -> IO ()
+reader backend stop vsRunning inpq = loop
   where
     loop = do
         let proceed = do
-                pkt <- H2.recv backend
+                pkt <- either (const mempty) id <$> H2.recvWith backend stop
                 atomically $ writeTBQueue inpq pkt
                 if pkt /= mempty
                     then loop

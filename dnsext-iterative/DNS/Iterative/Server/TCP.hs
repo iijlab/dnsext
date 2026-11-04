@@ -79,7 +79,10 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
                 writeIORef cancelRef cancel
                 pure readable
         (vcSess, toSender, fromX) <- initVcSession waitRead
-        flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+        -- Stopping the server ends the session as its idle timeout does:
+        -- the queries read so far are answered first.
+        let stopped = atomically $ vc_stop >> enableVcTimeout (vcTimeout_ vcSess)
+        TAsync.withAsync "bw.tcp-stop" stopped $ \_ -> flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = Network.recv sock
             let onRecv bs = do
                     checkReceived vc_slowloris_size vcTimer bs
