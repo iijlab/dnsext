@@ -11,6 +11,8 @@ where
 -- GHC packages
 import Control.Concurrent.STM
 import Control.Monad (void, when)
+import Data.IORef
+import qualified Data.IntSet as Set
 
 -- dnsext-utils
 import qualified DNS.ThreadAsync as TAsync
@@ -57,8 +59,16 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     {- limit waiting area on server to constant size -}
     let queueBound = 64
     qs <- newTBQueueIO queueBound
-    let toSender = atomically . writeTBQueue qs
-        fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ udp_stop)
+    -- Once stopped, the sender goes on until every query read is answered
+    -- or dropped.
+    pendings <- newTVarIO Set.empty
+    counter <- newIORef 0
+    let newPending = do
+            i <- atomicModifyIORef' counter $ \n -> (n + 1, n)
+            pendingOp pendings i $ \add pop -> pop <$ add
+        answered = readTVar pendings >>= check . Set.null
+        toSender = atomically . writeTBQueue qs
+        fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (udp_stop >> answered))
         recv = NSB.recvMsgWith s 2048 2048 0 udp_stop >>= either (const $ return Nothing) received
         received (peersa, bs, cmsgs, _) = do
             incStatsUDP53 peersa (stats_ env)
@@ -66,7 +76,7 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
         send bs (PeerInfoUDP peersa cmsgs) =
             void $ NSB.sendMsg s peersa [bs] cmsgs 0
         send _ _ = return ()
-        receiver = receiverLogic env mysa recv toCacher toSender UDP synth foldCached foldIterative
+        receiver = receiverLogic env mysa recv newPending toCacher toSender UDP synth foldCached foldIterative
         sender = senderLogic env send fromX
     return [TAsync.concurrently_ "bw.udp-send" sender "bw.udp-recv" receiver]
 
