@@ -33,7 +33,7 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
     name <- mapM socketName ss <&> \xs -> show xs ++ "/h3"
-    let http3server = withLocationIOE name $ stopWithoutWaiting "bw.h3-srv" vc_stop $ \install ->
+    let http3server = withLocationIOE name $ stoppable vc_stop $ \install ->
             T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
             QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
                 H3.runIO conn (conf mgr)
