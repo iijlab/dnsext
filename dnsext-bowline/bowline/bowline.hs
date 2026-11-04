@@ -132,6 +132,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     mix_case <- if cnf_mixed_case_query then Just <$> newConcurrentMixCase else pure Nothing
     (runLogger, putLines, stopLogger, reopenLog0) <- getLogger ruid conf tcache
     (runSSLKeyLogger, putSSLKeyLog, killSSLKeyLogger) <- getSSLKeyLogger ruid conf
+    stopper <- Server.newStopper
     --
     let rootpriv = do
             (runWriter, putDNSTAP) <- TAP.new conf putLines
@@ -167,8 +168,8 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                         }
             --  filled env available
             (sm, killSM) <- ST.newSessionTicketManager' ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}
-            addrs <- mapM (bindServers inherit cnf_dns_addrs) $ trans SynthNone cnf_credentials sm
-            dns64addrs <- mapM (bindServers inherit cnf_dns64_addrs) $ trans SynthDNS64 cnf_dns64_credentials sm
+            addrs <- mapM (bindServers inherit cnf_dns_addrs) $ trans stopper SynthNone cnf_credentials sm
+            dns64addrs <- mapM (bindServers inherit cnf_dns64_addrs) $ trans stopper SynthDNS64 cnf_dns64_credentials sm
             (mas, monInfo) <- Mon.bindMonitor inherit conf env
             asocks <- API.bindAPIs conf
             return (runWriter, env, addrs ++ dns64addrs, mas, monInfo, asocks, killSM)
@@ -213,7 +214,10 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     -- The servers return once told to stop and their sessions are done;
     -- the pipeline keeps answering those sessions until then.  The sockets
     -- are handed over as soon as the monitors and the web API are gone.
-    let handOver' = conc monitor >> atomically (waitQuit mng0) >> stopAPIs >> handOver ownSocks
+    -- Every server is told before the sockets go, so that two generations
+    -- never read one socket at once.
+    let stopServers = atomically (waitQuit mng0) >> Server.stopAll stopper
+        handOver' = conc [conc monitor, stopServers] >> stopAPIs >> handOver ownSocks
     race_ concPipeline (conc [concServer, handOver'])
         -- Teardown
         `finally` do
@@ -226,8 +230,8 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
         st <- getSocketType s
         sa <- getSocketName s
         return ((st, sa), s)
-    trans synth creds sm =
-        [ (cnf_udp, "bw.udp-srv." ++ st, udpServers udpconf synth, Datagram, cnf_udp_port)
+    trans stopper synth creds sm =
+        [ (cnf_udp, "bw.udp-srv." ++ st, udpServers (udpconf stopper) synth, Datagram, cnf_udp_port)
         , (cnf_tcp, "bw.tcp-srv." ++ st, tcpServers vcconf synth, Stream, cnf_tcp_port)
         , (cnf_h2c, "bw.h2c-srv." ++ st, http2cServers vcconf synth, Stream, cnf_h2c_port)
         , (cnf_h2, "bw.h2-srv." ++ st, http2Servers vcconf synth, Stream, cnf_h2_port)
@@ -248,13 +252,13 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                 , vc_session_manager = sm
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
-                , vc_stop = waitQuit mng0
+                , vc_stop = stopper
                 }
     conc = mapConcurrently_ id
-    udpconf =
+    udpconf stopper =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
-            , udp_stop = waitQuit mng0
+            , udp_stop = stopped stopper
             }
 
 main :: IO ()
