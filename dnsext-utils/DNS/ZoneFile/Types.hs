@@ -23,21 +23,6 @@ data Directive
     | D_TTL
     deriving (Eq, Show)
 
-{- FOURMOLU_DISABLE -}
-data Word8E
-    = C Word8  -- ^ not escaped byte
-    | E Word8  -- ^     escaped byte
-    deriving (Eq, Show)
-{- FOURMOLU_ENABLE -}
-
-unEscW8 :: Word8E -> Word8
-unEscW8 (C w8) = w8
-unEscW8 (E w8) = w8
-
-isEscaped :: Word8E -> Bool
-isEscaped C{} = False
-isEscaped E{} = True
-
 -- character-string or longer opaque-string
 type CString = Short.ShortByteString
 
@@ -47,26 +32,15 @@ cstringW8 = Short.pack
 fromCString :: CString -> String
 fromCString = map (chr . fromIntegral) . Short.unpack
 
--- character-string, character-string with escaped info, or longer opaque-string
-type EString = [Word8E]
+-- | A character-string: the bytes its escapes stand for.
+newtype CS' = CS' {cs_cs :: CString} deriving (Eq)
 
-data CS' = CS' {cs_cs :: CString, cs_es :: EString} deriving (Eq)
-
-{- FOURMOLU_DISABLE -}
 instance Show CS' where
-    show (CS'{cs_cs = s, cs_es = es})
-        | any isEscaped es  = show es
-        | otherwise         = show s
-{- FOURMOLU_ENABLE -}
+    show (CS' s) = show s
 
 instance IsString CS' where
     -- naive instance for tests
-    fromString s = CS'{cs_cs = cstringW8 ws, cs_es = [C w | w <- ws]}
-      where
-        ws = [fromIntegral $ ord c | c <- s]
-
-estringToCS' :: EString -> CS'
-estringToCS' es = CS'{cs_cs = cstringW8 [unEscW8 e | e <- es], cs_es = es}
+    fromString s = CS' $ cstringW8 [fromIntegral $ ord c | c <- s]
 
 data Token
     = Directive Directive
