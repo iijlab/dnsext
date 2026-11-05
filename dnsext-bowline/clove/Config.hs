@@ -91,7 +91,6 @@ data ZoneConf = ZoneConf
     --   denied.
     , cnf_rrsig_lifetime        :: Int
     , cnf_zsk_rollover_duration :: Int
-    , cnf_zsk_preserve          :: Int
     , cnf_signer                :: String
     -- ^ The name to put in the signer field of the RRSIGs over this
     --   zone's data, when it is to be a zone other than this one.  Only
@@ -150,7 +149,6 @@ defaultZoneConf =
         , cnf_nsec3_optout          = False
         , cnf_rrsig_lifetime        = 864000 -- 10 days
         , cnf_zsk_rollover_duration = 604800 -- 7 days
-        , cnf_zsk_preserve          = 10
         , cnf_signer                = ""
         , cnf_spoof_nxdomain       = []
         , cnf_spoof_answer         = ""
@@ -240,7 +238,6 @@ makeZoneConf def conf = do
     cnf_nsec3_optout          <- get "nsec3-optout"          cnf_nsec3_optout
     cnf_rrsig_lifetime        <- get "rrsig-lifetime"        cnf_rrsig_lifetime
     cnf_zsk_rollover_duration <- get "zsk-rollover-duration" cnf_zsk_rollover_duration
-    cnf_zsk_preserve          <- get "zsk-preserve"          cnf_zsk_preserve
     checkUnknown (cnf_zone ++ ": ") ref conf
     checkRepeated (cnf_zone ++ ": ") conf
     pure ZoneConf{..}

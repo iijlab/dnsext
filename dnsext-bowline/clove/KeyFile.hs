@@ -106,15 +106,19 @@ loadZSKInfo
     -> Bool
     -- ^ whether the zone is starting out, and so has no keys to miss
     -> FilePath
-    -> Int
     -> KeyConfig
     -> IO
         ( (KeyInfo, ResourceRecord) -- previous
         , (KeyInfo, ResourceRecord) -- current
         , (KeyInfo, ResourceRecord) -- next
         )
-loadZSKInfo env fresh zoneDir preserve keyConf = do
+loadZSKInfo env fresh zoneDir keyConf = do
     found <- length <$> keyFiles zoneDir ".zsk"
+    -- More than the three published: left by a clove which kept retired keys.
+    when (found > 3) $ do
+        warn env keyConf $
+            show found ++ " ZSK(s) where three are published, so the oldest are being removed."
+        pruneZSK zoneDir
     -- Fewer than the three published: those left keep their places by
     -- age and only the missing newer ones are made, so with two left the
     -- zone is still signed with a key which was published already.
@@ -128,7 +132,7 @@ loadZSKInfo env fresh zoneDir preserve keyConf = do
                     ++ if found < 2
                         then "  Resolvers holding the old DNSKEY RRset cannot validate until it expires from their caches."
                         else ""
-        replicateM_ (3 - found) $ generateZSK zoneDir preserve keyConf
+        replicateM_ (3 - found) $ generateZSK zoneDir keyConf
     zsks <- keyFiles zoneDir ".zsk"
     case sortBy (flip compare) zsks of -- decreasing order
         fn2 : fn1 : fn0 : _ -> do
@@ -173,28 +177,26 @@ generateKSK zoneDir keyConf = do
     saveKSKInfo zoneDir keyInfo
     return (keyInfo, dnskeyrr)
 
--- | Generating the next ZSK, keeping at most 'preserve' of them on
---   disk.  Each one holds a private key, and only the three newest are
---   ever published, so they must not pile up for ever.
+-- | Generating the next ZSK and removing the one it retires, so that
+--   only the three published are on disk.
 generateZSK
     :: FilePath
-    -> Int
     -> KeyConfig
     -> IO (KeyInfo, ResourceRecord) -- DNSKEY
-generateZSK zoneDir preserve keyConf = do
+generateZSK zoneDir keyConf = do
     (keyInfo, dnskeyrr, _) <- generateKeyInfo keyConf
     saveZSKInfo zoneDir keyInfo
     -- Pruned once the new key is safely stored, never before it.
-    pruneZSK zoneDir preserve
+    pruneZSK zoneDir
     return (keyInfo, dnskeyrr)
 
--- | Removing the oldest ZSKs until at most 'keep' are left.  A key file
---   is named after the time it was made, so sorting by name sorts by
---   age.
-pruneZSK :: FilePath -> Int -> IO ()
-pruneZSK zoneDir keep = do
+-- | Removing the oldest ZSKs until the three published are left.  A key
+--   file is named after the time it was made, so sorting by name sorts
+--   by age.
+pruneZSK :: FilePath -> IO ()
+pruneZSK zoneDir = do
     zsks <- keyFiles zoneDir ".zsk"
-    mapM_ (removeFile . (zoneDir </>)) $ take (length zsks - keep) $ sort zsks
+    mapM_ (removeFile . (zoneDir </>)) $ take (length zsks - 3) $ sort zsks
 
 ----------------------------------------------------------------
 
@@ -211,8 +213,8 @@ rolloverMargin duration = duration `shiftR` 6
 --   the rollover duration.  That duration is how long a key is used,
 --   which is a different thing from how long an RRSIG stays valid.
 --   Whether a key was due is returned.
-rolloverZSK :: FilePath -> Int -> Int -> KeyConfig -> IO Bool
-rolloverZSK zoneDir duration preserve keyConf = do
+rolloverZSK :: FilePath -> Int -> KeyConfig -> IO Bool
+rolloverZSK zoneDir duration keyConf = do
     zsks <- keyFiles zoneDir ".zsk"
     case sortBy (flip compare) zsks of -- decreasing order
     -- No key to roll over yet.  Not an error: loading the zone is
@@ -226,7 +228,7 @@ rolloverZSK zoneDir duration preserve keyConf = do
                 due = diff + margin > fromIntegral duration
             when due $
                 void $
-                    generateZSK zoneDir preserve keyConf
+                    generateZSK zoneDir keyConf
             return due
 
 ----------------------------------------------------------------
