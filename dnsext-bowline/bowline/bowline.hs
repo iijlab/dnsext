@@ -11,6 +11,7 @@ import Control.Concurrent.Async (mapConcurrently_, race_, waitCatchSTM)
 import Control.Concurrent.STM
 import Control.Exception (bracket_, finally, throwIO)
 import Control.Monad
+import Data.Maybe (isNothing)
 import Data.ByteString.Builder
 import Data.Functor
 import qualified Data.IORef as I
@@ -94,7 +95,10 @@ run ruid readConfig = do
         case ctl of
             Quit -> do
                 putStrLn "\nQuiting..." -- fixme
-                waitAll
+                -- A generation is cut at the cap; one that still does not end
+                -- (an application ignoring the cut) is left to the exit.
+                done <- timeout ((cnf_graceful_shutdown_timeout conf + 1) * 1000000) waitAll
+                when (isNothing done) $ putStrLn "graceful shutdown: a generation did not end; exiting"
                 mapM_ (NS.close . snd) socks
             Reload1 rconf -> do
                 putStrLn "\nReloading..." -- fixme
