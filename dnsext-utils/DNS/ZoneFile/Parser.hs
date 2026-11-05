@@ -299,7 +299,8 @@ rrclass = optional (blank *> class_) >>= maybe (gets cx_class) setClass
 -- >>> -- example from RFC9460 - Appendix D. Test Vectors - D.2. ServiceMode - Fiture 10
 -- >>> -- * URL: https://datatracker.ietf.org/doc/html/rfc9460#name-servicemode-3
 -- >>> -- * example RR: example.com.   SVCB   16 foo.example.org. alpn="f\\\\oo\\,bar,h2"
--- >>> runParser (rrTyRData (,)) cx [Blank,CS "SVCB",Blank,CS "16",Blank,CS "foo",Dot,CS "example",Dot,CS "org",Dot,Blank,CS "alpn=",CS (estringToCS' [C 102,E 92,C 111,C 111,E 44,C 98,C 97,C 114,C 44,C 104,C 50])]
+-- >>> -- * the lexer's character-string decoding of alpn="f\\\\oo\\,bar,h2" is alpn= and f\\oo\,bar,h2
+-- >>> runParser (rrTyRData (,)) cx [Blank,CS "SVCB",Blank,CS "16",Blank,CS "foo",Dot,CS "example",Dot,CS "org",Dot,Blank,CS "alpn=",CS (estringToCS' [C 102,E 92,E 92,C 111,C 111,E 92,C 44,C 98,C 97,C 114,C 44,C 104,C 50])]
 -- Right (((SVCB,16 foo.example.org. alpn=["f\\oo,bar","h2"]),Context "." "." 3600 IN),[])
 rrTyRData :: (TYPE -> RData -> a) -> Parser a
 rrTyRData mk =
