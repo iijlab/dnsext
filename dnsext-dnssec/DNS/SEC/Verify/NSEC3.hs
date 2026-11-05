@@ -133,9 +133,15 @@ n3GetNonExistence neStep getPropSet props = {- longest result -} msum $ map step
 
 step_nameError :: (Domain -> [RangeProp]) -> RangeProps -> Maybe (Either String NSEC3_NameError)
 step_nameError getPropSet =
-    n3StepNonExistence $ \nextCloser closest@(Matches (_, clname)) -> do
+    n3StepNonExistence $ \nextCloser closest@(Matches ((_, RD_NSEC3{..}), clname)) -> do
         let wildcardProps = getPropSet (fromString "*" <> clname)
-        Right . n3_nameError closest nextCloser <$> propCover wildcardProps
+            {- RFC 6840 Sec 4.1: the closest encloser is where the
+               name stops existing, and a delegation or a DNAME there
+               leaves the rest of it to somebody else. -}
+            nameError w =
+                maybe (Right $ n3_nameError closest nextCloser w) Left $
+                    NRange.encloserRefusal "NSEC3.NameError" nsec3_types
+        nameError <$> propCover wildcardProps
 
 step_unsignedDelegation :: RangeProps -> Maybe (Either String NSEC3_UnsignedDelegation)
 step_unsignedDelegation =

@@ -58,6 +58,15 @@ zipSigsets_ nsecTy takeRange srrs leftK rightK = either leftK rightK $ zipSigs r
 ancestorDelegation :: [TYPE] -> Bool
 ancestorDelegation types = NS `elem` types && SOA `notElem` types
 
+{- | Why a bitmap at a name cannot prove a name below it is absent:
+     an ancestor delegation, or a DNAME, neither of which RFC 6840
+     Sec 4.1 lets speak for anything below. -}
+encloserRefusal :: String -> [TYPE] -> Maybe String
+encloserRefusal tag types
+    | ancestorDelegation types = Just $ tag ++ ": ancestor delegation, says nothing below the zone cut"
+    | DNAME `elem` types = Just $ tag ++ ": DNAME, says nothing about a subdomain"
+    | otherwise = Nothing
+
 {- | Why a bitmap at the name itself cannot prove there is no RRset of
      this type: the type is there, a CNAME is there (RFC 6840 Sec 4.3),
      or it is an ancestor delegation and the type is not the DS. -}

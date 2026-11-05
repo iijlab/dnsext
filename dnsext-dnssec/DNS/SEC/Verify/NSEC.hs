@@ -58,7 +58,14 @@ detect zone qtype qnames coverwild =
 ---
 
 get_nameError :: Logic NSEC_NameError
-get_nameError qnames coverwild = Right <$> (nsec_NameError <$> propCover qnames <*> propCover coverwild)
+get_nameError qnames coverwild = do
+    c@(Covers ((owner, RD_NSEC{..}), qn)) <- propCover qnames
+    w <- propCover coverwild
+    {- RFC 6840 Sec 4.1: where the name is under the covering record's
+       owner, that owner may not be a delegation or carry a DNAME. -}
+    pure $ case [e | qn `isSubDomainOf` owner, Just e <- [NRange.encloserRefusal "NSEC.NameError" nsec_types]] of
+        e : _ -> Left e
+        [] -> Right $ nsec_NameError c w
 
 get_noData :: TYPE -> Logic NSEC_NoData
 get_noData qtype qnames _coverwild = notElemBitmap <$> propMatch qnames
