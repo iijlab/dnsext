@@ -1,0 +1,13 @@
+; The root of the scenario's world.  It vouches for example. with a DS,
+; and delegates insecure. with none to the primary, which holds a root
+; zone of its own rather than insecure.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+example.	IN	NS	ns.example.
+ns.example.	IN	{{AUTH_ADDR_RR}}
+example.	IN	DS	{{DS example}}
+insecure.	IN	NS	ns.insecure.
+ns.insecure.	IN	{{AUTH_ADDR_RR}}

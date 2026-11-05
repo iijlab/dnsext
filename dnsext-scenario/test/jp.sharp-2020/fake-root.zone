@@ -1,0 +1,9 @@
+; A root zone the primary holds and signs with a key of its own.  It
+; answers for insecure. with the apex of the parent, as ns1.sharp.co.jp
+; answered for jp.sharp. with sharp. in 2020.
+$ORIGIN .
+$TTL 3600
+@		IN	SOA	ns.root. root.root. 1 3600 900 604800 3600
+@		IN	NS	ns.root.
+ns.root.	IN	A	{{ROOT_ADDR}}
+host.insecure.	IN	A	192.0.2.10
