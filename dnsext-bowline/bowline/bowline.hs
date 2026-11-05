@@ -264,6 +264,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
             , udp_stop = stopped stopper
+            , udp_drain = (\case Quit -> True; _ -> False) <$> getCommand mng0
             }
 
 main :: IO ()

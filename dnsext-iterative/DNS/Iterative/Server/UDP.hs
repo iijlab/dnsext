@@ -10,7 +10,7 @@ where
 
 -- GHC packages
 import Control.Concurrent.STM
-import Control.Monad (void, when)
+import Control.Monad (void, when, (<=<))
 import Data.IORef
 import qualified Data.IntSet as Set
 
@@ -38,6 +38,9 @@ data UdpServerConfig = UdpServerConfig
     { udp_interface_automatic :: Bool
     , udp_stop :: STM ()
     -- ^ Fires when the server is told to stop.
+    , udp_drain :: IO Bool
+    -- ^ Whether the datagrams already come are still read once stopped:
+    --   when nothing takes the socket over.
     }
 
 ----------------------------------------------------------------
@@ -63,13 +66,26 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     -- or dropped.
     pendings <- newTVarIO Set.empty
     counter <- newIORef 0
+    draining <- newIORef False
     let newPending = do
             i <- atomicModifyIORef' counter $ \n -> (n + 1, n)
             pendingOp pendings i $ \add pop -> pop <$ add
         answered = readTVar pendings >>= check . Set.null
         toSender = atomically . writeTBQueue qs
         fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (udp_stop >> answered))
-        recv = NSB.recvMsgWith s 2048 2048 0 udp_stop >>= either (const $ return Nothing) received
+        recvOr = NSB.recvMsgWith s 2048 2048 0
+        -- Draining reads until a read would wait; the graceful shutdown's
+        -- cap bounds it under a steady flow.
+        recv = do
+            d <- readIORef draining
+            r <- if d then recvOr . (check <=< readTVar) =<< registerDelay 1000 else recvOr udp_stop
+            case r of
+                Right x -> received x
+                Left ()
+                    | d -> return Nothing
+                    | otherwise -> do
+                        drain <- udp_drain
+                        if drain then writeIORef draining True >> recv else return Nothing
         received (peersa, bs, cmsgs, _) = do
             incStatsUDP53 peersa (stats_ env)
             return $ Just (bs, PeerInfoUDP peersa cmsgs)
