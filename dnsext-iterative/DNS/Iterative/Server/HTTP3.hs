@@ -6,10 +6,12 @@ module DNS.Iterative.Server.HTTP3 (
 ) where
 
 -- GHC packages
+import Control.Concurrent.STM (atomically, newEmptyTMVarIO, putTMVar, takeTMVar)
 import Control.Monad (when)
 import Data.Functor
 
 -- dnsext-utils
+import qualified DNS.ThreadAsync as TAsync
 import DNS.Transport.Types
 
 -- other packages
@@ -33,11 +35,19 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
     name <- mapM socketName ss <&> \xs -> show xs ++ "/h3"
-    let http3server = withLocationIOE name $ stoppable vc_stop $ \install ->
-            T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
-            QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
-                H3.runIO conn (conf mgr)
-                $ doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative
+    let http3server = withLocationIOE name $ do
+            sessions <- newSessions
+            stoppableDraining vc_stop vc_drain sessions $ \draining install ->
+                T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
+                QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
+                    withSession sessions $ do
+                        -- http3 reads on after the application is done, so
+                        -- a drained session ends the connection itself.
+                        done <- newEmptyTMVarIO
+                        TAsync.race_ (name ++ "-h3") (H3.runIO conn (conf mgr)
+                            $ doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative
+                            $ Just (draining, atomically $ putTMVar done ()))
+                            (name ++ "-drained") (atomically $ takeTMVar done)
     return [http3server]
   where
     (_synth, foldCached, foldIterative) = extendSynthesis synth

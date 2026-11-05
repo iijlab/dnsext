@@ -114,6 +114,9 @@ data VcServerConfig = VcServerConfig
     , vc_interface_automatic :: Bool
     , vc_stop :: Stopper
     -- ^ What tells the server to stop.
+    , vc_drain :: IO Bool
+    -- ^ Whether the sessions of a server sharing its socket (QUIC) answer
+    --   what they have taken once stopped: when nothing takes it over.
     }
 
 withLocationIOE :: String -> IO a -> IO a

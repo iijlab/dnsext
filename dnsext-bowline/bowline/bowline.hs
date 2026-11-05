@@ -258,13 +258,15 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
                 , vc_stop = stopper
+                , vc_drain = quitting
                 }
     conc = mapConcurrently_ id
+    quitting = (\case Quit -> True; _ -> False) <$> getCommand mng0
     udpconf stopper =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
             , udp_stop = stopped stopper
-            , udp_drain = (\case Quit -> True; _ -> False) <$> getCommand mng0
+            , udp_drain = quitting
             }
 
 main :: IO ()

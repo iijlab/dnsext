@@ -5,6 +5,7 @@ module DNS.Iterative.Server.Stop (
     stopped,
     stopAll,
     stoppable,
+    stoppableDraining,
     Sessions,
     newSessions,
     withSession,
@@ -12,7 +13,9 @@ module DNS.Iterative.Server.Stop (
 ) where
 
 -- GHC packages
+import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
+import Control.Monad (void)
 import Control.Concurrent.STM
 import qualified Control.Exception as E
 
@@ -37,6 +40,24 @@ stopAll (Stopper var acts) = modifyMVar_ acts $ \m -> do
 stoppable :: Stopper -> ((IO () -> IO ()) -> IO a) -> IO a
 stoppable (Stopper _ acts) server = server $ \act ->
     modifyMVar_ acts $ maybe (Nothing <$ act) (return . Just . (act :))
+
+-- | Like 'stoppable', for a server whose sessions share its socket (QUIC).
+--   Told to stop while nothing takes the socket over ('IO' action), it
+--   fires the 'STM' action for the sessions to answer what they have taken
+--   and end, and stops the server once they have.
+stoppableDraining
+    :: Stopper -> IO Bool -> Sessions -> (STM () -> (IO () -> IO ()) -> IO a) -> IO a
+stoppableDraining stopper drain sessions server = do
+    draining <- newTVarIO False
+    stoppable stopper $ \install -> server (readTVar draining >>= check) $ \stop ->
+        install $ do
+            d <- drain
+            if d
+                then do
+                    atomically $ writeTVar draining True
+                    -- Run where 'stopAll' must not wait.
+                    void $ forkIO $ waitSessions sessions >> stop
+                else stop
 
 -- | The number of sessions running.
 newtype Sessions = Sessions (TVar Int)

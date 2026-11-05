@@ -10,8 +10,12 @@ module DNS.Iterative.Server.HTTP2 (
 ) where
 
 -- GHC packages
+import Control.Applicative ((<|>))
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (STM, atomically, check, readTVar)
 import Control.Exception (bracket)
-import Control.Monad (forever)
+import Control.Monad (forever, unless)
+import qualified Data.IntSet as Set
 import Data.ByteString.Builder (byteString)
 import qualified Data.ByteString.Char8 as C8
 import Data.Functor
@@ -52,7 +56,7 @@ http2Server VcServerConfig{..} env synth foldCached foldIterative toCacher s = d
             sessions <- newSessions
             stoppable vc_stop $ \install ->
                 H2TLS.runIO settings{H2TLS.settingsInstallShutdownHandler = install} vc_credentials s
-                    $ fmap (withSession sessions) . doHTTP "h2" sbracket incQuery env toCacher H2 synth foldCached foldIterative
+                    $ fmap (withSession sessions) . doHTTP "h2" sbracket incQuery env toCacher H2 synth foldCached foldIterative Nothing
             waitSessions sessions
     return [http2server]
   where
@@ -83,7 +87,7 @@ http2cServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = 
             sessions <- newSessions
             stoppable vc_stop $ \install ->
                 H2TLS.runIOH2C settings{H2TLS.settingsInstallShutdownHandler = install} s
-                    $ fmap (withSession sessions) . doHTTP "h2c" sbracket incQuery env toCacher H2C synth foldCached foldIterative
+                    $ fmap (withSession sessions) . doHTTP "h2c" sbracket incQuery env toCacher H2C synth foldCached foldIterative Nothing
             waitSessions sessions
     return [http2server]
   where
@@ -121,9 +125,12 @@ doHTTP
     -> Synthesis
     -> (forall p . DNSQuery p -> FoldResponse IO p)
     -> (forall q . FoldResponse IO q)
+    -> Maybe (STM (), IO ())
+    -- ^ Fires when the session is to answer what it has taken and end,
+    --   and what tells it has.
     -> ServerIO a
     -> IO (IO ())
-doHTTP name sbracket incQuery env toCacher dox synth foldCached foldIterative ServerIO{..} = do
+doHTTP name sbracket incQuery env toCacher dox synth foldCached foldIterative mdrain ServerIO{..} = do
     (toSender, fromX, _, _, senderQ, pendings) <- mkConnector'
     let hrecv = exceptionCase $ \es -> logLn env Log.DEMO (name ++ "-recv: " ++ es)
         rloop i = do
@@ -154,7 +161,16 @@ doHTTP name sbracket incQuery env toCacher dox synth foldCached foldIterative Se
                         response = H2.responseBuilder HT.ok200 header $ byteString bs'
                     sioWriteResponse (fromSuperStream sprstrm) response
         sender = hsend sloop
-        run = sbracket $ TAsync.concurrently_ ("bw." ++ name ++ "-send") sender ("bw." ++ name ++ "-recv") receiver
+        session = TAsync.concurrently_ ("bw." ++ name ++ "-send") sender ("bw." ++ name ++ "-recv") receiver
+        -- Ending once nothing is pending, and nothing comes within a moment.
+        idle = readTVar pendings >>= check . Set.null
+        drained = do
+            atomically idle
+            threadDelay 1000
+            done <- atomically $ (True <$ idle) <|> pure False
+            unless done drained
+        draining (drain, done) = atomically drain >> drained >> done
+        run = sbracket $ maybe session (\d -> TAsync.race_ ("bw." ++ name ++ "-drain") (draining d) ("bw." ++ name) session) mdrain
     return (run >> sioDone)
   where
     mkHeader bs =
