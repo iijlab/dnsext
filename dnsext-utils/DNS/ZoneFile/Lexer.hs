@@ -187,6 +187,20 @@ comment :: MonadParser W8 s m => m ()
 comment = void (many spc *> lineComment *> optional newline)
 
 {- FOURMOLU_DISABLE -}
+-- | The @\\#@ of RFC 3597.
+--
+-- >>> runParser ehash "\\# 4 0a0b0c0d"
+-- Right (()," 4 0a0b0c0d")
+-- >>> isLeft $ runParser ehash "\\#1"
+-- True
+-- >>> isLeft $ runParser ehash "#"
+-- True
+ehash :: MonadParser W8 s m => m ()
+ehash = do
+    _ <- string "\\#"
+    m <- optional (lookAhead cstringByte)
+    maybe (pure ()) (const $ raise "ehash: more of a character-string after \\#") m
+
 lexerToken :: MonadParser W8 s m => m Token
 lexerToken =
     Directive <$> directive     <|>
@@ -195,6 +209,7 @@ lexerToken =
     RParen <$ byte _parenright  <|>
     Blank <$ some spc           <|>
     Dot <$ byte _period         <|>
+    EHash <$ ehash              <|>
     CS <$> lex_cstring          <|>
     Comment <$ comment
 {- FOURMOLU_ENABLE -}

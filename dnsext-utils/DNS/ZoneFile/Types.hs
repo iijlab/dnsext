@@ -76,6 +76,7 @@ data Token
     | Blank
     | Dot
     | CS CS'
+    | EHash  -- the @\\#@ of RFC 3597
     | Comment
     | RSep
     deriving (Eq, Show)

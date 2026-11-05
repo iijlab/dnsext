@@ -203,13 +203,13 @@ rdataTXT = rd_txt_n . txts <$> ((:) <$> nbstring <*> many (blank *> nbstring))
 --   The hexadecimal may be broken by whitespace, so it is gathered up
 --   before it is read.
 --
--- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "4",Blank,CS "0a0b0c0d"]
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [EHash,Blank,CS "4",Blank,CS "0a0b0c0d"]
 -- Right ((RD_Unknown(65280) \# 4 0a0b0c0d,Context "." "." 3600 IN),[])
--- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "0"]
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [EHash,Blank,CS "0"]
 -- Right ((RD_Unknown(65280) \# 0 ,Context "." "." 3600 IN),[])
 rdataGeneric :: TYPE -> Parser RData
 rdataGeneric ty = do
-    _    <- this genericMark
+    _    <- this EHash
     len  <- blank *> readCString "rdlength"
     hex  <- concat <$> many (blank *> (fromCString <$> cstring))
     o    <- either (parseError . (("Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": ") ++)) pure
@@ -219,11 +219,6 @@ rdataGeneric ty = do
       $ "Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": said " ++ show len
         ++ " octets and wrote " ++ show (Opaque.length o)
     pure $ rd_unknown ty o
-
--- | The @\\#@ which says the RDATA is written the generic way: a @#@
---   which the lexer has seen escaped.
-genericMark :: Token
-genericMark = CS $ estringToCS' [E 35]
 {- FOURMOLU_ENABLE -}
 
 rdataMX :: Parser RData
