@@ -107,7 +107,7 @@ canonicalRRsetSorted rrs leftK rightK = either leftK id $ do
     let rds = [rdata rr | rr <- rrs]
     unless (all ((== 1) . length) $ group rds) $
         Left "canonicalRRsetSorted: requires unique RData set"
-    return $ rightK (rrname hd) (rrtype hd) (rrclass hd) (minimum $ map rrttl rrs) rds
+    return $ rightK (rrname hd) (rrtype hd) (rrclass hd) (foldl' min (rrttl hd) $ map rrttl xs) rds
 {- FOURMOLU_ENABLE -}
 
 -- | Checking the sorted RRSet and returning a continuation.
