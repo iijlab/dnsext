@@ -63,6 +63,7 @@ data Config = Config
     , cnf_dns_addrs :: [String]
     , cnf_dns64_addrs :: [String]
     , cnf_resolve_timeout :: Int
+    , cnf_graceful_shutdown_timeout :: Int
     , cnf_cachers :: Int
     , cnf_workers :: Int
     , cnf_max_global_quota :: Int
@@ -140,6 +141,7 @@ defaultConfig =
         , cnf_dns_addrs = ["127.0.0.1", "::1"]
         , cnf_dns64_addrs = []
         , cnf_resolve_timeout = 10000000
+        , cnf_graceful_shutdown_timeout = 10
         , cnf_cachers = 4
         , cnf_workers = 128
         , cnf_max_global_quota = 64
@@ -240,6 +242,7 @@ showConfig2 conf =
     , field'_ "dns addrs" (unwords . cnf_dns_addrs)
     , field'_ "dns64 addrs" (unwords . cnf_dns64_addrs)
     , field' "resolve timeout" cnf_resolve_timeout
+    , field' "graceful shutdown timeout" cnf_graceful_shutdown_timeout
     , field' "cachers" cnf_cachers
     , field' "workers" cnf_workers
     , field' "max global quota" cnf_max_global_quota
@@ -321,6 +324,7 @@ makeConfig def conf = do
     cnf_dns64_addrs <- get "dns64-addrs" cnf_dns64_addrs
     cnf_nsid <- get "nsid" cnf_nsid
     cnf_resolve_timeout <- get "resolve-timeout" cnf_resolve_timeout
+    cnf_graceful_shutdown_timeout <- get "graceful-shutdown-timeout" cnf_graceful_shutdown_timeout
     cnf_cachers <- get "cachers" cnf_cachers
     cnf_workers <- get "workers" cnf_workers
     cnf_max_global_quota <- get "max-global-quota" cnf_max_global_quota

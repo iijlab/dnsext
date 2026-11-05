@@ -6,7 +6,7 @@
 module Main where
 
 -- GHC
-import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
 import Control.Concurrent.Async (mapConcurrently_, race_, waitCatchSTM)
 import Control.Concurrent.STM
 import Control.Exception (bracket_, finally, throwIO)
@@ -218,7 +218,12 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     -- never read one socket at once.
     let stopServers = atomically (waitQuit mng0) >> Server.stopAll stopper
         handOver' = conc [conc monitor, stopServers] >> stopAPIs >> handOver ownSocks
-    race_ concPipeline (conc [concServer, handOver'])
+        -- What the graceful shutdown has not finished in time is cut.
+        cutOff = do
+            atomically $ Server.stopped stopper
+            threadDelay $ cnf_graceful_shutdown_timeout * 1000000
+            putLines Log.WARN Nothing ["graceful shutdown: cut after " ++ show cnf_graceful_shutdown_timeout ++ " s"]
+    race_ concPipeline (conc [concServer `race_` cutOff, handOver'])
         -- Teardown
         `finally` do
             mapM_ killThread $ tidA ++ tidW
