@@ -9,7 +9,7 @@ module DNS.Iterative.Server.TCP (
 where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, writeTVar)
 import qualified Control.Exception as E
 import Control.Monad (join)
 import Data.Functor
@@ -79,9 +79,9 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
                 writeIORef cancelRef cancel
                 pure readable
         (vcSess, toSender, fromX) <- initVcSession waitRead
-        -- Stopping the server ends the session as its idle timeout does:
-        -- the queries read so far are answered first.
-        let onStop = atomically $ stopped vc_stop >> enableVcTimeout (vcTimeout_ vcSess)
+        -- Stopping the server ends the session as its idle timeout does,
+        -- once what has already come is read and answered.
+        let onStop = atomically $ stopped vc_stop >> writeTVar (vcStopping_ vcSess) True
         TAsync.withAsync "bw.tcp-stop" onStop $ \_ -> flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = Network.recv sock
             let onRecv bs = do
