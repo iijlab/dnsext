@@ -11,7 +11,7 @@ where
 -- GHC packages
 import Control.Concurrent.STM
 import Control.Exception (finally)
-import Control.Monad (void, when, (<=<))
+import Control.Monad (void, when)
 import Data.IORef
 import qualified Data.IntSet as Set
 
@@ -67,7 +67,8 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     -- or dropped.
     pendings <- newTVarIO Set.empty
     counter <- newIORef 0
-    draining <- newIORef False
+    -- Once draining, what was read in its window and not yet handed on.
+    draining <- newIORef Nothing
     recvDone <- newTVarIO False
     let newPending = do
             i <- atomicModifyIORef' counter $ \n -> (n + 1, n)
@@ -77,18 +78,31 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
         -- After the receiver, which may still be reading once stopped.
         fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (readTVar recvDone >>= check >> answered))
         recvOr = NSB.recvMsgWith s 2048 2048 0
-        -- Draining reads until a read would wait; the graceful shutdown's
-        -- cap bounds it under a steady flow.
         recv = do
             d <- readIORef draining
-            r <- if d then recvOr . (check <=< readTVar) =<< registerDelay 1000 else recvOr udp_stop
-            case r of
-                Right x -> received x
-                Left ()
-                    | d -> return Nothing
-                    | otherwise -> do
-                        drain <- udp_drain
-                        if drain then writeIORef draining True >> recv else return Nothing
+            case d of
+                Just xs -> case xs of
+                    [] -> return Nothing
+                    x : rest -> writeIORef draining (Just rest) >> received x
+                Nothing -> do
+                    r <- recvOr udp_stop
+                    case r of
+                        Right x -> received x
+                        Left () -> do
+                            drain <- udp_drain
+                            if drain
+                                then (drained >>= writeIORef draining . Just) >> recv
+                                else return Nothing
+        -- What has come, read at once rather than as the pipeline takes it:
+        -- until a read would wait, within a window, so that what comes under
+        -- a steady flow is not taken for what had come.
+        drained = do
+            window <- registerDelay drainWindow
+            let loop acc = do
+                    grace <- registerDelay 1000
+                    r <- recvOr $ (readTVar grace >>= check) `orElse` (readTVar window >>= check)
+                    either (const $ return $ reverse acc) (loop . (: acc)) r
+            loop []
         received (peersa, bs, cmsgs, _) = do
             incStatsUDP53 peersa (stats_ env)
             return $ Just (bs, PeerInfoUDP peersa cmsgs)
@@ -99,6 +113,10 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
         sender = senderLogic env send fromX
         receiver' = receiver `finally` atomically (writeTVar recvDone True)
     return [TAsync.concurrently_ "bw.udp-send" sender "bw.udp-recv" receiver']
+
+-- | How long a quitting server goes on reading what has come (microseconds).
+drainWindow :: Int
+drainWindow = 100000
 
 setPktInfo :: Socket -> IO ()
 setPktInfo s = do
