@@ -10,6 +10,7 @@ where
 
 -- GHC packages
 import Control.Concurrent.STM
+import Control.Exception (finally)
 import Control.Monad (void, when, (<=<))
 import Data.IORef
 import qualified Data.IntSet as Set
@@ -67,12 +68,14 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     pendings <- newTVarIO Set.empty
     counter <- newIORef 0
     draining <- newIORef False
+    recvDone <- newTVarIO False
     let newPending = do
             i <- atomicModifyIORef' counter $ \n -> (n + 1, n)
             pendingOp pendings i $ \add pop -> pop <$ add
         answered = readTVar pendings >>= check . Set.null
         toSender = atomically . writeTBQueue qs
-        fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (udp_stop >> answered))
+        -- After the receiver, which may still be reading once stopped.
+        fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (readTVar recvDone >>= check >> answered))
         recvOr = NSB.recvMsgWith s 2048 2048 0
         -- Draining reads until a read would wait; the graceful shutdown's
         -- cap bounds it under a steady flow.
@@ -94,7 +97,8 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
         send _ _ = return ()
         receiver = receiverLogic env mysa recv newPending toCacher toSender UDP synth foldCached foldIterative
         sender = senderLogic env send fromX
-    return [TAsync.concurrently_ "bw.udp-send" sender "bw.udp-recv" receiver]
+        receiver' = receiver `finally` atomically (writeTVar recvDone True)
+    return [TAsync.concurrently_ "bw.udp-send" sender "bw.udp-recv" receiver']
 
 setPktInfo :: Socket -> IO ()
 setPktInfo s = do
