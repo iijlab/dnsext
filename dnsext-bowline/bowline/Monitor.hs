@@ -8,7 +8,7 @@ module Monitor (
 
 -- GHC packages
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkFinally, getNumCapabilities, threadWaitRead)
+import Control.Concurrent (forkFinally, getNumCapabilities)
 import Control.Concurrent.Async (waitSTM)
 import Control.Concurrent.STM (STM, atomically)
 import Control.Exception (SomeException, throwIO)
@@ -148,17 +148,14 @@ monitors conf env mng@Control{..} gch srvInfo ps monInfo =
     handle :: (IOError -> IO a) -> IO a -> IO a
     handle onError = either onError return <=< tryIOError
     monitorServer s = do
-        let step = do
-                socketWaitRead s
-                (sock, addr) <- S.accept s
+        let accepted (sock, addr) = do
                 sockh <- S.socketToHandle sock ReadWriteMode
                 let repl = console conf env mng gch srvInfo monInfo sockh sockh $ show addr
                 void $ forkFinally repl (\_ -> hClose sockh)
+            step = mapM accepted =<< S.acceptWith s waitQuit
             loop =
                 either (const $ return ()) (const loop)
-                    =<< withWait
-                        waitQuit
-                        (handle (logLn Log.INFO . ("monitor io-error: " ++) . show) step)
+                    =<< handle ((Right () <$) . logLn Log.INFO . ("monitor io-error: " ++) . show) step
         S.listen s 5
         loggingException (logLn Log.INFO) loop
 {- FOURMOLU_ENABLE -}
@@ -302,9 +299,6 @@ withWait qstm blockAct =
         atomically $
             (Left <$> qstm)
                 <|> (Right <$> waitSTM a)
-
-socketWaitRead :: Socket -> IO ()
-socketWaitRead sock = S.withFdSocket sock $ threadWaitRead . fromIntegral
 
 {- FOURMOLU_DISABLE -}
 getShowParam :: Config -> [String] -> [String] -> IO [String]
