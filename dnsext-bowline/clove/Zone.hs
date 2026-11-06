@@ -455,7 +455,7 @@ loadSourceWithSigning env rolled z = case zoneSigning z of
         (keyInfoKSK, dnskeyrr) <- loadKSKInfo env fresh zoneDir kskKeyConfig
         signKey <- makeSigner kskKeyConfig keyInfoKSK
         ((_keyInfoZSK0, dnskeyrr0), (keyInfoZSK1, dnskeyrr1), (_keyInfoZSK2, dnskeyrr2)) <-
-            loadZSKInfo env fresh zoneDir signingZSKPreserve zskKeyConfig
+            loadZSKInfo env fresh zoneDir zskKeyConfig
         signZone0 <- makeSigner zskKeyConfig keyInfoZSK1
         let signZone = maybe signZone0 (`inNameOf` signZone0) signingSigner
         db <-
@@ -645,7 +645,6 @@ readSigning zcheck env dom ZoneConf{..}
     | otherwise = do
         signer <- readSigner zcheck cnf_signer
         checkDurations cnf_rrsig_lifetime cnf_zsk_rollover_duration
-        checkPreserve cnf_zsk_preserve
         kskAlgo <- case toPubAlgo cnf_ksk_algo of
             Just pa0 -> return pa0
             Nothing -> E.ioError $ E.userError $ "Public Algo: " ++ cnf_ksk_algo ++ " is unknown"
@@ -692,7 +691,6 @@ readSigning zcheck env dom ZoneConf{..}
                     , signingZSKConfig = keyConfZSK
                     , signingSigner = signer
                     , signingZSKRollover = cnf_zsk_rollover_duration
-                    , signingZSKPreserve = cnf_zsk_preserve
                     , signingN3P = mn3p
                     }
 
@@ -815,23 +813,6 @@ checkKeySize env what alg size
     | otherwise = return ()
   where
     failWith = E.ioError . E.userError
-
--- | Fewest ZSKs which may be kept.  Three of them are published at any
---   time -- the previous key, the one signing and the next one -- so
---   keeping fewer would have every load generate a whole new set.
-minPreserve :: Int
-minPreserve = 3
-
-checkPreserve :: Int -> IO ()
-checkPreserve preserve
-    | preserve < minPreserve =
-        E.ioError $
-            E.userError $
-                "zsk-preserve must be at least "
-                    ++ show minPreserve
-                    ++ ", the number of ZSKs published at a time, but is "
-                    ++ show preserve
-    | otherwise = return ()
 
 ----------------------------------------------------------------
 

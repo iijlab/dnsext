@@ -472,7 +472,7 @@ syncZone env zoneref = do
             Nothing -> return False
             Just Signing{..} ->
                 handleLogErrIn env WARNING (zoneLabel zoneName) True $
-                    rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKPreserve signingZSKConfig
+                    rolloverZSK (zoneDirectory zoneName) signingZSKRollover signingZSKConfig
         -- reading zone source, and telling the secondaries about it
         load rolled
 

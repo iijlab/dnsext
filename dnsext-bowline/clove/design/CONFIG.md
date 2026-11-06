@@ -33,7 +33,7 @@ clove が設定ファイルの誤りや矛盾をどう扱うかに関する設�
 - 同じゾーンの重複。
 - 署名の設定の誤り。
   - 知らないアルゴリズム、KSK と ZSK でアルゴリズムが違う、RSA の鍵の長さが範囲の外。
-  - `rrsig-lifetime` と `zsk-rollover-duration` の関係が成り立たない、`zsk-preserve` が 3 より小さい。
+  - `rrsig-lifetime` と `zsk-rollover-duration` の関係が成り立たない。
 - `--insecure` を付けずに書いた、`--insecure` が要る設定（`spoof-*`、`signer`）。
   - わざと間違った応答を返す設定なので、うっかり本番で効かないようにするためです。
 
