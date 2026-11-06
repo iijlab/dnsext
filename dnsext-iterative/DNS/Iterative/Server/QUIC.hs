@@ -25,6 +25,7 @@ import Network.TLS (Credentials (..), SessionManager)
 import DNS.Iterative.Imports
 import DNS.Iterative.Internal (Env (..))
 import DNS.Iterative.Server.Pipeline
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Server.UDP
 import DNS.Iterative.Stats (incStatsDoQ, sessionStatsDoQ)
@@ -35,7 +36,8 @@ quicServers :: VcServerConfig -> ServerActions
 quicServers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
-    let quicserver = withLocationIOE "QUIC" $ QUIC.runWithSockets ss sconf go
+    let quicserver = withLocationIOE "QUIC" $ stoppable vc_stop $ \install ->
+            QUIC.runWithSockets ss sconf{scInstallShutdownHandler = install} go
     return [quicserver]
   where
     (_synth, foldCached, foldIterative) = extendSynthesis synth
