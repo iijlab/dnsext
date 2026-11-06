@@ -31,6 +31,7 @@ import qualified Network.HTTP2.TLS.Server as H2
 -- this package
 import DNS.Iterative.Internal (DNSQuery, FoldResponse, Env (..))
 import DNS.Iterative.Server.Pipeline
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Stats (incStatsDoT, sessionStatsDoT)
 
@@ -48,7 +49,9 @@ tlsServer :: VcServerConfig -> Env -> Synthesis
     -> (ToCacher -> IO ()) -> Socket -> IO [IO ()]
 tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/tls")
-    let tlsserver = withLocationIOE name $ H2.runTLSWithSocket settings vc_credentials s "dot" go
+    let tlsserver = withLocationIOE name $
+            stoppable vc_stop $ \install ->
+                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install, H2.settingsUnsafeClose = True} vc_credentials s "dot" go
     return [tlsserver]
   where
     maxSize = fromIntegral vc_query_max_size
@@ -92,15 +95,17 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
            `finally`
            atomically (writeTVar vsRunning False)
           ) $ \_ ->
-            reader backend (readTVar vsRunning) inpq
+            reader backend vc_stop (readTVar vsRunning) inpq
         logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
 
-reader :: H2.IOBackend -> STM VsRunning -> TBQueue ByteString -> IO ()
-reader backend vsRunning inpq = loop
+-- | Stopping the server ends the session as the peer's EOF does: the
+--   queries read so far are answered first.
+reader :: H2.IOBackend -> STM () -> STM VsRunning -> TBQueue ByteString -> IO ()
+reader backend stop vsRunning inpq = loop
   where
     loop = do
         let proceed = do
-                pkt <- H2.recv backend
+                pkt <- either (const mempty) id <$> H2.recvWith backend stop
                 atomically $ writeTBQueue inpq pkt
                 if pkt /= mempty
                     then loop
