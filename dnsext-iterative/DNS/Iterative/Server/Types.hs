@@ -27,7 +27,6 @@ module DNS.Iterative.Server.Types (
 ) where
 
 -- GHC
-import Control.Concurrent.STM (STM)
 import Data.ByteString (ByteString)
 import System.IO.Error (ioeSetLocation, tryIOError)
 
@@ -47,6 +46,7 @@ import Network.TLS (Credentials (..), SessionManager)
 
 -- this package
 import DNS.Iterative.Query (DNSQuery, Env, FoldResponse)
+import DNS.Iterative.Server.Stop (Stopper)
 
 data SuperStream = StreamH2 H2I.Stream | StreamQUIC QUIC.Stream deriving (Show)
 
@@ -112,8 +112,8 @@ data VcServerConfig = VcServerConfig
     , vc_session_manager :: SessionManager
     , vc_early_data_size :: Int
     , vc_interface_automatic :: Bool
-    , vc_stop :: STM ()
-    -- ^ Fires when the server is told to stop.
+    , vc_stop :: Stopper
+    -- ^ What tells the server to stop.
     }
 
 withLocationIOE :: String -> IO a -> IO a

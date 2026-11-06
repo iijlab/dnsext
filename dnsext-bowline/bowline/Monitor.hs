@@ -3,6 +3,7 @@
 
 module Monitor (
     bindMonitor,
+    monitorAddrs,
     monitors,
 ) where
 
@@ -19,6 +20,7 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char (toUpper)
 import Data.Functor (($>))
 import Data.List (find, isInfixOf)
+import Data.Maybe (isNothing)
 import Foreign.Ptr (FunPtr, castFunPtrToPtr)
 import System.IO (
     Handle,
@@ -53,7 +55,7 @@ import Network.Socket (
     SockAddr,
     Socket,
     SocketOption (KeepAlive, SockOpt),
-    SocketType (Stream),
+    SocketType (..),
  )
 import System.Posix (getEffectiveGroupID, getEffectiveUserID)
 
@@ -93,9 +95,14 @@ qaction :: IO Bool -> Command
 qaction = QuitCmd . QAction
 
 {- FOURMOLU_DISABLE -}
-bindMonitor :: Config -> Env -> IO ([(Socket, SockAddr)], [String])
-bindMonitor Config{..} env = do
-    ais  <- ainfosSkipError putStrLn Stream (fromIntegral cnf_monitor_port) cnf_monitor_addrs
+-- | The addresses the monitor listens on.
+monitorAddrs :: (String -> IO ()) -> Config -> IO [AddrInfo]
+monitorAddrs logLn Config{..} = ainfosSkipError logLn Stream (fromIntegral cnf_monitor_port) cnf_monitor_addrs
+
+-- | The action takes a socket over from the previous generation.
+bindMonitor :: ((SocketType, SockAddr) -> IO (Maybe Socket)) -> Config -> Env -> IO ([(Socket, SockAddr)], [String])
+bindMonitor inherit conf@Config{..} env = do
+    ais  <- monitorAddrs putStrLn conf
     result . unzip <$> mapM servSock ais
   where
     kaNoAvails hasSock = [unwords $ "no-avail sockopts:" : map show keepNotAvails | hasSock]
@@ -104,12 +111,14 @@ bindMonitor Config{..} env = do
     v6only  sock  S.SockAddrInet6 {} = S.setSocketOption sock S.IPv6Only 1
     v6only _sock  _                  = pure ()
     servSock ai@AddrInfo{addrAddress = a} = withLocationIOE (show a ++ "/mon") $ do
-        sock <- S.socket (addrFamily ai) (addrSocketType ai) (addrProtocol ai)
-        v6only sock a
-        S.setSocketOption sock S.ReuseAddr 1
+        inherited <- inherit (addrSocketType ai, a)
+        sock <- maybe (S.socket (addrFamily ai) (addrSocketType ai) (addrProtocol ai)) return inherited
+        let fresh = when (isNothing inherited)
+        fresh $ v6only sock a
+        fresh $ S.setSocketOption sock S.ReuseAddr 1
         let enableKeepAlive = setSocketKeepAlive sock cnf_monitor_keep_interval
         ka <- keepAliveAvail (pure "no-avail") (enableKeepAlive $> "enabled")
-        S.bind sock a
+        fresh $ S.bind sock a
         let monInfo1 = unwords ["monitor:", show a, "<keepalive-" ++ ka ++ ">"]
         logLn Log.INFO monInfo1 $> ((sock, a), monInfo1)
 {- FOURMOLU_ENABLE -}
