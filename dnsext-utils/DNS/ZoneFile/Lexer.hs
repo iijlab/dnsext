@@ -176,9 +176,9 @@ directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 -- Right ("abc","")
 -- >>> runParser lex_cstring "\"y.z\""
 -- Right ("y.z","")
-lex_cstring :: MonadParser W8 s m => m CS'
+lex_cstring :: MonadParser W8 s m => m CString
 lex_cstring =
-    CS' . cstringW8 <$>
+    cstringW8 <$>
     ( some cstringByte                  <|>
       quote *> many quotedByte <* quote )
 {- FOURMOLU_ENABLE -}

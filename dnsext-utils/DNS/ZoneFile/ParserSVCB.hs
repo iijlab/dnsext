@@ -90,7 +90,7 @@ svcPriority :: MonadParser Token s m => m Word16
 svcPriority = readCString "svc_priority"
 
 svcParam :: MonadParser Token s m => m (SvcParamKey, SvcParamValue)
-svcParam = toSvcParam . concatMap (Short.unpack . cs_cs) =<< some (cstring' <|> dot $> fromString ".")
+svcParam = toSvcParam . concatMap Short.unpack =<< some (cstring <|> dot $> fromString ".")
 
 {- FOURMOLU_DISABLE -}
 -- | A SvcParam from the bytes of its presentation, the character-string decoding done.

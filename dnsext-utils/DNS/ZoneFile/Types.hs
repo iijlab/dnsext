@@ -2,9 +2,8 @@ module DNS.ZoneFile.Types where
 
 -- ghc packages
 import qualified Data.ByteString.Short as Short
-import Data.Char (chr, ord)
+import Data.Char (chr)
 import Data.List (unfoldr)
-import Data.String (IsString (..))
 import Data.Word (Word8)
 
 -- dnsext-* packages
@@ -32,16 +31,6 @@ cstringW8 = Short.pack
 fromCString :: CString -> String
 fromCString = map (chr . fromIntegral) . Short.unpack
 
--- | A character-string: the bytes its escapes stand for.
-newtype CS' = CS' {cs_cs :: CString} deriving (Eq)
-
-instance Show CS' where
-    show (CS' s) = show s
-
-instance IsString CS' where
-    -- naive instance for tests
-    fromString s = CS' $ cstringW8 [fromIntegral $ ord c | c <- s]
-
 data Token
     = Directive Directive
     | At
@@ -49,7 +38,7 @@ data Token
     | RParen
     | Blank
     | Dot
-    | CS CS'
+    | CS CString
     | EHash  -- the @\\#@ of RFC 3597
     | Comment
     | RSep

@@ -25,7 +25,7 @@ blank = this Blank
 
 {- FOURMOLU_DISABLE -}
 -- | A character-string token; 'EHash' is the character-string @#@ here.
-lstring :: MonadParser Token s m => m CS'
+lstring :: MonadParser Token s m => m CString
 lstring = do
     t <- token
     case t of
@@ -33,14 +33,11 @@ lstring = do
         EHash        -> pure $ fromString "#"
         _            -> raise $ "Parser.lstring: not CString token: " ++ show t
 
-cstring' :: MonadParser Token s m => m CS'
-cstring' = do
-    cs <- lstring
-    guard (Short.length (cs_cs cs) < 256) <|> raise ("Parser.cstring: too long: " ++ show cs)
-    pure cs
-
 cstring :: MonadParser Token s m => m CString
-cstring = cs_cs <$> cstring'
+cstring = do
+    cs <- lstring
+    guard (Short.length cs < 256) <|> raise ("Parser.cstring: too long: " ++ show cs)
+    pure cs
 {- FOURMOLU_ENABLE -}
 
 readCString :: (Read a, MonadParser Token s m) => String -> m a
