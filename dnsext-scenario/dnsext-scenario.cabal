@@ -72,6 +72,9 @@ extra-source-files:
     test/jp.sharp/*.args
     test/jp.sharp/*.conf
     test/jp.sharp/*.zone
+    test/jp.sharp-2020/*.args
+    test/jp.sharp-2020/*.conf
+    test/jp.sharp-2020/*.zone
 
 source-repository head
     type:     git
@@ -101,6 +104,7 @@ test-suite spec
         Harness
         InjectedDelegationSpec
         JpSharpSpec
+        JpSharp2020Spec
         NsTtlSpec
         OptoutEntSpec
         OrphanGlueSpec
