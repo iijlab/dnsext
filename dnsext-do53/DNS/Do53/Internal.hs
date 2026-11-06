@@ -1,6 +1,7 @@
 module DNS.Do53.Internal (
     -- * TCP related
     openTCP,
+    openTCPWith,
     sendTCP,
     recvTCP,
 

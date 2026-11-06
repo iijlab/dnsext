@@ -5,11 +5,11 @@ module DNS.Iterative.Query.Do53Stub where
 
 -- GHC packages
 import Control.Concurrent (myThreadId)
-import Control.Exception (SomeException (..), bracket, fromException, throwIO)
+import Control.Concurrent.STM
+import Control.Exception (Exception, SomeException (..), bracket, fromException, throwIO)
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
-import System.Timeout (timeout)
 
 -- dnsext-types
 import DNS.Types
@@ -83,8 +83,24 @@ tryDNS ~tag action =
         | otherwise                                  = throwIO se
 {- FOURMOLU_ENABLE -}
 
-timeoutDNS' :: String -> Int -> IO a -> IO a
-timeoutDNS' tag micro action = maybe (throwIO $ DNSErrorInfo TimeoutExpired tag) pure =<< timeout micro action
+-- | Thrown where an operation gives up at the deadline, and turned into
+--   'TimeoutExpired' by 'timeoutDNS'', as 'System.Timeout.timeout' was.
+data Deadline = Deadline deriving Show
+
+instance Exception Deadline
+
+-- | Running the action with a deadline it gives up at, rather than one
+--   which interrupts it.  A negative time is none, as for 'timeout'.
+timeoutDNS' :: String -> Int -> (STM () -> IO a) -> IO a
+timeoutDNS' tag micro action = do
+    giveUp <-
+        if micro < 0
+            then return retry
+            else (\late -> check =<< readTVar late) <$> registerDelay micro
+    action giveUp `E.catch` \Deadline -> throwIO $ DNSErrorInfo TimeoutExpired tag
+
+orDeadline :: IO (Either () a) -> IO a
+orDeadline io = either (\_ -> throwIO Deadline) return =<< io
 
 ----------------------------------------------------------------
 
@@ -92,23 +108,23 @@ timeoutDNS' tag micro action = maybe (throwIO $ DNSErrorInfo TimeoutExpired tag)
 -- | A resolver using UDP and TCP.
 --   fallback once for NoEDNS case
 udpTcpResolver1 :: OneshotResolver
-udpTcpResolver1 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = timeout' $ do
+udpTcpResolver1 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = timeout' $ \giveUp -> do
     WStats.setThreadId ractionBlockingStat =<< myThreadId
-    er1 <- udpResolver1 ri q qctl0
+    er1 <- udpResolver1 giveUp ri q qctl0
     case er1 of
         e1@(Left {})                  -> return e1
         __@(Right rply1)  -> case caseNoEDNS rply1 qctl0 of
-            Nothing                   -> handleTC rply1 qctl0
+            Nothing                   -> handleTC giveUp rply1 qctl0
             Just qctl1            -> do
-                er2 <- udpResolver1 ri q qctl1
+                er2 <- udpResolver1 giveUp ri q qctl1
                 case er2 of
                     e2@(Left {})      -> return e2
-                    __@(Right rply2)  -> handleTC rply2 qctl1
+                    __@(Right rply2)  -> handleTC giveUp rply2 qctl1
   where
     ~qtag = queryTag q (nameTag ri "UDP-TCP") qctl0
     timeout' = timeoutDNS' ("iter.udpTcpResolver1: " ++ qtag) ractionTimeoutTime
-    handleTC rply qctl
-        | tc         = tcpResolver1 ri q qctl
+    handleTC giveUp rply qctl
+        | tc         = tcpResolver1 giveUp ri q qctl
         | otherwise  = return $ Right rply
       where
         tc = trunCation $ flags $ replyDNSMessage rply
@@ -119,8 +135,8 @@ udpTcpResolver1 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = time
 -- | one-shot UDP resolver
 --   - ignoring rinfoUDPRetry
 --   - no fallback for NoEDNS case
-udpResolver1 :: OneshotResolver
-udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = do
+udpResolver1 :: STM () -> OneshotResolver
+udpResolver1 giveUp ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = do
     logNoShort qtag
     tryDNS qtag (go qctl0)
   where
@@ -134,8 +150,8 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
     -- Using only one socket and the same identifier.
     go qctl = bracket open close_ $ \sock -> do
         ractionSetSockOpt sock
-        let send bs = sblockingIO sock "send" (NSB.send sock bs)
-            recv = sblockingIO sock "recv" (NSB.recv sock 2048)
+        let send bs = sblockingIO sock "send" (orDeadline $ NSB.sendWith sock bs giveUp)
+            recv = sblockingIO sock "recv" (orDeadline $ NSB.recvWith sock 2048 giveUp)
         ident <- ractionGenId
         mrply <- sendQueryRecvAnswer q ident qctl send recv
         case mrply of
@@ -196,7 +212,7 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
         addr <- NE.head <$> getAddrInfo (Just hints) (Just host) (Just port)
         E.bracketOnError (openSocket addr) close_ $ \s -> do
             let sa = addrAddress addr
-            sblockingIO s "connect" (connect s sa)
+            sblockingIO s "connect" (orDeadline $ connectWith s sa giveUp)
             return s
 
     close_ s = sblockingIO s "close" (close s)
@@ -204,20 +220,20 @@ udpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl0 = 
 
 {- FOURMOLU_DISABLE -}
 -- | A resolver using TCP.
-tcpResolver1 :: OneshotResolver
-tcpResolver1 ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl =
+tcpResolver1 :: STM () -> OneshotResolver
+tcpResolver1 giveUp ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q qctl =
     -- Using a fresh connection
     bracket open close_ $ \sock -> do
         ractionSetSockOpt sock
-        let send bs = sendVC (\xs -> sblockingIO sock "sendTCP" $ sendTCP sock xs) bs
-            recv = recvVC rinfoVCLimit $ sblockingIO sock "recvTCP" $ recvTCP sock
+        let send bs = sendVC (\xs -> sblockingIO sock "sendTCP" $ orDeadline $ NSB.sendManyWith sock xs giveUp) bs
+            recv = recvVC rinfoVCLimit $ sblockingIO sock "recvTCP" $ orDeadline $ NSB.recvWith sock 2048 giveUp
         vcResolver1 tag send recv ri q qctl
   where
     tag = nameTag ri "TCP"
     blockingIO n = raBlockingIO ra ("tcp-rslv." ++ n ++ ": " ++ fromNameTag tag)
     sblockingIO sock n action = withSockBucket sock $ \sbucket ->
         blockingIO (n ++ "." ++ show sock ++ "." ++ show sbucket) action
-    open = blockingIO "openTCP" (openTCP rinfoIP rinfoPort)
+    open = blockingIO "openTCP" (orDeadline $ openTCPWith giveUp rinfoIP rinfoPort)
     close_ s = sblockingIO s "close" (close s)
 {- FOURMOLU_ENABLE -}
 
