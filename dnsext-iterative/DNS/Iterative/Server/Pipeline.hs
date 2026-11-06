@@ -572,6 +572,9 @@ data VcSession =
     , vcTimeout_        :: TVar VcTimeout
     -- ^ TimerManager tells timed-out. This is another RX event
     --   but defined independently on EOF to make recording event simpler.
+    , vcStopping_       :: TVar Bool
+    -- ^ The server is stopping: the receiver reads on until no query is
+    --   pending and nothing comes within a moment, and then times out.
     , vcPendings_       :: TVar VcPendings
     -- ^ A set of jobs. A job is that a request is received but
     --   a response is not sent. This design can take the pipeline
@@ -625,6 +628,7 @@ initVcSession'
 initVcSession' getWaitIn = do
     vcEof       <- newTVarIO False
     vcTimeout   <- newTVarIO False
+    vcStopping  <- newTVarIO False
     vcPendings  <- newTVarIO Set.empty
     let queueBound = 8 {- limit waiting area per session to constant size -}
     senderQ     <- newTBQueueIO queueBound
@@ -637,6 +641,7 @@ initVcSession' getWaitIn = do
             VcSession
             { vcEof_            = vcEof
             , vcTimeout_        = vcTimeout
+            , vcStopping_       = vcStopping
             , vcPendings_       = vcPendings
             , vcRespAvail_      = not <$> isEmptyTBQueue senderQ
             , vcAllowInput_     = allowInput
@@ -679,12 +684,42 @@ dequeueVcPendings pendings senderQ = loop
 waitVcInput :: VcSession -> IO Bool
 waitVcInput VcSession{..} = do
     waitIn <- vcWaitRead_
-    atomically $ do
+    -- Nothing: readable.  Just True: timed out.  Just False: stopping.
+    r <- atomically $ do
         timeout <- readTVar vcTimeout_
-        unless timeout $ do
-            retryUntil =<< vcAllowInput_
-            waitIn
-        return timeout
+        stopping <- readTVar vcStopping_
+        if timeout || stopping
+            then return $ Just timeout
+            else do
+                retryUntil =<< vcAllowInput_
+                waitIn
+                return Nothing
+    case r of
+        Nothing -> return False
+        Just True -> return True
+        Just False -> drain waitIn
+  where
+    -- Closing is all the peer is told, so what comes before it is read.
+    -- The timeout is set here, after the last query read, so the sender
+    -- sees it after.
+    drain waitIn = do
+        r <- atomically $ do
+            timeout <- readTVar vcTimeout_
+            if timeout
+                then return $ Just True
+                else
+                    (Nothing <$ ((retryUntil =<< vcAllowInput_) >> waitIn))
+                        <|> (Just False <$ (retryUntil . Set.null =<< readTVar vcPendings_))
+        case r of
+            Nothing -> return False
+            Just True -> return True
+            Just False -> do
+                more <- readableSoon waitIn
+                unless more $ atomically $ enableVcTimeout vcTimeout_
+                return $ not more
+    readableSoon waitIn = do
+        grace <- registerDelay 1000
+        atomically $ (True <$ waitIn) <|> (False <$ (readTVar grace >>= check))
 
 {- FOURMOLU_DISABLE -}
 --   eof       timeout   pending     avail       sender-loop
