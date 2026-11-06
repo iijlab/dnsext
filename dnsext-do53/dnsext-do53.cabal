@@ -56,7 +56,7 @@ library
         dnsext-utils,
         iproute >=1.3.2,
         mtl,
-        network >=3.2.3 && <4.1,
+        network >=3.2.12 && <4.1,
         recv,
         stm,
         unix-time

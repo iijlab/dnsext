@@ -2,6 +2,7 @@
 
 module DNS.Do53.IO (
     openTCP,
+    openTCPWith,
 
     -- * Receiving DNS messages
     recvTCP,
@@ -17,6 +18,7 @@ module DNS.Do53.IO (
 )
 where
 
+import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import DNS.Do53.Imports
 import DNS.Do53.Types
@@ -28,7 +30,9 @@ import Network.Socket (
     AddrInfo (..),
     Family (..),
     SocketType (..),
+    close,
     connect,
+    connectWith,
     defaultProtocol,
     openSocket,
  )
@@ -45,6 +49,17 @@ openTCP a p = do
     sock <- openSocket ai
     connect sock $ addrAddress ai
     return sock
+
+-- | 'openTCP' which the caller can give up on while it connects.  The
+--   socket is closed when it gives up.
+openTCPWith :: STM a -> IP -> PortNumber -> IO (Either a Socket)
+openTCPWith giveUp a p = do
+    let ai = makeAddrInfo a p
+    E.bracketOnError (openSocket ai) close $ \sock -> do
+        r <- connectWith sock (addrAddress ai) giveUp
+        case r of
+            Left x -> close sock >> return (Left x)
+            Right () -> return $ Right sock
 
 makeAddrInfo :: IP -> PortNumber -> AddrInfo
 makeAddrInfo a p =
