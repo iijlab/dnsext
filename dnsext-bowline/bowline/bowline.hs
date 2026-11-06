@@ -286,6 +286,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
                 , vc_stop = stopper
+                , vc_drain = notTaken wantedRef
                 }
     conc = mapConcurrently_ id
     -- Whether none of the sockets is taken by the next generation.

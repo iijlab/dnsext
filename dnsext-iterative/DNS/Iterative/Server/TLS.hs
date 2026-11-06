@@ -15,6 +15,7 @@ import Control.Exception (finally)
 import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.IntSet as Set
 import Data.Functor
 
 -- dnsext-utils
@@ -72,6 +73,9 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
         vsRunning <- newTVarIO True
         inpq <- newTBQueueIO 8
         (vcSess, toSender, fromX, senderQ) <- initVcSession' (return $ checkInp inpq)
+        let idle = do
+                guard . Set.null =<< readTVar (vcPendings_ vcSess)
+                guard =<< isEmptyTBQueue inpq
 
         {- bowline アプリ側: 将来的に STM 通信経由で切り離す -}
         TAsync.withAsync "bw.tls-recv-send" (
@@ -95,20 +99,28 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
            `finally`
            atomically (writeTVar vsRunning False)
           ) $ \_ ->
-            reader backend (stopped vc_stop) (readTVar vsRunning) inpq
+            reader backend (stopped vc_stop) idle (readTVar vsRunning) inpq
         logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
 
--- | Stopping the server ends the session as the peer's EOF does: the
---   queries read so far are answered first.
-reader :: H2.IOBackend -> STM () -> STM VsRunning -> TBQueue ByteString -> IO ()
-reader backend stop vsRunning inpq = loop
+-- | Stopping the server ends the session as the peer's EOF does.  Closing
+--   is all the peer is told, so what comes before it is read: until no
+--   query is pending ('STM' action) and nothing comes within a moment.
+reader :: H2.IOBackend -> STM () -> STM () -> STM VsRunning -> TBQueue ByteString -> IO ()
+reader backend stop idle vsRunning inpq = loop False
   where
-    loop = do
+    loop draining = do
         let proceed = do
-                pkt <- either (const mempty) id <$> H2.recvWith backend stop
+                r <- H2.recvWith backend $ if draining then idle else stop
+                case r of
+                    Left ()
+                        | draining -> put =<< H2.recvWith backend =<< grace
+                        | otherwise -> loop True
+                    Right _ -> put r
+            put r = do
+                let pkt = either (const mempty) id r
                 atomically $ writeTBQueue inpq pkt
                 if pkt /= mempty
-                    then loop
+                    then loop draining
                     else atomically (guard . not =<< vsRunning)  -- wait session on EOF
         --
         next <- atomically $
@@ -116,6 +128,9 @@ reader backend stop vsRunning inpq = loop
                 <|>
                 (guard . not =<< isFullTBQueue inpq) $> proceed    -- proceed only not full
         next
+    grace = do
+        expired <- registerDelay 1000
+        return $ readTVar expired >>= guard
 
 checkInp :: TBQueue ByteString -> STM ()
 checkInp inpq = peekTBQueue inpq $> ()
