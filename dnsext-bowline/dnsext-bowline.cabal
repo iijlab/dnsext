@@ -59,7 +59,7 @@ executable bowline
         dnsext-utils,
         http-types,
         iproute,
-        network >=3.2.3 && <4.1,
+        network >=3.2.10 && <4.1,
         split,
         stm,
         tls >=2.3.0 && < 2.6,

@@ -20,7 +20,6 @@ import Data.Functor
 -- dnsext-utils
 import qualified DNS.Log as Log
 import qualified DNS.ThreadAsync as TAsync
-import qualified DNS.ThreadStats as TStat
 import DNS.Transport.Types
 
 -- dnsext-do53 packages
@@ -72,7 +71,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
         (vcSess, toSender, fromX, senderQ) <- initVcSession' (return $ checkInp inpq)
 
         {- bowline アプリ側: 将来的に STM 通信経由で切り離す -}
-        _rsTid <- TStat.forkIO "bw.tls-recv-send" $
+        TAsync.withAsync "bw.tls-recv-send" (
             withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) ( \vcTimer -> do
                 let recv = getInp inpq
                 let onRecv bs = do
@@ -92,8 +91,8 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
            )
            `finally`
            atomically (writeTVar vsRunning False)
-
-        reader backend (readTVar vsRunning) inpq
+          ) $ \_ ->
+            reader backend (readTVar vsRunning) inpq
         logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
 
 reader :: H2.IOBackend -> STM VsRunning -> TBQueue ByteString -> IO ()
