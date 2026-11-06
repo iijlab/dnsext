@@ -6,10 +6,12 @@
 module Main where
 
 -- GHC
-import Control.Concurrent (killThread, threadDelay)
-import Control.Concurrent.Async (mapConcurrently_, race_)
-import Control.Exception (bracket_, finally)
+import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.Async (mapConcurrently_, race_, waitCatchSTM)
+import Control.Concurrent.STM
+import Control.Exception (bracket_, finally, throwIO)
 import Control.Monad
+import Data.List (partition)
 import Data.ByteString.Builder
 import Data.Functor
 import qualified Data.IORef as I
@@ -36,6 +38,7 @@ import qualified DNS.ThreadStats as TStat
 import qualified DNS.Types as DNS
 import DNS.Types.Internal (TYPE (..))
 import Network.Socket hiding (close)
+import qualified Network.Socket as NS
 import qualified Network.TLS.SessionTicket as ST
 
 -- this package
@@ -64,26 +67,53 @@ run ruid readConfig = do
     (ri, nkSuccess, nkFailure, kSuccess, kFailure) <- newReloadInfo $ Server.getTime tcache
     let rsuccess = \case Reload -> nkSuccess; KeepCache -> kSuccess
         rfailure = \case Reload -> nkFailure; KeepCache -> kFailure
-    go tcache Nothing ri (\m -> m{reloadSuccess = rsuccess, reloadFailure = rfailure}) conf
+    go tcache Nothing ri (\m -> m{reloadSuccess = rsuccess, reloadFailure = rfailure}) conf [] (return ())
   where
-    go tcache mcache ri um conf = do
+    -- A reload starts the next generation as soon as this one hands over
+    -- its sockets, and lets this one finish its sessions meanwhile.
+    go tcache mcache ri um conf inherited waitOlder = do
         mng <- um <$> newControl readConfig
         gcache <- maybe (getCache tcache conf) return mcache
         void $ installHandler sigHUP (Catch $ reloadCmd mng KeepCache () ()) Nothing -- reloading with cache on SIGHUP
-        runConfig tcache gcache mng ri ruid conf
+        pool <- I.newIORef inherited
+        handed <- newEmptyTMVarIO
+        let inherit key = I.atomicModifyIORef' pool $ \ks -> (filter ((/= key) . fst) ks, lookup key ks)
+            -- What was handed over and not taken is closed once the older ones are done.
+            bound = do
+                unused <- I.atomicModifyIORef' pool ([],)
+                void $ TStat.forkIO "bw.close-unused" $ waitOlder >> mapM_ (NS.close . snd) unused
+        gen <- TAsync.async "bw.generation" $
+            runConfig tcache gcache mng ri ruid conf inherit bound (atomically . putTMVar handed)
+        r <- atomically $ (Right <$> takeTMVar handed) `orElse` (Left <$> waitCatchSTM gen)
+        socks <- case r of
+            Right socks -> return socks
+            Left (Left e) -> throwIO e
+            Left (Right ()) -> return []
+        let waitThis = atomically (waitCatchSTM gen) >>= either (putStrLn . ("generation: " ++) . show) return
+            waitAll = waitOlder >> waitThis
         ctl <- getCommandAndClear mng
         case ctl of
-            Quit -> putStrLn "\nQuiting..." -- fixme
+            Quit -> do
+                putStrLn "\nQuiting..." -- fixme
+                waitAll
             Reload1 rconf -> do
                 putStrLn "\nReloading..." -- fixme
-                stopCache $ gcacheRRCacheOps gcache
-                go tcache Nothing ri um rconf
+                void $ TStat.forkIO "bw.stop-cache" $ waitThis >> stopCache (gcacheRRCacheOps gcache)
+                go tcache Nothing ri um rconf socks waitAll
             KeepCache1 rconf -> do
                 putStrLn "\nReloading with the current cache..." -- fixme
-                go tcache (Just gcache) ri um rconf
+                go tcache (Just gcache) ri um rconf socks waitAll
 
-runConfig :: TimeCache -> GlobalCache -> Control -> [(String, IO Int64)] -> UserID -> Config -> IO ()
-runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = do
+-- | Sockets which one generation hands to the next.
+type SockKey = (SocketType, SockAddr)
+
+-- | The 'SockKey' action takes a socket over from the previous generation,
+--   the next is run once everything is bound, and the last hands over the
+--   sockets the next generation takes once this one is told to stop.
+runConfig
+    :: TimeCache -> GlobalCache -> Control -> [(String, IO Int64)] -> UserID -> Config
+    -> (SockKey -> IO (Maybe Socket)) -> IO () -> ([(SockKey, Socket)] -> IO ()) -> IO ()
+runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inherit bound handOver = do
     -- Setup
     let tmout = timeout cnf_resolve_timeout
         check_for_v6_ns
@@ -102,6 +132,9 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     mix_case <- if cnf_mixed_case_query then Just <$> newConcurrentMixCase else pure Nothing
     (runLogger, putLines, stopLogger, reopenLog0) <- getLogger ruid conf tcache
     (runSSLKeyLogger, putSSLKeyLog, killSSLKeyLogger) <- getSSLKeyLogger ruid conf
+    stopper <- Server.newStopper
+    -- The sockets the next generation takes, known once this one is told to stop.
+    wantedRef <- I.newIORef Nothing
     --
     let rootpriv = do
             (runWriter, putDNSTAP) <- TAP.new conf putLines
@@ -137,13 +170,15 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                         }
             --  filled env available
             (sm, killSM) <- ST.newSessionTicketManager' ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}
-            addrs <- mapM (bindServers cnf_dns_addrs) $ trans SynthNone cnf_credentials sm
-            dns64addrs <- mapM (bindServers cnf_dns64_addrs) $ trans SynthDNS64 cnf_dns64_credentials sm
-            (mas, monInfo) <- Mon.bindMonitor conf env
+            addrs <- zipWithM (bindServers inherit) (trans stopper SynthNone cnf_credentials sm) =<< listenAddrs putStrLn conf cnf_dns_addrs
+            dns64addrs <- zipWithM (bindServers inherit) (trans stopper SynthDNS64 cnf_dns64_credentials sm) =<< listenAddrs putStrLn conf cnf_dns64_addrs
+            (mas, monInfo) <- Mon.bindMonitor inherit conf env
             asocks <- API.bindAPIs conf
             return (runWriter, env, addrs ++ dns64addrs, mas, monInfo, asocks, killSM)
     -- recover root-privilege to bind network-port and to access private-key on reloading
     (runWriter, env, all_addrs, mas, monInfo, asocks, killSM) <- withRoot ruid conf rootpriv
+    bound
+    ownSocks <- mapM keyed $ concat [sks | (_, _, sks) <- all_addrs] ++ map fst mas
     -- actions list for threads
     cacherStats <- Server.getWorkerStats cnf_cachers
     workerStats <- Server.getWorkerStats cnf_workers
@@ -158,14 +193,27 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     tidW <- maybe [] (:[]) <$> runWriter
     runLogger
     runSSLKeyLogger
-    tidA <- zipWithM (\i s -> TStat.forkIO ("bw.webapi-srv." ++ show i) $ API.run mng s) [1 :: Int ..] asocks
+    apis <- forM (zip [1 :: Int ..] asocks) $ \(i, s) -> do
+        done <- newEmptyMVar
+        tid <- TStat.forkIO ("bw.webapi-srv." ++ show i) $ API.run mng s `finally` putMVar done ()
+        return (tid, done)
+    let tidA = map fst apis
+        -- The web API closes its sockets, so it is gone before the next binds.
+        stopAPIs = mapM_ (killThread . fst) apis >> mapM_ (takeMVar . snd) apis
     let withNum name xs = zipWith (\i x -> (name ++ printf "%4d" i, x)) [1 :: Int ..] xs
     let concPipeline =
             conc
                 [ TAsync.concurrentlyList_ (withNum "bw.cacher" cachers)
                 , TAsync.concurrentlyList_ (withNum "bw.worker" workers)
                 ]
-        concServer = TAsync.concurrentlyList_ [(n, as) | (n, _sks, ass) <- servers, as <- ass]
+        concServer = TAsync.concurrentlyList_ [(n, serve n ass `finally` release sks) | (n, sks, ass) <- servers]
+        serve n ass = TAsync.concurrentlyList_ [(n, as) | as <- ass]
+        -- A UDP socket not taken still sends answers, so it is closed when its
+        -- server returns, not later: it would keep the datagrams to its address.
+        release sks = I.readIORef wantedRef >>= \case
+            Nothing -> return ()
+            Just wanted ->
+                mapM_ NS.close [s | ((st, sa), s) <- ownSocks, s `elem` sks, st == Datagram, (st, sa) `notElem` wanted]
     {- Advisedly separating 'dumper' thread from Async thread-tree
        - Keep the 'dumper' thread alive until the end for debugging purposes
        - Not to be affected by issued `cancel` to thread-tree
@@ -173,25 +221,48 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
        when the 'main' thread ends, so there's no need for cleanup.          -}
     sequence_ [TStat.forkIO "bw.dumper" (TStat.dumper $ putLines Log.SYSTEM Nothing) | cnf_threads_dumper]
     -- The servers return once told to stop and their sessions are done;
-    -- the pipeline keeps answering those sessions until then.
-    race_ concPipeline (conc [concServer, conc monitor])
+    -- the pipeline keeps answering those sessions until then.  The sockets
+    -- are handed over as soon as the monitors and the web API are gone.
+    -- Every server is told before the sockets go, so that two generations
+    -- never read one socket at once.
+    let stopServers = do
+            atomically $ waitQuit mng0
+            wanted <- getCommand mng0 >>= \case
+                Quit -> return []
+                Reload1 c -> listenKeys c
+                KeepCache1 c -> listenKeys c
+            I.writeIORef wantedRef $ Just wanted
+            Server.stopAll stopper
+        handOver' = conc [conc monitor, stopServers] >> stopAPIs >> passOn
+        -- What the next generation does not take is closed here if listening,
+        -- so that the next can bind its address.
+        passOn = I.readIORef wantedRef >>= mapM_ (\wanted -> do
+            let (given, rest) = partition ((`elem` wanted) . fst) ownSocks
+            mapM_ (NS.close . snd) $ filter ((== Stream) . fst . fst) rest
+            handOver given)
+    race_ concPipeline (conc [concServer, handOver'])
         -- Teardown
         `finally` do
             mapM_ killThread $ tidA ++ tidW
             killSSLKeyLogger
             stopLogger
             killSM
-    threadDelay 500000 -- avoiding address already in use
   where
-    trans synth creds sm =
-        [ (cnf_udp, "bw.udp-srv." ++ st, udpServers udpconf synth, Datagram, cnf_udp_port)
-        , (cnf_tcp, "bw.tcp-srv." ++ st, tcpServers vcconf synth, Stream, cnf_tcp_port)
-        , (cnf_h2c, "bw.h2c-srv." ++ st, http2cServers vcconf synth, Stream, cnf_h2c_port)
-        , (cnf_h2, "bw.h2-srv." ++ st, http2Servers vcconf synth, Stream, cnf_h2_port)
-        , (cnf_h3, "bw.h3-srv." ++ st, http3Servers vcconf synth, Datagram, cnf_h3_port)
-        , (cnf_tls, "bw.tls-srv." ++ st, tlsServers vcconf synth, Stream, cnf_tls_port)
-        , (cnf_quic, "bw.quic-srv." ++ st, quicServers vcconf synth, Datagram, cnf_quic_port)
-        ]
+    keyed s = do
+        st <- getSocketType s
+        sa <- getSocketName s
+        return ((st, sa), s)
+    trans stopper synth creds sm =
+        -- In the order of 'serverPorts'.
+        map (\(name, servers) -> (name ++ st, servers))
+            [ ("bw.udp-srv.", udpServers (udpconf stopper) synth)
+            , ("bw.tcp-srv.", tcpServers vcconf synth)
+            , ("bw.h2c-srv.", http2cServers vcconf synth)
+            , ("bw.h2-srv.", http2Servers vcconf synth)
+            , ("bw.h3-srv.", http3Servers vcconf synth)
+            , ("bw.tls-srv.", tlsServers vcconf synth)
+            , ("bw.quic-srv.", quicServers vcconf synth)
+            ]
       where
         st = case synth of
                  SynthNone -> "nn"
@@ -205,13 +276,13 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                 , vc_session_manager = sm
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
-                , vc_stop = waitQuit mng0
+                , vc_stop = stopper
                 }
     conc = mapConcurrently_ id
-    udpconf =
+    udpconf stopper =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
-            , udp_stop = waitQuit mng0
+            , udp_stop = stopped stopper
             }
 
 main :: IO ()
@@ -229,15 +300,41 @@ main = do
 
 ----------------------------------------------------------------
 
-bindServers
-    :: [HostName]
-    -> (Bool, String, a, SocketType, PortNumber)
-    -> IO (String, a, [Socket])
-bindServers _ (False, n, a, _, _) = return (n, a, [])
-bindServers hosts (True, n, a, socktype, port) = do
-    as <- ainfosSkipError putStrLn socktype port hosts
-    (n,a,) <$> mapM openBind as
+-- | Whether each server runs, and on which socket type and port.
+serverPorts :: Config -> [(Bool, SocketType, PortNumber)]
+serverPorts Config{..} =
+    [ (cnf_udp, Datagram, cnf_udp_port)
+    , (cnf_tcp, Stream, cnf_tcp_port)
+    , (cnf_h2c, Stream, cnf_h2c_port)
+    , (cnf_h2, Stream, cnf_h2_port)
+    , (cnf_h3, Datagram, cnf_h3_port)
+    , (cnf_tls, Stream, cnf_tls_port)
+    , (cnf_quic, Datagram, cnf_quic_port)
+    ]
+
+-- | The addresses of the servers in the order of 'serverPorts', none for a
+--   server turned off.
+listenAddrs :: (String -> IO ()) -> Config -> [HostName] -> IO [[AddrInfo]]
+listenAddrs logLn conf hosts = forM (serverPorts conf) $ \(on, sty, port) ->
+    if on then ainfosSkipError logLn sty port hosts else return []
+
+-- | The sockets a configuration binds for its servers and monitors.
+listenKeys :: Config -> IO [SockKey]
+listenKeys conf@Config{..} = do
+    srvs <- mapM (listenAddrs quiet conf) [cnf_dns_addrs, cnf_dns64_addrs]
+    mons <- Mon.monitorAddrs quiet conf
+    return [(addrSocketType ai, addrAddress ai) | ai <- concat (concat srvs) ++ mons]
   where
+    quiet _ = return ()
+
+bindServers
+    :: (SockKey -> IO (Maybe Socket))
+    -> (String, a)
+    -> [AddrInfo]
+    -> IO (String, a, [Socket])
+bindServers inherit (n, a) as = (n,a,) <$> mapM takeOrBind as
+  where
+    takeOrBind ai = maybe (openBind ai) return =<< inherit (addrSocketType ai, addrAddress ai)
     openBind ai@AddrInfo{addrAddress = sa} = withLocationIOE (show sa ++ "/" ++ n) $ do
         s <- openSocket ai
         setSocketOption s ReuseAddr 1

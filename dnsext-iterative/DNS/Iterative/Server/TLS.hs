@@ -95,7 +95,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
            `finally`
            atomically (writeTVar vsRunning False)
           ) $ \_ ->
-            reader backend vc_stop (readTVar vsRunning) inpq
+            reader backend (stopped vc_stop) (readTVar vsRunning) inpq
         logLn env Log.DEBUG $ "tls-srv: close: " ++ show peersa
 
 -- | Stopping the server ends the session as the peer's EOF does: the

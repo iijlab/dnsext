@@ -17,6 +17,12 @@ module DNS.Iterative.Server (
     UdpServerConfig (..),
     udpServers,
 
+    -- * Stopping
+    Stopper,
+    newStopper,
+    stopped,
+    stopAll,
+
     -- * Virtual circuit
     VcServerConfig (..),
     http2Servers,
@@ -77,6 +83,7 @@ import DNS.Iterative.Server.HTTP3
 import DNS.Iterative.Server.Pipeline
 import DNS.Iterative.Server.PrometheusHisto (getHistogramBucktes)
 import DNS.Iterative.Server.QUIC
+import DNS.Iterative.Server.Stop (Stopper, newStopper, stopAll, stopped)
 import DNS.Iterative.Server.TCP
 import DNS.Iterative.Server.TLS
 import DNS.Iterative.Server.Types
