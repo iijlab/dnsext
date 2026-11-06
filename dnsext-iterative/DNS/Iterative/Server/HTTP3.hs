@@ -22,6 +22,7 @@ import DNS.Iterative.Internal (Env (..))
 import DNS.Iterative.Server.Pipeline (extendSynthesis)
 import DNS.Iterative.Server.HTTP2
 import DNS.Iterative.Server.QUIC
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Server.UDP
 import DNS.Iterative.Stats (incStatsDoH3, sessionStatsDoH3)
@@ -32,8 +33,9 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
     name <- mapM socketName ss <&> \xs -> show xs ++ "/h3"
-    let http3server = T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
-            withLocationIOE name $ QUIC.runWithSockets ss sconf $ \conn ->
+    let http3server = withLocationIOE name $ stoppable vc_stop $ \install ->
+            T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
+            QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
                 H3.runIO conn (conf mgr)
                 $ doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative
     return [http3server]

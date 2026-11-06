@@ -48,6 +48,7 @@ library
         DNS.Iterative.Server.Pipeline
         DNS.Iterative.Server.PrometheusHisto
         DNS.Iterative.Server.QUIC
+        DNS.Iterative.Server.Stop
         DNS.Iterative.Server.TCP
         DNS.Iterative.Server.TLS
         DNS.Iterative.Server.Types
@@ -76,7 +77,7 @@ library
         http2-tls >=0.5.3 && <0.6,
         http3 >=0.1.2 && <0.2,
         iproute,
-        network >=3.2.3 && <3.3,
+        network >=3.2.12 && <3.3,
         network-run >= 0.7.0 && < 0.8,
         psqueues,
         quic >=0.3.0 && <0.4,

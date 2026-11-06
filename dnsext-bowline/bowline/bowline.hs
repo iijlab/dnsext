@@ -160,21 +160,21 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
     runSSLKeyLogger
     tidA <- zipWithM (\i s -> TStat.forkIO ("bw.webapi-srv." ++ show i) $ API.run mng s) [1 :: Int ..] asocks
     let withNum name xs = zipWith (\i x -> (name ++ printf "%4d" i, x)) [1 :: Int ..] xs
-    let concServer =
+    let concPipeline =
             conc
                 [ TAsync.concurrentlyList_ (withNum "bw.cacher" cachers)
                 , TAsync.concurrentlyList_ (withNum "bw.worker" workers)
-                , TAsync.concurrentlyList_ [(n, as) | (n, _sks, ass) <- servers, as <- ass]
                 ]
+        concServer = TAsync.concurrentlyList_ [(n, as) | (n, _sks, ass) <- servers, as <- ass]
     {- Advisedly separating 'dumper' thread from Async thread-tree
        - Keep the 'dumper' thread alive until the end for debugging purposes
        - Not to be affected by issued `cancel` to thread-tree
        The 'dumper' thread separated by forkIO automatically terminates
        when the 'main' thread ends, so there's no need for cleanup.          -}
     sequence_ [TStat.forkIO "bw.dumper" (TStat.dumper $ putLines Log.SYSTEM Nothing) | cnf_threads_dumper]
-    {- `monitor` is empty,
-        when `monitor-stdio` is `False` and `monitor-addrs` is `null`. -}
-    (if null monitor then concServer else race_ concServer (conc monitor))
+    -- The servers return once told to stop and their sessions are done;
+    -- the pipeline keeps answering those sessions until then.
+    race_ concPipeline (conc [concServer, conc monitor])
         -- Teardown
         `finally` do
             mapM_ killThread $ tidA ++ tidW
@@ -205,11 +205,13 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} = d
                 , vc_session_manager = sm
                 , vc_early_data_size = cnf_early_data_size
                 , vc_interface_automatic = cnf_interface_automatic
+                , vc_stop = waitQuit mng0
                 }
     conc = mapConcurrently_ id
     udpconf =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
+            , udp_stop = waitQuit mng0
             }
 
 main :: IO ()

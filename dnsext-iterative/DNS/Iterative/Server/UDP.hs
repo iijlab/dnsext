@@ -32,8 +32,10 @@ import DNS.Iterative.Stats (incStatsUDP53)
 
 ----------------------------------------------------------------
 
-newtype UdpServerConfig = UdpServerConfig
+data UdpServerConfig = UdpServerConfig
     { udp_interface_automatic :: Bool
+    , udp_stop :: STM ()
+    -- ^ Fires when the server is told to stop.
     }
 
 ----------------------------------------------------------------
@@ -56,11 +58,11 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     let queueBound = 64
     qs <- newTBQueueIO queueBound
     let toSender = atomically . writeTBQueue qs
-        fromX = atomically $ readTBQueue qs
-        recv = do
-            (peersa, bs, cmsgs, _) <- NSB.recvMsg s 2048 2048 0
+        fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ udp_stop)
+        recv = NSB.recvMsgWith s 2048 2048 0 udp_stop >>= either (const $ return Nothing) received
+        received (peersa, bs, cmsgs, _) = do
             incStatsUDP53 peersa (stats_ env)
-            return (bs, PeerInfoUDP peersa cmsgs)
+            return $ Just (bs, PeerInfoUDP peersa cmsgs)
         send bs (PeerInfoUDP peersa cmsgs) =
             void $ NSB.sendMsg s peersa [bs] cmsgs 0
         send _ _ = return ()

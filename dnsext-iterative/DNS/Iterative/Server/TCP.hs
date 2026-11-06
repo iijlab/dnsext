@@ -31,6 +31,7 @@ import qualified Network.Socket.ByteString as Network
 -- this package
 import DNS.Iterative.Internal (DNSQuery, FoldResponse, Env (..))
 import DNS.Iterative.Server.Pipeline
+import DNS.Iterative.Server.Stop
 import DNS.Iterative.Server.Types
 import DNS.Iterative.Stats (incStatsTCP53, sessionStatsTCP53)
 
@@ -51,7 +52,11 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/tcp")
     let tcpserver =
             withLocationIOE name $
-                runTCPServerWithSocket s go
+                stoppable vc_stop $ \install ->
+                    runTCPServerWithSocketAndSettings
+                        defaultServerSettings{settingsInstallShutdownHandler = install, settingsUnsafeClose = True}
+                        s
+                        go
     return [tcpserver]
   where
     maxSize = fromIntegral vc_query_max_size
@@ -72,7 +77,10 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
                 writeIORef cancelRef cancel
                 pure readable
         (vcSess, toSender, fromX) <- initVcSession waitRead
-        flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+        -- Stopping the server ends the session as its idle timeout does:
+        -- the queries read so far are answered first.
+        let stopped = atomically $ vc_stop >> enableVcTimeout (vcTimeout_ vcSess)
+        TAsync.withAsync "bw.tcp-stop" stopped $ \_ -> flip E.finally cancelWait $ withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = Network.recv sock
             let onRecv bs = do
                     checkReceived vc_slowloris_size vcTimer bs
