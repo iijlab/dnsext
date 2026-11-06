@@ -6,12 +6,13 @@
 module Main where
 
 -- GHC
-import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
 import Control.Concurrent.Async (mapConcurrently_, race_, waitCatchSTM)
 import Control.Concurrent.STM
 import Control.Exception (bracket_, finally, throwIO)
 import Control.Monad
 import Data.List (partition)
+import Data.Maybe (isNothing)
 import Data.ByteString.Builder
 import Data.Functor
 import qualified Data.IORef as I
@@ -95,7 +96,10 @@ run ruid readConfig = do
         case ctl of
             Quit -> do
                 putStrLn "\nQuiting..." -- fixme
-                waitAll
+                -- A generation is cut at the cap; one that still does not end
+                -- (an application ignoring the cut) is left to the exit.
+                done <- timeout ((cnf_graceful_shutdown_timeout conf + 1) * 1000000) waitAll
+                when (isNothing done) $ putStrLn "graceful shutdown: a generation did not end; exiting"
             Reload1 rconf -> do
                 putStrLn "\nReloading..." -- fixme
                 void $ TStat.forkIO "bw.stop-cache" $ waitThis >> stopCache (gcacheRRCacheOps gcache)
@@ -240,7 +244,12 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
             let (given, rest) = partition ((`elem` wanted) . fst) ownSocks
             mapM_ (NS.close . snd) $ filter ((== Stream) . fst . fst) rest
             handOver given)
-    race_ concPipeline (conc [concServer, handOver'])
+        -- What the graceful shutdown has not finished in time is cut.
+        cutOff = do
+            atomically $ Server.stopped stopper
+            threadDelay $ cnf_graceful_shutdown_timeout * 1000000
+            putLines Log.WARN Nothing ["graceful shutdown: cut after " ++ show cnf_graceful_shutdown_timeout ++ " s"]
+    race_ concPipeline (conc [concServer `race_` cutOff, handOver'])
         -- Teardown
         `finally` do
             mapM_ killThread $ tidA ++ tidW
