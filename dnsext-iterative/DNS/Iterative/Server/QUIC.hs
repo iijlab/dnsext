@@ -5,7 +5,7 @@
 module DNS.Iterative.Server.QUIC where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically, isEmptyTQueue)
+import Control.Concurrent.STM (atomically, isEmptyTQueue, writeTVar)
 
 -- dnsext-utils
 import qualified DNS.ThreadAsync as TAsync
@@ -36,8 +36,11 @@ quicServers :: VcServerConfig -> ServerActions
 quicServers VcServerConfig{..} synth env toCacher ss = do
     -- fixme: withLocationIOE naming
     when vc_interface_automatic $ mapM_ setPktInfo ss
-    let quicserver = withLocationIOE "QUIC" $ stoppable vc_stop $ \install ->
-            QUIC.runWithSockets ss sconf{scInstallShutdownHandler = install} go
+    let quicserver = withLocationIOE "QUIC" $ do
+            sessions <- newSessions
+            stoppableDraining vc_stop (vc_drain ss) sessions $ \draining install ->
+                QUIC.runWithSockets ss sconf{scInstallShutdownHandler = install} $
+                    withSession sessions . go draining
     return [quicserver]
   where
     (_synth, foldCached, foldIterative) = extendSynthesis synth
@@ -45,7 +48,7 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
     sconf = getServerConfig vc_credentials vc_session_manager "doq" (vc_idle_timeout * 1_000 + quicDeferMills) env
     quicDeferMills = 20 {- deferral until an exception is raised from quic library -}
     maxSize = fromIntegral vc_query_max_size
-    go conn = sessionStatsDoQ (stats_ env) $ do
+    go draining conn = sessionStatsDoQ (stats_ env) $ do
         info <- QUIC.getConnectionInfo conn
         let mysa = QUIC.localSockAddr info
             peersa = QUIC.remoteSockAddr info
@@ -53,7 +56,9 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
                 isEmpty <- isEmptyTQueue $ QUIC.inputQ conn
                 retryUntil $ not isEmpty
         (vcSess, toSender, fromX) <- initVcSession waitInput
-        withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+        -- Draining ends the session as TCP's stopping does.
+        let onDrain = atomically $ draining >> writeTVar (vcStopping_ vcSess) True
+        TAsync.withAsync "bw.quic-drain" onDrain $ \_ -> withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = do
                     strm <- QUIC.acceptStream conn
                     let peerInfo = PeerInfoStream peersa $ StreamQUIC strm
