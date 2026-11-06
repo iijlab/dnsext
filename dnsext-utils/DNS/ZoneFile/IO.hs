@@ -1,6 +1,7 @@
 module DNS.ZoneFile.IO where
 
 -- ghc packages
+import qualified Control.Exception as E
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as L8
 import System.IO.Unsafe (unsafeInterleaveIO)
@@ -30,6 +31,9 @@ parseFile :: FilePath -> Domain -> IO [Record]
 parseFile fn dom = do
     bslines <- L8.lines <$> LB.readFile fn
     tklines <- lazily $ zipWith (\lin -> either fail pure . lexLineAt lin) [1 ..] bslines
-    either fail (pure . fst) $ P.parseFile dom $ T.normTokens tklines
+    either refuse (pure . fst) $ P.parseFile dom $ T.normTokens tklines
   where
     lazily = foldr (\io ios -> unsafeInterleaveIO ((:) <$> io <*> ios)) (pure [])
+    -- When lexing the tokens needed to show a parse error fails, that error is
+    -- not left in a pure value: it is raised here, in the IO of this function.
+    refuse e = E.evaluate (length e) >> fail e
