@@ -50,7 +50,6 @@ data Control = Control
     , reloadSuccess :: ReloadCmd -> IO ()
     , reloadFailure :: ReloadCmd -> IO ()
     , getCommand :: IO QuitCmd
-    , getCommandAndClear :: IO QuitCmd
     , setCommand :: QuitCmd -> IO ()
     }
 
@@ -69,7 +68,6 @@ newControl readConfig = do
             , reloadSuccess = \_ -> pure ()
             , reloadFailure = \_ -> pure ()
             , getCommand = readIORef ref
-            , getCommandAndClear = atomicModifyIORef' ref (\x -> (Quit, x))
             , setCommand = atomicWriteIORef ref
             }
 

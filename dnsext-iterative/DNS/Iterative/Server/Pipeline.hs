@@ -466,28 +466,29 @@ receiverVCnonBlocking name env lim vcs@VcSession{..} peerInfo recvN onRecv toCac
             add
             toCacher $ mkInput_ bs peerInfo pop ts
 
+-- | The 'IO' action gives each query read its pending mark.
 receiverLogic
-    :: Env -> SockAddr -> IO (Maybe (BS, Peer)) -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
+    :: Env -> SockAddr -> IO (Maybe (BS, Peer)) -> IO VcPendingOp -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
     -> (forall b . DNSQuery b -> FoldResponse IO b)
     -> (forall b . FoldResponse IO b)
     -> IO ()
 receiverLogic
     env
-    mysa recv toCacher toSender dox synth
+    mysa recv newPending toCacher toSender dox synth
     foldCached foldIterative
     =
     handledLoopWhile env "receiverUDP" $
-    maybe (pure False) (\x -> True <$ receiverLogic' env mysa (pure x) toCacher toSender dox synth foldCached foldIterative) =<< recv
+    maybe (pure False) (\x -> True <$ receiverLogic' env mysa (pure x) newPending toCacher toSender dox synth foldCached foldIterative) =<< recv
 
 receiverLogic'
     :: Env
-    -> SockAddr -> IO (BS, Peer) -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
+    -> SockAddr -> IO (BS, Peer) -> IO VcPendingOp -> (ToCacher -> IO ()) -> (ToSender -> IO ()) -> DoX -> Synthesis
     -> (forall b . DNSQuery b -> FoldResponse IO b)
     -> (forall b . FoldResponse IO b)
     -> IO Bool
 receiverLogic'
     env
-    mysa recv toCacher toSender dox synth
+    mysa recv newPending toCacher toSender dox synth
     foldCached foldIterative
     = do
     (bs, peerInfo) <- recv
@@ -495,7 +496,8 @@ receiverLogic'
     if bs == ""
         then return False
         else do
-            toCacher $ mkInput mysa toSender dox synth foldCached foldIterative bs peerInfo noPendingOp ts
+            pending <- newPending
+            toCacher $ mkInput mysa toSender dox synth foldCached foldIterative bs peerInfo pending ts
             return True
 
 noPendingOp :: VcPendingOp
@@ -537,9 +539,9 @@ senderLogic env send fromX =
     maybe (pure False) (\x -> True <$ senderLogic' send (pure x)) =<< fromX
 
 senderLogic' :: (BS -> Peer -> IO ()) -> IO FromX -> IO ()
-senderLogic' send fromX = do
-    Output bs _ peerInfo <- fromX
-    send bs peerInfo
+senderLogic' send fromX = E.bracket fromX finalize $ \(Output bs _ peerInfo) -> send bs peerInfo
+  where
+    finalize (Output _ VcPendingOp{..} _) = vpDelete
 
 ----------------------------------------------------------------
 

@@ -92,7 +92,7 @@ run ruid readConfig = do
             Left (Right ()) -> return []
         let waitThis = atomically (waitCatchSTM gen) >>= either (putStrLn . ("generation: " ++) . show) return
             waitAll = waitOlder >> waitThis
-        ctl <- getCommandAndClear mng
+        ctl <- getCommand mng
         case ctl of
             Quit -> do
                 putStrLn "\nQuiting..." -- fixme
@@ -174,8 +174,8 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                         }
             --  filled env available
             (sm, killSM) <- ST.newSessionTicketManager' ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}
-            addrs <- zipWithM (bindServers inherit) (trans stopper SynthNone cnf_credentials sm) =<< listenAddrs putStrLn conf cnf_dns_addrs
-            dns64addrs <- zipWithM (bindServers inherit) (trans stopper SynthDNS64 cnf_dns64_credentials sm) =<< listenAddrs putStrLn conf cnf_dns64_addrs
+            addrs <- zipWithM (bindServers inherit) (trans stopper wantedRef SynthNone cnf_credentials sm) =<< listenAddrs putStrLn conf cnf_dns_addrs
+            dns64addrs <- zipWithM (bindServers inherit) (trans stopper wantedRef SynthDNS64 cnf_dns64_credentials sm) =<< listenAddrs putStrLn conf cnf_dns64_addrs
             (mas, monInfo) <- Mon.bindMonitor inherit conf env
             asocks <- API.bindAPIs conf
             return (runWriter, env, addrs ++ dns64addrs, mas, monInfo, asocks, killSM)
@@ -261,10 +261,10 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
         st <- getSocketType s
         sa <- getSocketName s
         return ((st, sa), s)
-    trans stopper synth creds sm =
+    trans stopper wantedRef synth creds sm =
         -- In the order of 'serverPorts'.
         map (\(name, servers) -> (name ++ st, servers))
-            [ ("bw.udp-srv.", udpServers (udpconf stopper) synth)
+            [ ("bw.udp-srv.", udpServers (udpconf stopper wantedRef) synth)
             , ("bw.tcp-srv.", tcpServers vcconf synth)
             , ("bw.h2c-srv.", http2cServers vcconf synth)
             , ("bw.h2-srv.", http2Servers vcconf synth)
@@ -288,10 +288,15 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                 , vc_stop = stopper
                 }
     conc = mapConcurrently_ id
-    udpconf stopper =
+    -- Whether none of the sockets is taken by the next generation.
+    notTaken wantedRef ss = I.readIORef wantedRef >>= \case
+        Nothing -> return False
+        Just wanted -> all ((`notElem` wanted) . fst) <$> mapM keyed ss
+    udpconf stopper wantedRef =
         UdpServerConfig
             { udp_interface_automatic = cnf_interface_automatic
             , udp_stop = stopped stopper
+            , udp_drain = notTaken wantedRef . (: [])
             }
 
 main :: IO ()
