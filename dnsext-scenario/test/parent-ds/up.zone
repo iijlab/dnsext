@@ -1,0 +1,8 @@
+; The child which is there.  Nothing vouches for it, so what it serves
+; is served unvalidated -- which is what an insecure delegation means
+; and is not what this scenario is about.
+$ORIGIN up.example.
+$TTL 3600
+@	IN	SOA	ns.up.example. root.example. 1 3600 900 604800 3600
+@	IN	NS	ns.up.example.
+@	IN	A	192.0.2.80

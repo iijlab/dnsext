@@ -1,0 +1,18 @@
+; A signed zone with two children and a DS for neither of them, so both
+; delegations are insecure and the denial of each DS is example.'s to
+; make and to sign.
+;
+; up.example. is served by the other primary, so the delegation to it
+; leads somewhere and is answered.  lame.example. names a server which
+; is not there, which is the ordinary condition of an insecure
+; delegation somebody has stopped looking after.
+$ORIGIN example.
+$TTL 3600
+@		IN	SOA	ns.example. root.example. 1 3600 900 604800 3600
+@		IN	NS	ns.example.
+ns		IN	{{AUTH_ADDR_RR}}
+www		IN	A	192.0.2.1
+up		IN	NS	ns.up.example.
+ns.up		IN	A	{{ROOT_ADDR}}
+lame		IN	NS	ns.lame.example.
+ns.lame		IN	A	127.0.0.3
