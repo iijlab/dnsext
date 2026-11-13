@@ -37,7 +37,7 @@ rdatasSVCB dom =
 -- >>> import Data.Char (ord)
 -- >>> type BS = BS.ByteString
 -- >>> runParser' = runParser @BS
--- >>> esstr cs = [C (fromIntegral $ ord c) | c <- cs]
+-- >>> w8str cs = [fromIntegral (ord c) :: Word8 | c <- cs]
 
 rdataSVCB :: MonadParser Token s m => m Domain -> m RData
 rdataSVCB dom = rd_svcb <$> svcPriority <*> (blank *> dom) <*> params
@@ -90,13 +90,14 @@ svcPriority :: MonadParser Token s m => m Word16
 svcPriority = readCString "svc_priority"
 
 svcParam :: MonadParser Token s m => m (SvcParamKey, SvcParamValue)
-svcParam = esToSvcParam . concatMap cs_es =<< some (cstring' <|> dot $> fromString ".")
+svcParam = toSvcParam . concatMap Short.unpack =<< some (cstring <|> dot $> fromString ".")
 
 {- FOURMOLU_DISABLE -}
--- |
+-- | A SvcParam from the bytes of its presentation, the character-string decoding done.
+--
 -- >>> type Parsed a = Either String (SvcParamKey, a)
 -- >>> svcp k v = maybe (Left "no-value") (Right . (,) k) $ fromSvcParamValue v
--- >>> parseSVCP s = runParser' (esToSvcParam $ esstr s) mempty >>= \((k, v), _) -> svcp k v
+-- >>> parseSVCP s = runParser' (toSvcParam $ w8str s) mempty >>= \((k, v), _) -> svcp k v
 --
 -- >>> parseSVCP "mandatory=alpn,ipv4hint" :: Parsed SPV_Mandatory
 -- Right (mandatory,[alpn,ipv4hint])
@@ -110,38 +111,43 @@ svcParam = esToSvcParam . concatMap cs_es =<< some (cstring' <|> dot $> fromStri
 -- Right (ipv6hint,[2001:db8::11,2001:db8::12])
 -- >>> parseSVCP "dohpath=/dns-query{?dns}" :: Parsed SPV_DoHPath
 -- Right (dohpath,"/dns-query{?dns}")
-esToSvcParam :: MonadParser t s m => EString -> m (SvcParamKey, SvcParamValue)
-esToSvcParam es = splitKeyStr es invalidK $ \sk sv -> do
+--
+-- RFC 9460 Appendix D.2 Figure 10, @alpn="f\\\\oo\\,bar,h2"@, decoded to @alpn=f\\oo\,bar,h2@:
+--
+-- >>> parseSVCP "alpn=f\\\\oo\\,bar,h2" :: Parsed SPV_ALPN
+-- Right (alpn,["f\\oo,bar","h2"])
+toSvcParam :: MonadParser t s m => [Word8] -> m (SvcParamKey, SvcParamValue)
+toSvcParam ws = splitKeyStr ws invalidK $ \sk sv -> do
     (k, getV) <- svcParamKey sk
     v <- either parseError pure $ getV sv
     pure (k, v)
-  where invalidK = parseError $ "zone-svcb: SvcParamKey: cannot get svcb-key: " ++ show es
+  where invalidK = parseError $ "zone-svcb: SvcParamKey: cannot get svcb-key: " ++ show (map w8chr ws)
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
-splitKeyStr :: EString -> a -> (String -> Maybe EString -> a) -> a
-splitKeyStr es0 error_ result = go id es0
+splitKeyStr :: [Word8] -> a -> (String -> Maybe [Word8] -> a) -> a
+splitKeyStr ws0 error_ result = go id ws0
   where
     cases k  []                                       = result k  Nothing
-    cases k (C w8 : es)
-        | w8 == W8._equal && 1 <= klen && klen <= 63  = result k (Just es)
+    cases k (w8 : ws)
+        | w8 == W8._equal && 1 <= klen && klen <= 63  = result k (Just ws)
       where klen = length k
     cases _  _                                        = error_
     kcs = '-' : ['0' .. '9'] ++ ['a' .. 'z']
-    go a      []     =          cases (a []) []
-    go a ees@(e:es)  = case e of
-        C w8 | c `elem` kcs  -> go (a . (c:))  es
-           where c = chr (fromIntegral w8)
-        _                    -> cases (a []) ees
+    go a      []       =  cases (a []) []
+    go a wws@(w8:ws)
+        | c `elem` kcs  = go (a . (c:))  ws
+        | otherwise     = cases (a []) wws
+      where c = w8chr w8
 {- FOURMOLU_ENABLE -}
 
-svcParamKey :: MonadParser t s m => String -> m (SvcParamKey, Maybe EString -> Either String SvcParamValue)
+svcParamKey :: MonadParser t s m => String -> m (SvcParamKey, Maybe [Word8] -> Either String SvcParamValue)
 svcParamKey name = maybe unknown pure $ getSvcParamKey name
   where
     unknown = parseError $ "zone-svcb: SvcParamKey: unknown key name: " ++ name
 
 {- FOURMOLU_DISABLE -}
-getSvcParamKey :: String -> Maybe (SvcParamKey, Maybe EString -> Either String SvcParamValue)
+getSvcParamKey :: String -> Maybe (SvcParamKey, Maybe [Word8] -> Either String SvcParamValue)
 getSvcParamKey name = lookup name knownSvcParamKeys <|> keyNNNNN
   where
     keyNNNNN = do
@@ -156,7 +162,7 @@ getSvcParamKey name = lookup name knownSvcParamKeys <|> keyNNNNN
 {- FOURMOLU_DISABLE -}
 -- | SvcParamKey data table:
 --   https://www.iana.org/assignments/dns-svcb/dns-svcb.xhtml
-knownSvcParamKeys :: [(String, (SvcParamKey, Maybe EString -> Either String SvcParamValue))]
+knownSvcParamKeys :: [(String, (SvcParamKey, Maybe [Word8] -> Either String SvcParamValue))]
 knownSvcParamKeys =
     [ ("mandatory"             , (SPK_Mandatory          , just "mandatory"  valueMandatory              ))
     , ("alpn"                  , (SPK_ALPN               , just "alpm"       valueALPN                   ))
@@ -176,83 +182,95 @@ knownSvcParamKeys =
 
 ---
 
-valueOpaque :: EString -> SvcParamValue
-valueOpaque es = toSvcParamValue $ SPV_Opaque $ Opaque.fromShortByteString $ Short.pack $ map unEscW8 es
+valueOpaque :: [Word8] -> SvcParamValue
+valueOpaque ws = toSvcParamValue $ SPV_Opaque $ Opaque.fromShortByteString $ Short.pack ws
 
-valueMandatory :: EString -> Either String SvcParamValue
-valueMandatory es = toSvcParamValue . SPV_Mandatory <$> (mapM (resolvKey . map (w8chr . unEscW8)) =<< onComma es)
+valueMandatory :: [Word8] -> Either String SvcParamValue
+valueMandatory ws = toSvcParamValue . SPV_Mandatory <$> (mapM (resolvKey . map w8chr) =<< valueList ws)
   where
     resolvKey kn = maybe (Left $ "zone-svcb: mandatory: cannot resolve key: " ++ kn) (Right . fst) $ getSvcParamKey kn
 
-valueALPN :: EString -> Either String SvcParamValue
-valueALPN es = mkALPN <$> onComma es
+valueALPN :: [Word8] -> Either String SvcParamValue
+valueALPN ws = mkALPN <$> valueList ws
   where
-    mkALPN xs = toSvcParamValue $ SPV_ALPN [Short.pack $ map unEscW8 e | e <- xs]
+    mkALPN xs = toSvcParamValue $ SPV_ALPN [Short.pack x | x <- xs]
 
 valueNoDefaultALPN :: Either String SvcParamValue
 valueNoDefaultALPN = Right $ SvcParamValue mempty
 
-valuePort :: EString -> Either String SvcParamValue
-valuePort es = do
+valuePort :: [Word8] -> Either String SvcParamValue
+valuePort ws = do
     let left s = Left $ "zone-svcb: port: " ++ s
-    port <- maybe (left $ "not digit char: " ++ show es) Right $ mapM digitChar es
+    port <- maybe (left $ "not digit char: " ++ show (map w8chr ws)) Right $ mapM (satisfyChar W8.isDigit) ws
     let plen = length port
     maybe (left $ "out of range: " ++ port) Right $ guard (1 <= plen && plen <= 5)
     maybe (left $ "fail to read: " ++ port) (Right . toSvcParamValue . SPV_Port) $ readMaybe port
 
-valueIPv4Hint :: EString -> Either String SvcParamValue
-valueIPv4Hint es = toSvcParamValue . SPV_IPv4Hint <$> (mapM getV4 =<< onComma es)
+valueIPv4Hint :: [Word8] -> Either String SvcParamValue
+valueIPv4Hint ws = toSvcParamValue . SPV_IPv4Hint <$> (mapM getV4 =<< valueList ws)
   where
     digitOrDot w8 = W8.isDigit w8 || w8 == W8._period
-    getV4' e = readMaybe =<< mapM (esatisfyChar digitOrDot) e
-    getV4 e = maybe (Left $ "zone-svcb: ipv4hint: not IPv4 pattern: " ++ show e) Right (getV4' e)
+    getV4' x = readMaybe =<< mapM (satisfyChar digitOrDot) x
+    getV4 x = maybe (Left $ "zone-svcb: ipv4hint: not IPv4 pattern: " ++ show (map w8chr x)) Right (getV4' x)
 
--- valueECH :: EString -> Either String SvcParamValue
--- valueECH es = do
---     s <- maybe (Left $ "zone-svcb: ech: " ++ show es) Right $ mapM (esatisfyChar $ const True) es
---     o <- either (Left . ("zone-svcb: ech: base64: " ++)) Right $ Opaque.fromBase64 $ B8.pack s
+-- valueECH :: [Word8] -> Either String SvcParamValue
+-- valueECH ws = do
+--     o <- either (Left . ("zone-svcb: ech: base64: " ++)) Right $ Opaque.fromBase64 $ B8.pack $ map w8chr ws
 --     Right $ SvcParamValue o
 
-valueIPv6Hint :: EString -> Either String SvcParamValue
-valueIPv6Hint es = toSvcParamValue . SPV_IPv6Hint <$> (mapM getV6 =<< onComma es)
+valueIPv6Hint :: [Word8] -> Either String SvcParamValue
+valueIPv6Hint ws = toSvcParamValue . SPV_IPv6Hint <$> (mapM getV6 =<< valueList ws)
   where
     digitOrColon w8 = W8.isHexDigit w8 || w8 == W8._colon
-    getV6' e = readMaybe =<< mapM (esatisfyChar digitOrColon) e
-    getV6 e = maybe (Left $ "zone-svcb: ipv6hint: not IPv6 pattern: " ++ show e) Right (getV6' e)
+    getV6' x = readMaybe =<< mapM (satisfyChar digitOrColon) x
+    getV6 x = maybe (Left $ "zone-svcb: ipv6hint: not IPv6 pattern: " ++ show (map w8chr x)) Right (getV6' x)
 
-valueDoHPath :: EString -> SvcParamValue
-valueDoHPath es = toSvcParamValue . SPV_DoHPath $ Short.pack $ map unEscW8 es
+valueDoHPath :: [Word8] -> SvcParamValue
+valueDoHPath ws = toSvcParamValue . SPV_DoHPath $ Short.pack ws
 
 {- FOURMOLU_DISABLE -}
--- https://datatracker.ietf.org/doc/html/rfc9460#section-7.2
--- https://datatracker.ietf.org/doc/html/rfc9460#section-7.3
--- this SvcParamValue MUST NOT contain escape sequences.
-digitChar :: Word8E -> Maybe Char
-digitChar = esatisfyChar W8.isDigit
+satisfyChar :: (Word8 -> Bool) -> Word8 -> Maybe Char
+satisfyChar p w8
+   | p w8       = Just (w8chr w8)
+   | otherwise  = Nothing
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
-esatisfyChar :: (Word8 -> Bool) -> Word8E -> Maybe Char
-esatisfyChar p (C w8)
-   | p w8              = Just (w8chr w8)
-esatisfyChar _  _      = Nothing
-{- FOURMOLU_ENABLE -}
-
-{- FOURMOLU_DISABLE -}
-onComma :: EString -> Either String [EString]
-onComma = go
+-- | The items of a comma-separated SvcParamValue (RFC 9460 Appendix A.1), split after
+--   character-string decoding: only @\,@ and @\\@ are escapes, and no item is empty.
+--
+-- >>> items = fmap (map (map w8chr)) . valueList . w8str
+-- >>> items "part1,part2,part3\\,part4\\\\"
+-- Right ["part1","part2","part3,part4\\"]
+-- >>> items "a,b"
+-- Right ["a","b"]
+-- >>> items ""
+-- Right []
+-- >>> items "a,"
+-- Left "zone-svcb: SvcParamValue: comma-separated list, empty item"
+-- >>> items ",a"
+-- Left "zone-svcb: SvcParamValue: comma-separated list, empty item"
+-- >>> items "a,,b"
+-- Left "zone-svcb: SvcParamValue: comma-separated list, empty item"
+-- >>> items "a\\xb"
+-- Left "zone-svcb: SvcParamValue: comma-separated list, only a comma or a backslash may be escaped"
+-- >>> items "a\\"
+-- Left "zone-svcb: SvcParamValue: comma-separated list, only a comma or a backslash may be escaped"
+valueList :: [Word8] -> Either String [[Word8]]
+valueList []   = Right []
+valueList ws0  = go id ws0
   where
-    go es = do
-        m <- get1 es
-        let next (x, es1) = (x :) <$> go es1
-        maybe (Right []) next m
-    get1 [] =             Right   Nothing
-    get1 es = case tl of
-        []             -> Right $ Just (hd, [])
-        _ : []         -> Left "zone-svcb: SvcParamValue: comma-separated list, trailing comma is invalid"
-        _ : es1@(_:_)  -> Right $ Just (hd, es1)
-      where
-        (hd, tl) = break (== C W8._comma) es
+    go a ws = case ws of
+        []                              -> item (a []) (Right [])
+        w : ws'
+            | w == W8._comma            -> item (a []) (go id ws')
+            | w == W8._backslash        -> escaped a ws'
+            | otherwise                 -> go (a . (w :)) ws'
+    escaped a (w : ws')
+        | w == W8._comma || w == W8._backslash  = go (a . (w :)) ws'
+    escaped _ _  = Left "zone-svcb: SvcParamValue: comma-separated list, only a comma or a backslash may be escaped"
+    item []  _   = Left "zone-svcb: SvcParamValue: comma-separated list, empty item"
+    item x   r   = (x :) <$> r
 {- FOURMOLU_ENABLE -}
 
 ---

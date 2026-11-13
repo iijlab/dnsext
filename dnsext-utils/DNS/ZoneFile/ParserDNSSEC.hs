@@ -52,7 +52,7 @@ rdataDNSKEY = do
 -----
 
 part :: MonadParser Token s m => m ByteString
-part = fromShort . cs_cs <$> lstring
+part = fromShort <$> lstring
 
 parts :: MonadParser Token s m => m ByteString
 parts = (mconcat <$>) $ (:) <$> part <*> many (blank *> part)

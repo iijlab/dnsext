@@ -203,13 +203,13 @@ rdataTXT = rd_txt_n . txts <$> ((:) <$> nbstring <*> many (blank *> nbstring))
 --   The hexadecimal may be broken by whitespace, so it is gathered up
 --   before it is read.
 --
--- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "4",Blank,CS "0a0b0c0d"]
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [EHash,Blank,CS "4",Blank,CS "0a0b0c0d"]
 -- Right ((RD_Unknown(65280) \# 4 0a0b0c0d,Context "." "." 3600 IN),[])
--- >>> runParser (rdataGeneric $ toTYPE 65280) cx [CS (estringToCS' [E 35]),Blank,CS "0"]
+-- >>> runParser (rdataGeneric $ toTYPE 65280) cx [EHash,Blank,CS "0"]
 -- Right ((RD_Unknown(65280) \# 0 ,Context "." "." 3600 IN),[])
 rdataGeneric :: TYPE -> Parser RData
 rdataGeneric ty = do
-    _    <- this genericMark
+    _    <- this EHash
     len  <- blank *> readCString "rdlength"
     hex  <- concat <$> many (blank *> (fromCString <$> cstring))
     o    <- either (parseError . (("Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": ") ++)) pure
@@ -219,11 +219,6 @@ rdataGeneric ty = do
       $ "Zonefile.rdata: TYPE" ++ show (fromTYPE ty) ++ ": said " ++ show len
         ++ " octets and wrote " ++ show (Opaque.length o)
     pure $ rd_unknown ty o
-
--- | The @\\#@ which says the RDATA is written the generic way: a @#@
---   which the lexer has seen escaped.
-genericMark :: Token
-genericMark = CS $ estringToCS' [E 35]
 {- FOURMOLU_ENABLE -}
 
 rdataMX :: Parser RData
@@ -299,7 +294,8 @@ rrclass = optional (blank *> class_) >>= maybe (gets cx_class) setClass
 -- >>> -- example from RFC9460 - Appendix D. Test Vectors - D.2. ServiceMode - Fiture 10
 -- >>> -- * URL: https://datatracker.ietf.org/doc/html/rfc9460#name-servicemode-3
 -- >>> -- * example RR: example.com.   SVCB   16 foo.example.org. alpn="f\\\\oo\\,bar,h2"
--- >>> runParser (rrTyRData (,)) cx [Blank,CS "SVCB",Blank,CS "16",Blank,CS "foo",Dot,CS "example",Dot,CS "org",Dot,Blank,CS "alpn=",CS (estringToCS' [C 102,E 92,C 111,C 111,E 44,C 98,C 97,C 114,C 44,C 104,C 50])]
+-- >>> -- * the lexer's character-string decoding of alpn="f\\\\oo\\,bar,h2" is alpn= and f\\oo\,bar,h2
+-- >>> runParser (rrTyRData (,)) cx [Blank,CS "SVCB",Blank,CS "16",Blank,CS "foo",Dot,CS "example",Dot,CS "org",Dot,Blank,CS "alpn=",CS "f\\\\oo\\,bar,h2"]
 -- Right (((SVCB,16 foo.example.org. alpn=["f\\oo,bar","h2"]),Context "." "." 3600 IN),[])
 rrTyRData :: (TYPE -> RData -> a) -> Parser a
 rrTyRData mk =

@@ -141,24 +141,24 @@ cstringbOct = backslash *> (replicateM 3 oct >>= getOct)
         v : _  -> pure v
 -- |
 -- >>> runParser cstringByte "zyx"
--- Right (C 122,"yx")
+-- Right (122,"yx")
 -- >>> runParser cstringByte "\\\t"
--- Right (E 9,"")
+-- Right (9,"")
 -- >>> runParser cstringByte "\\200"
--- Right (E 128,"")
-cstringByte :: MonadParser W8 s m => m Word8E
+-- Right (128,"")
+cstringByte :: MonadParser W8 s m => m Word8
 cstringByte =
-    C <$> cstringbSimple    <|>
-    E <$> cstringbOct       <|>
-    E <$> cstringbEscaped
+    cstringbSimple    <|>
+    cstringbOct       <|>
+    cstringbEscaped
 
 quote :: MonadParser W8 s m => m ()
 quote = void $ byte _quotedbl
 
-quotedByte :: MonadParser W8 s m => m Word8E
+quotedByte :: MonadParser W8 s m => m Word8
 quotedByte =
     cstringByte  <|>
-    C <$> satisfy "not (`\\` || `\"`) && not newline && isPrint || tab" check
+    satisfy "not (`\\` || `\"`) && not newline && isPrint || tab" check
   where
     check c =
         c `notElem` [_backslash, _quotedbl] &&
@@ -176,9 +176,9 @@ directive = D_Origin <$ string "$ORIGIN" <|> D_TTL <$ string "$TTL"
 -- Right ("abc","")
 -- >>> runParser lex_cstring "\"y.z\""
 -- Right ("y.z","")
-lex_cstring :: MonadParser W8 s m => m CS'
+lex_cstring :: MonadParser W8 s m => m CString
 lex_cstring =
-    estringToCS' <$>
+    cstringW8 <$>
     ( some cstringByte                  <|>
       quote *> many quotedByte <* quote )
 {- FOURMOLU_ENABLE -}
@@ -187,6 +187,20 @@ comment :: MonadParser W8 s m => m ()
 comment = void (many spc *> lineComment *> optional newline)
 
 {- FOURMOLU_DISABLE -}
+-- | The @\\#@ of RFC 3597.
+--
+-- >>> runParser ehash "\\# 4 0a0b0c0d"
+-- Right (()," 4 0a0b0c0d")
+-- >>> isLeft $ runParser ehash "\\#1"
+-- True
+-- >>> isLeft $ runParser ehash "#"
+-- True
+ehash :: MonadParser W8 s m => m ()
+ehash = do
+    _ <- string "\\#"
+    m <- optional (lookAhead cstringByte)
+    maybe (pure ()) (const $ raise "ehash: more of a character-string after \\#") m
+
 lexerToken :: MonadParser W8 s m => m Token
 lexerToken =
     Directive <$> directive     <|>
@@ -195,6 +209,7 @@ lexerToken =
     RParen <$ byte _parenright  <|>
     Blank <$ some spc           <|>
     Dot <$ byte _period         <|>
+    EHash <$ ehash              <|>
     CS <$> lex_cstring          <|>
     Comment <$ comment
 {- FOURMOLU_ENABLE -}

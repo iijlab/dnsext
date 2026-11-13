@@ -5,6 +5,7 @@ module DNS.ZoneFile.ParserBase where
 import Control.Applicative
 import Control.Monad
 import qualified Data.ByteString.Short as Short
+import Data.String (fromString)
 
 -- this package
 import DNS.Parser
@@ -23,21 +24,20 @@ blank :: MonadParser Token s m => m Token
 blank = this Blank
 
 {- FOURMOLU_DISABLE -}
-lstring :: MonadParser Token s m => m CS'
+-- | A character-string token; 'EHash' is the character-string @#@ here.
+lstring :: MonadParser Token s m => m CString
 lstring = do
     t <- token
     case t of
-        CS cs  -> pure cs
-        _      -> raise $ "Parser.lstring: not CString token: " ++ show t
-
-cstring' :: MonadParser Token s m => m CS'
-cstring' = do
-    cs <- lstring
-    guard (Short.length (cs_cs cs) < 256) <|> raise ("Parser.cstring: too long: " ++ show cs)
-    pure cs
+        CS cs        -> pure cs
+        EHash        -> pure $ fromString "#"
+        _            -> raise $ "Parser.lstring: not CString token: " ++ show t
 
 cstring :: MonadParser Token s m => m CString
-cstring = cs_cs <$> cstring'
+cstring = do
+    cs <- lstring
+    guard (Short.length cs < 256) <|> raise ("Parser.cstring: too long: " ++ show cs)
+    pure cs
 {- FOURMOLU_ENABLE -}
 
 readCString :: (Read a, MonadParser Token s m) => String -> m a
