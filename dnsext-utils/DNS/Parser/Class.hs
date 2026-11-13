@@ -78,11 +78,13 @@ instance ParserToken a => CaseCons a [a] where
 ------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
+{-# INLINEABLE takeCons #-}
 takeCons :: CaseCons t s => Int -> s -> [t]
 takeCons n s
     | n <= 0     = []
     | otherwise  = caseCons (\t ts -> t : takeCons (n-1) ts) [] s
 
+{-# INLINEABLE parseError #-}
 parseError :: forall t s m a. MonadParser t s m => String -> m a
 parseError s = do
     (lin, col) <- getPos
@@ -92,12 +94,14 @@ parseError s = do
         | lin < 0    = ""
         | otherwise  = "line " ++ show lin ++ ", " ++ posUnit (Proxy :: Proxy t) ++ " " ++ show col ++ ": "
 
+{-# INLINEABLE token #-}
 token :: MonadParser t s m => m t
 token = caseCons cons nil =<< getInput
   where
     cons t ts = (putPos . proceed t =<< getPos) *> putInput ts $> t
     nil = parseError "token: eof"
 
+{-# INLINEABLE eof #-}
 eof :: (Show t, MonadParser t s m) => m ()
 eof = do
     s <- getInput
@@ -106,6 +110,7 @@ eof = do
     cons s _ _ = parseError $ "eof: more inputs found: " ++ unwords (map show $ takeCons 7 s) ++ " ..."
     nil = pure ()
 
+{-# INLINEABLE lookAhead #-}
 lookAhead :: MonadParser t s m => m a ->  m a
 lookAhead px = do
     s <- getInput
@@ -119,23 +124,28 @@ lookAhead px = do
 ------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
+{-# INLINEABLE satisfy #-}
 satisfy :: (Show t, MonadParser t s m) => String -> (t -> Bool) -> m t
 satisfy name p = do
     t <- token
     guard (p t) <|> parseError ("satisfy: not satisfied, <" ++ name ++ "> predicate against " ++ show t)
     pure t
 
+{-# INLINEABLE this #-}
 this :: (Eq t, Show t, MonadParser t s m) => t -> m t
 this tk = satisfy ("this " ++ show tk) (== tk)
 
+{-# INLINEABLE these #-}
 these :: (Eq t, Show t, MonadParser t s m) => [t] -> m [t]
 these = mapM this
 
+{-# INLINEABLE choice #-}
 choice :: MonadParser t s m => [m a] -> m a
 choice  []         = parseError "choice: no fallbacks"
 choice [x]         = x
 choice (x:xs@(_:_))  = x <|> choice xs
 
+{-# INLINEABLE readable #-}
 readable :: (Read a, MonadParser t s m) => String -> String -> m a
 readable name str =
     case [ x | (x, "") <- reads str ] of

@@ -14,17 +14,20 @@ import DNS.ZoneFile.Types
 -- |
 -- >>> runParser dot [Dot]
 -- Right (Dot,[])
+{-# INLINEABLE dot #-}
 dot :: MonadParser Token s m => m Token
 dot = this Dot
 
 -- |
 -- >>> runParser blank [Blank]
 -- Right (Blank,[])
+{-# INLINEABLE blank #-}
 blank :: MonadParser Token s m => m Token
 blank = this Blank
 
 {- FOURMOLU_DISABLE -}
 -- | A character-string token; 'EHash' is the character-string @#@ here.
+{-# INLINEABLE lstring #-}
 lstring :: MonadParser Token s m => m CString
 lstring = do
     t <- token
@@ -33,6 +36,7 @@ lstring = do
         EHash        -> pure $ fromString "#"
         _            -> raise $ "Parser.lstring: not CString token: " ++ show t
 
+{-# INLINEABLE cstring #-}
 cstring :: MonadParser Token s m => m CString
 cstring = do
     cs <- lstring
@@ -40,5 +44,6 @@ cstring = do
     pure cs
 {- FOURMOLU_ENABLE -}
 
+{-# INLINEABLE readCString #-}
 readCString :: (Read a, MonadParser Token s m) => String -> m a
 readCString name = readable ("Zonefile." ++ name) . fromCString =<< cstring

@@ -9,7 +9,7 @@ module DNS.ZoneFile.Parser where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State.Strict
 import Data.Functor
 
 -- dnsext-* packages
@@ -56,10 +56,15 @@ runParser p = Poly.runParser . runStateT p
 
 instance MonadParser Token [Token] Parser where
     getInput = lift getInput
+    {-# INLINE getInput #-}
     putInput = lift . putInput
+    {-# INLINE putInput #-}
     raiseParser = lift . raiseParser
+    {-# INLINE raiseParser #-}
     getPos = lift getPos
+    {-# INLINE getPos #-}
     putPos = lift . putPos
+    {-# INLINE putPos #-}
 
 setCx :: (a -> Context -> Context) -> a -> Parser a
 setCx set_ x = modify (set_ x) $> x
@@ -356,7 +361,9 @@ record =
 
 {- FOURMOLU_DISABLE -}
 file :: Parser [Record]
-file = many (record <* this RSep)
+file = many $ do
+    r <- record <* this RSep
+    r `seq` pure r
 {- FOURMOLU_ENABLE -}
 
 -- |

@@ -6,7 +6,7 @@ module DNS.Parser.State where
 
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (Except, runExcept, throwE)
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State.Strict
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Last (..))
 
@@ -29,7 +29,12 @@ runParserAt pos p in_ = either (Left . runError) Right $ runExcept (evalStateT (
 
 instance CaseCons t s => MonadParser t s (Parser s) where
     getInput = get
+    {-# INLINE getInput #-}
     putInput = put
+    {-# INLINE putInput #-}
     raiseParser = lift . lift . throwE . Last . Just
+    {-# INLINE raiseParser #-}
     getPos = lift get
+    {-# INLINE getPos #-}
     putPos = lift . put
+    {-# INLINE putPos #-}
