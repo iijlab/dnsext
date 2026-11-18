@@ -28,6 +28,19 @@ import DNS.Iterative.RootServers (rootServers)
 -- >>> :seti -Wno-incomplete-patterns
 -- >>> import DNS.Types
 
+{- FOURMOLU_DISABLE -}
+-- | A received TTL with the top bit set is taken as zero (RFC 2181 Sec 8).
+--
+-- >>> receivedTTL 0x7fffffff
+-- 2147483647(24855 days)
+-- >>> receivedTTL 0x80000000
+-- 0(secs)
+receivedTTL :: TTL -> TTL
+receivedTTL ttl
+    | ttl > 0x7fffffff  = 0
+    | otherwise         = ttl
+{- FOURMOLU_ENABLE -}
+
 showQ' :: String -> Domain -> TYPE -> String
 showQ' tag name typ = unwords [tag, show name, show typ]
 
