@@ -5,7 +5,9 @@ module DNS.Iterative.Query.Norec where
 
 -- GHC packages
 import Control.Concurrent (myThreadId)
-import Control.Exception (bracket_)
+import Control.Concurrent.STM
+import Control.Exception (SomeException, bracket_, fromException, throwIO, try)
+import Data.Foldable (toList)
 
 -- other packages
 
@@ -13,6 +15,8 @@ import Control.Exception (bracket_)
 import DNS.Types
 
 -- dnsext-utils
+import qualified DNS.Log as Log
+import qualified DNS.ThreadStats as TStat
 import DNS.WorkerStats
 
 -- dnsext-do53
@@ -22,7 +26,6 @@ import DNS.Do53.Client (
  )
 import qualified DNS.Do53.Client as DNS
 import DNS.Do53.Internal (
-    ResolveEnv (..),
     ResolveActions (..),
     ResolveInfo (..),
     defaultResolveInfo,
@@ -43,7 +46,7 @@ norec cxt wstat dnssecOK aservers name typ =
     body = steppedWait wstat TimeoutExpired RetryLimitExceeded waitInterval axs
     axs = [(tag ++ ".q1", action), (tag ++ ".q2", action)]
     tag = let (a:|as) = aservers in show name ++ " " ++ show typ ++ ": " ++ show (a:as)
-    action = debugDelay >> norec_ 500_000 cxt wstat dnssecOK aservers name typ
+    action giveUp = debugDelay >> norec_ giveUp 500_000 cxt wstat dnssecOK aservers name typ
     setThId = setThreadId wstat =<< myThreadId
     closeTasks  = clearTasks wstat
     waitInterval = 250_000
@@ -56,9 +59,9 @@ norec cxt wstat dnssecOK aservers name typ =
   * RD (Recursion Desired) must be 0 for request to authoritative server
   * EDNS must be enable for DNSSEC OK request -}
 norec_
-    :: Int -> Env -> WorkerStatOP -> Bool -> NonEmpty Address
+    :: STM () -> Int -> Env -> WorkerStatOP -> Bool -> NonEmpty Address
     -> Domain -> TYPE -> IO (Either DNSError DNSMessage)
-norec_ utimeout cxt wstat dnssecOK aservers name typ = do
+norec_ giveUp utimeout cxt wstat dnssecOK aservers name typ = do
     asps@(x:|xs) <- sequence [ (,) x <$> getBlockingStatOP | x <- aservers ]
     addTasks wstat [bstat | (_, bstat) <- x:xs]
     {- The case of the name is mixed once for this query and every
@@ -86,16 +89,47 @@ norec_ utimeout cxt wstat dnssecOK aservers name typ = do
                 }
             | ((aserver, port), bstatOP) <- asps
             ]
-        renv =
-            ResolveEnv
-                { renvResolver      = udpTcpResolver1
-                , renvConcurrent    = True -- should set True if multiple RIs are provided
-                , renvResolveInfos  = ris
-                }
         q = Question name' typ IN
         doFlagSet
             | dnssecOK = FlagSet
             | otherwise = FlagClear
         qctl = DNS.rdFlag FlagClear <> DNS.doFlag doFlagSet
-    fmap DNS.replyDNSMessage <$> DNS.resolve renv q qctl
+    fmap DNS.replyDNSMessage <$> raceResolve giveUp (toList ris) q qctl
+{- FOURMOLU_ENABLE -}
+
+{- FOURMOLU_DISABLE -}
+-- | Asking every server at once.  The first answer wins and the others
+--   give up on it, as on the given 'STM'.  The last error is returned
+--   when none answers.
+raceResolve :: STM () -> [ResolveInfo] -> Question -> DNS.QueryControls -> IO (Either DNSError DNS.Reply)
+raceResolve giveUp [ri] q qctl = udpTcpResolver1 giveUp ri q qctl
+raceResolve giveUp ris q@(Question qn qt _) qctl = do
+    won <- newTVarIO False
+    results <- newTQueueIO
+    caller <- TStat.getThreadLabel
+    let giveUp' = giveUp <|> (readTVar won >>= check)
+    sequence_
+        [ TStat.forkIO (caller ++ ".do53-res: " ++ show (rinfoIP ri)) $
+            try (udpTcpResolver1 giveUp' ri q qctl) >>= atomically . writeTQueue results . (,) ri
+        | ri <- ris ]
+    let collect :: Int -> IO (Either DNSError DNS.Reply)
+        collect n = do
+            (ri, r) <- atomically $ readTQueue results
+            let failed :: Either SomeException DNSError -> IO (Either DNSError DNS.Reply)
+                failed e
+                    | n <= 1 = either throwIO (return . Left) e
+                    | otherwise = collect (n - 1)
+            case r of
+                Right (Right rply) -> do
+                    atomically $ writeTVar won True
+                    ractionLog (rinfoActions ri) Log.DEMO Nothing
+                        ["    query @" ++ DNS.fromNameTag (DNS.replyTag rply) ++ " " ++ show qn ++ " " ++ show qt ++ ": win"]
+                    return $ Right rply
+                Right (Left e) -> failed $ Right $ context ri e
+                Left se
+                    | Just e <- fromException se -> failed $ Right $ context ri e
+                    | otherwise -> failed $ Left se
+    collect $ length ris
+  where
+    context ri e = DNSErrorInfo e $ "query " ++ show qn ++ " " ++ show qt ++ " to " ++ show (rinfoIP ri) ++ "#" ++ show (rinfoPort ri)
 {- FOURMOLU_ENABLE -}
