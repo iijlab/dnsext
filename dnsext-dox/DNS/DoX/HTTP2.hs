@@ -13,6 +13,7 @@ module DNS.DoX.HTTP2 (
 )
 where
 
+import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import DNS.Do53.Client
 import DNS.Do53.Internal
@@ -26,21 +27,21 @@ import qualified Data.ByteString.Char8 as C8
 import Data.ByteString.Short (fromShort)
 import qualified Data.ByteString.Short as Short
 import Network.HTTP.Types
-import Network.HTTP2.Client (Client, Response, SendRequest, getResponseBodyChunk, requestBuilder, responseStatus)
+import Network.HTTP2.Client (Client, Response, SendRequest, getResponseBodyChunk, requestBuilder, responseStatus, setRequestGiveUp)
 import qualified Network.HTTP2.Client as H2
 import qualified Network.HTTP2.TLS.Client as H2TLS
 
+import DNS.DoX.GiveUp
 import DNS.DoX.Imports
 import DNS.DoX.TLS
 
 http2PersistentResolver :: PersistentResolver
 http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentResolver" $ do
     -- TLS SNI
-    settings <- makeSettings ri tag
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runWithConfig config settings ipstr rinfoPort $
-            onceUp established $
-                doHTTP tag ri body
+    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
+    asTimeout gu $ H2TLS.runWithConfig config settings ipstr rinfoPort $
+        onceUp gu $
+            doHTTP tag ri body
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -49,11 +50,10 @@ http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentRes
 
 http2Resolver :: OneshotResolver
 http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
-    settings <- makeSettings ri tag
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runWithConfig config settings ipstr rinfoPort $
-            onceUp established $
-                doHTTPOneshot tag ri q qctl
+    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
+    asTimeout gu $ H2TLS.runWithConfig config settings ipstr rinfoPort $
+        onceUp gu $
+            doHTTPOneshot tag ri q qctl
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -61,11 +61,11 @@ http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
     config = H2.defaultClientConfig{H2.authority = fromMaybe ipstr rinfoServerName}
 
 http2cPersistentResolver :: PersistentResolver
-http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-            onceUp established $
-                doHTTP tag ri body
+http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $ do
+    (settings, gu) <- connectGivingUp ri H2TLS.defaultSettings
+    asTimeout gu $ H2TLS.runH2CWithConfig config settings ipstr rinfoPort $
+        onceUp gu $
+            doHTTP tag ri body
   where
     tag = nameTag ri "H2C"
     ipstr = show rinfoIP
@@ -75,10 +75,10 @@ http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentR
 http2cResolver :: OneshotResolver
 http2cResolver ri@ResolveInfo{..} q qctl = toDNSError "http2cResolver" $ do
     let tag = nameTag ri "H2C"
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runH2CWithConfig config H2TLS.defaultSettings ipstr rinfoPort $
-            onceUp established $
-                doHTTPOneshot tag ri q qctl
+    (settings, gu) <- connectGivingUp ri H2TLS.defaultSettings
+    asTimeout gu $ H2TLS.runH2CWithConfig config settings ipstr rinfoPort $
+        onceUp gu $
+            doHTTPOneshot tag ri q qctl
   where
     ipstr = show rinfoIP
     -- HTTP :authority
@@ -96,9 +96,10 @@ resolv
     :: NameTag
     -> ResolveInfo
     -> SendRequest
+    -> STM ()
     -> Resolver
-resolv tag ResolveInfo{..} sendRequest q qctl = reportFailure $
-    sendRequest req $ \rsp ->
+resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure $
+    sendRequest (setRequestGiveUp req giveUp) $ \rsp ->
         if responseStatus rsp /= Just ok200
             then return $ Left OperationRefused
             else do
@@ -122,10 +123,10 @@ resolv tag ResolveInfo{..} sendRequest q qctl = reportFailure $
         Just p -> fromShort $ Short.takeWhile (/= 0x7b) p -- '{'
     req = requestBuilder methodPost path hdr $ BB.byteString wire
 
--- | Telling 'withHandshakeTimeout' that the connection is up, which is
---   what being called at all means for a 'Client'.
-onceUp :: IO () -> Client a -> Client a
-onceUp established client sendRequest aux = established >> client sendRequest aux
+-- | Stopping 'connectGivingUp' once the connection is up, which is what
+--   being called at all means for a 'Client'.
+onceUp :: GiveUp -> Client a -> Client a
+onceUp gu client sendRequest aux = disarm gu >> client sendRequest aux
 
 -- | Reading the body of an answer, and no more of it than a DNS message
 --   is allowed to be.
@@ -159,7 +160,7 @@ doHTTP
     -> (Resolver -> IO a)
     -> Client a
 doHTTP tag ri body sendRequest _aux =
-    body $ \q ctl -> withTimeout ri $ resolv tag ri sendRequest q ctl
+    body $ \q ctl -> queryGivingUp ri $ \g -> resolv tag ri sendRequest g q ctl
 
 doHTTPOneshot
     :: NameTag
@@ -169,7 +170,7 @@ doHTTPOneshot
     -> Client (Either DNSError Reply)
 doHTTPOneshot tag ri@ResolveInfo{..} q qctl sendRequest _aux = do
     ractionLog rinfoActions Log.DEMO Nothing [qtag]
-    withTimeout ri $ resolv tag ri sendRequest q qctl
+    queryGivingUp ri $ \g -> resolv tag ri sendRequest g q qctl
   where
     ~qtag = queryTag q tag qctl
 
