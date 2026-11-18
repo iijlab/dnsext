@@ -91,5 +91,9 @@ bindAPIs Config{..}
         return sock
 {- FOURMOLU_ENABLE -}
 
-run :: Control -> Socket -> IO ()
-run mng sock = E.finally (runSettingsSocket defaultSettings sock $ app mng) (close sock)
+-- | Running the web API, handing the action which stops it to the
+--   installer.  Requests in progress are given a second to finish.
+run :: Control -> (IO () -> IO ()) -> Socket -> IO ()
+run mng install sock = E.finally (runSettingsSocket settings sock $ app mng) (close sock)
+  where
+    settings = setInstallShutdownHandler install $ setGracefulShutdownTimeout (Just 1) defaultSettings

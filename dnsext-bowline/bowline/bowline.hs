@@ -6,7 +6,7 @@
 module Main where
 
 -- GHC
-import Control.Concurrent (killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
+import Control.Concurrent (killThread, threadDelay)
 import Control.Concurrent.Async (mapConcurrently_, race_, waitCatchSTM)
 import Control.Concurrent.STM
 import Control.Exception (bracket_, finally, throwIO)
@@ -198,12 +198,16 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     runLogger
     runSSLKeyLogger
     apis <- forM (zip [1 :: Int ..] asocks) $ \(i, s) -> do
-        done <- newEmptyMVar
-        tid <- TStat.forkIO ("bw.webapi-srv." ++ show i) $ API.run mng s `finally` putMVar done ()
-        return (tid, done)
-    let tidA = map fst apis
+        stop <- newEmptyTMVarIO
+        done <- newEmptyTMVarIO
+        tid <- TStat.forkIO ("bw.webapi-srv." ++ show i) $
+            API.run mng (atomically . putTMVar stop) s `finally` atomically (putTMVar done ())
+        return (tid, stop, done)
+    let tidA = [tid | (tid, _, _) <- apis]
         -- The web API closes its sockets, so it is gone before the next binds.
-        stopAPIs = mapM_ (killThread . fst) apis >> mapM_ (takeMVar . snd) apis
+        stopAPIs = do
+            sequence_ [join $ atomically $ takeTMVar stop `orElse` (return () <$ readTMVar done) | (_, stop, done) <- apis]
+            sequence_ [atomically $ readTMVar done | (_, _, done) <- apis]
     let withNum name xs = zipWith (\i x -> (name ++ printf "%4d" i, x)) [1 :: Int ..] xs
     let concPipeline =
             conc
