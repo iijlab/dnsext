@@ -186,7 +186,8 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     -- actions list for threads
     cacherStats <- Server.getWorkerStats cnf_cachers
     workerStats <- Server.getWorkerStats cnf_workers
-    (cachers, workers, toCacher) <- Server.mkPipeline env cacherStats workerStats
+    pipelineStop <- newTVarIO False
+    (cachers, workers, toCacher) <- Server.mkPipeline env cacherStats workerStats (readTVar pipelineStop >>= check)
     servers <- sequence [(n,sks,) <$> mkserv env toCacher sks | (n, mkserv, sks) <- all_addrs, not (null sks)]
     mng <- getControl env cacherStats workerStats mng0{reopenLog = reopenLog0}
     let srvInfo1 name sas = unwords $ (name ++ ":") : map show sas
@@ -253,7 +254,10 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
             atomically $ Server.stopped stopper
             threadDelay $ cnf_graceful_shutdown_timeout * 1000000
             putLines Log.WARN Nothing ["graceful shutdown: cut after " ++ show cnf_graceful_shutdown_timeout ++ " s"]
-    race_ concPipeline (conc [concServer `race_` cutOff, handOver'])
+        -- The pipeline answers nobody once the servers are done.  A query in
+        -- progress is given the resolve timeout to end.
+        stopPipeline = atomically (writeTVar pipelineStop True) >> threadDelay cnf_resolve_timeout
+    race_ concPipeline (conc [concServer `race_` cutOff, handOver'] >> stopPipeline)
         -- Teardown
         `finally` do
             mapM_ killThread tidA
