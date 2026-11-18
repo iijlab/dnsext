@@ -4,17 +4,18 @@
 module DNS.DoX.TLS where
 
 import Codec.Serialise
-import Control.Concurrent
+import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import Data.ByteString.Char8 ()
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (rights)
 import qualified Network.HTTP2.TLS.Client as H2TLS
 import qualified Network.HTTP2.TLS.Internal as H2TLS
+import Network.Run.TCP (openClientSocketGivingUp)
 import Network.TLS
-import System.Timeout (timeout)
 
 import DNS.Do53.Internal
+import DNS.DoX.GiveUp
 import DNS.DoX.Imports
 import DNS.DoX.SAN
 import qualified DNS.Log as Log
@@ -22,20 +23,19 @@ import DNS.Types
 
 tlsPersistentResolver :: PersistentResolver
 tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolver" $ do
-    settings <- makeSettings ri tag
+    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
     -- Using a fresh connection
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-            established
-            let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-                -- connection timeout, not query timeout
-                to = ractionTimeoutTime rinfoActions * 10
-            -- One reader for the connection: recvTLS hands over a whole TLS
-            -- record, so two answers written together arrive together and
-            -- a reader made for each message would drop the second.
-            recvVC' <- makeRecvVC rinfoVCLimit $ H2TLS.recvTLS ctx
-            let recvDoT = withTimeout' to recvVC'
-            vcPersistentResolver tag sendDoT recvDoT ri body
+    asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
+        disarm gu
+        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
+            -- connection timeout, not query timeout
+            to = ractionTimeoutTime rinfoActions * 10
+        -- One reader for the connection: recvTLS hands over a whole TLS
+        -- record, so two answers written together arrive together and
+        -- a reader made for each message would drop the second.
+        recvVC' <- makeRecvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+        let recvDoT = recvGivingUp gu to recvVC'
+        vcPersistentResolver tag sendDoT recvDoT ri body
   where
     tag = nameTag ri "TLS"
 
@@ -76,49 +76,44 @@ makeSettings ResolveInfo{..} tag = do
 
 tlsResolver :: OneshotResolver
 tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
-    settings <- makeSettings ri tag
+    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
     -- Using a fresh connection
-    withHandshakeTimeout ri $ \established ->
-        H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-            established
-            let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-                to = ractionTimeoutTime rinfoActions
-                recvDoT = withTimeout' to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
-            vcResolver tag sendDoT recvDoT ri q qctl
+    asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
+        disarm gu
+        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
+            to = ractionTimeoutTime rinfoActions
+            recvDoT = recvGivingUp gu to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+        vcResolver tag sendDoT recvDoT ri q qctl
   where
     tag = nameTag ri "TLS"
 
-withTimeout :: ResolveInfo -> IO (Either DNSError Reply) -> IO (Either DNSError Reply)
-withTimeout ResolveInfo{..} action = do
-    mres <- timeout (ractionTimeoutTime rinfoActions) action
-    case mres of
-        Nothing -> return $ Left TimeoutExpired
-        Just res -> return res
+-- | Giving up connecting and the TLS handshake at the query timeout.
+--   'disarm' stops it once the connection is up.
+connectGivingUp :: ResolveInfo -> H2TLS.Settings -> IO (H2TLS.Settings, GiveUp)
+connectGivingUp ResolveInfo{..} settings = do
+    gu <- newGiveUp =<< deadline (ractionTimeoutTime rinfoActions)
+    let giveUp = giveUpSTM gu
+        settings' =
+            settings
+                { H2TLS.settingsGiveUp = giveUp
+                , H2TLS.settingsOpenClientSocket = openClientSocketGivingUp giveUp []
+                }
+    return (settings', gu)
 
-withTimeout' :: Int -> IO a -> IO a
-withTimeout' to action = do
-    mres <- timeout to action
-    case mres of
-        Nothing -> E.throwIO TimeoutExpired
-        Just res -> return res
+-- | Giving up a read of the connection after the microseconds, with
+--   'TimeoutExpired'.
+recvGivingUp :: GiveUp -> Int -> IO a -> IO a
+recvGivingUp gu to action = do
+    g <- deadline to
+    withGiveUp gu g action `E.catch` \e -> do
+        given <- gaveUp g
+        if given then E.throwIO TimeoutExpired else E.throwIO (e :: E.SomeException)
 
--- | Running an action which has to set a connection up before it can do
---   anything.
---
---   Setting the connection up is outside the query timeout, which only
---   covers reading an answer once there is somewhere to read it from.
---   A peer which accepts the connection and then says nothing therefore
---   used to leave us in the TLS handshake for as long as it cared to
---   hold the socket open.  The timer here is stopped by the action
---   itself, with the @IO ()@ it is handed, as soon as the connection is
---   up, so that a connection which is meant to last is not cut off.
-withHandshakeTimeout :: ResolveInfo -> (IO () -> IO a) -> IO a
-withHandshakeTimeout ResolveInfo{..} action = do
-    up <- newEmptyMVar
-    caller <- myThreadId
-    E.bracket (forkIO $ watch caller up) killThread $ \_ ->
-        action $ void $ tryPutMVar up ()
-  where
-    watch caller up = do
-        got <- timeout (ractionTimeoutTime rinfoActions) $ takeMVar up
-        when (isNothing got) $ E.throwTo caller TimeoutExpired
+-- | Giving up a question at the query timeout, answering 'TimeoutExpired'.
+queryGivingUp
+    :: ResolveInfo -> (STM () -> IO (Either DNSError a)) -> IO (Either DNSError a)
+queryGivingUp ResolveInfo{..} action = do
+    g <- deadline $ ractionTimeoutTime rinfoActions
+    action g `E.catch` \e -> do
+        given <- gaveUp g
+        if given then return (Left TimeoutExpired) else E.throwIO (e :: E.SomeException)

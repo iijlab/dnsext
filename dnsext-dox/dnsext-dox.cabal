@@ -25,6 +25,7 @@ library
         DNS.DoX.Internal
 
     other-modules:
+        DNS.DoX.GiveUp
         DNS.DoX.HTTP2
         DNS.DoX.HTTP3
         DNS.DoX.Imports
@@ -49,8 +50,10 @@ library
         http3 >=0.1.2 && <0.2,
         iproute,
         network >=3.2.8 && <4.1,
+        network-run >=0.8 && <0.10,
         quic >=0.3.0 && <0.4,
         serialise,
+        stm,
         tls >=2.3.0 && < 2.6
 
     if impl(ghc >=8)
