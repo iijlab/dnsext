@@ -5,7 +5,6 @@ module Iterative (iterativeQuery, getRootV6) where
 --
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
-import System.Timeout (timeout)
 
 --
 
@@ -71,8 +70,7 @@ setup putLines opt@Options{..} authPort = do
     -- ones.
     rootHint <- mapM readRootHint optRootHints
     anchors <- maybe (pure mempty) (readTrustAnchors . pure) optTrustAnchor
-    let tmout = timeout 3000000
-        setOps =
+    let setOps =
             setRRCacheOps cacheOps
                 . setTimeCache tcache
                 . setRootHint rootHint
@@ -83,7 +81,6 @@ setup putLines opt@Options{..} authPort = do
             , logLines_ = putLines
             , disableV6NS_ = optDisableV6NS
             , authPort_ = authPort
-            , timeout_ = tmout
             }
 
 resolve :: Env -> Synthesis -> (Question, QueryControls) -> IO (Either String DNSMessage)

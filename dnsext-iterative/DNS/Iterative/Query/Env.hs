@@ -54,7 +54,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Network.TLS (defaultKeyLogger)
 import System.Posix (getSystemID, nodeName)
-import System.Timeout (timeout)
 
 -- other packages
 import Crypto.Hash (hashWith)
@@ -136,7 +135,6 @@ newEmptyEnv = do
         , stats_ = stats
         , nsid_ = Nothing
         , updateHistogram_ = \_ _ -> pure ()
-        , timeout_ = timeout 5000000
         }
 {- FOURMOLU_ENABLE -}
 
