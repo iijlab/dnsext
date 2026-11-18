@@ -9,3 +9,35 @@ packages:
   dnsext-auth
   dnsext-scenario
   dnsext-bowline
+
+-- Not released yet: the libraries which stop their threads by events.
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/quic.git
+  tag: 016f6c2cfdbaaf1d80d2200df17d3ca3ba05d7d8
+
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/http2.git
+  tag: ff32894472a7fc149185b8683172615cdc08ee46
+
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/http3.git
+  tag: 6e1232e6d8b738c3dd5019c9695afcc44373ff6f
+
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/http2-tls.git
+  tag: 9b6080f833cd4487d59eaf9d9a24940364833db9
+
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/network-run.git
+  tag: 468b91f162b7ac57c5dd9f369af71c407dff7bef
+
+source-repository-package
+  type: git
+  location: https://github.com/kazu-yamamoto/wai.git
+  tag: 9cb425c7076f0337fd86a7ef55cb247d4e5f70a3
+  subdir: time-manager

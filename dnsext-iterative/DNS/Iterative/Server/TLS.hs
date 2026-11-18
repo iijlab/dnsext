@@ -65,7 +65,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
             , H2.settingsEarlyDataSize = vc_early_data_size
             , H2.settingsKeyLogger = putSSLKeyLog_ env
             }
-    go _ backend = sessionStatsDoT (stats_ env) $ do
+    go backend = sessionStatsDoT (stats_ env) $ do
         let mysa = H2.mySockAddr backend
             peersa = H2.peerSockAddr backend
             peerInfo = PeerInfoVC peersa
