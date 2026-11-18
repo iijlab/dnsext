@@ -20,7 +20,7 @@ import Data.Maybe
 import Network.Socket
 import qualified System.IO.Error as E
 import System.Posix.Time (epochTime)
-import System.Timeout (timeout)
+import qualified Network.Socket.ByteString as NSB
 
 import DNS.Auth.Algorithm
 import DNS.Do53.Client
@@ -392,14 +392,15 @@ currentTime = fromIntegral . fromEnum <$> epochTime
 axfrQuery :: Env -> Maybe TSIGKey -> IP -> PortNumber -> Domain -> IO [ResourceRecord]
 axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
     now <- currentTime
-    mrrs <- timeout axfrTimeout $ E.bracket (openTCP ip port) close $ request now
+    mrrs <- withDeadline axfrTimeout $ \giveUp ->
+        E.bracket (orGaveUp $ openTCPWith giveUp ip port) close $ request giveUp now
     case mrrs of
         Nothing -> E.ioError $ E.userError "timed out"
         Just rrs -> return rrs
   where
     q = Question dom AXFR IN
     qctl = rdFlag FlagClear <> doFlag FlagClear
-    request now sock = do
+    request giveUp now sock = do
         let bare = encodeQuery 0 q qctl
         (asked, mrequestMAC) <- case mkey of
             Nothing -> return (bare, Nothing)
@@ -408,12 +409,12 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
                 Right m -> do
                     let (rr, mac) = signTSIG key now defaultFudge Nothing bare
                     return (encode m{additional = additional m ++ [rr]}, Just mac)
-        sendVC (sendTCP sock) asked
-        collect sock BS.empty (AtFirst mrequestMAC) []
+        sendVC (\bss -> orGaveUp $ NSB.sendManyWith sock bss giveUp) asked
+        collect giveUp sock BS.empty (AtFirst mrequestMAC) []
     -- The records come back reversed, so the head is the last one seen:
     -- the transfer is over once that is the closing SOA.
-    collect sock rest chain racc = do
-        (bs, rest') <- recvMessage vcLimitMax sock rest
+    collect giveUp sock rest chain racc = do
+        (bs, rest') <- recvMessageWith giveUp vcLimitMax sock rest
         -- Each message is checked against the time it arrives at.
         now <- currentTime
         msg <- case decode bs of
@@ -433,7 +434,7 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
         chain' <- checkChain mkey now chain bs msg done
         if done
             then return $ opening $ reverse racc'
-            else collect sock rest' chain' racc'
+            else collect giveUp sock rest' chain' racc'
     -- RFC 5936 Sec 2.2: the first record is the SOA and the last is the
     -- same one again.  The copy at the end is dropped here, which is
     -- what the rest of clove expects of a zone.
