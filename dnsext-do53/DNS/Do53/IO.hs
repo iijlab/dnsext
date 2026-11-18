@@ -15,10 +15,15 @@ module DNS.Do53.IO (
 
     -- * Misc
     makeAddrInfo,
+
+    -- * Giving up
+    GaveUp (..),
+    orGaveUp,
+    withDeadline,
 )
 where
 
-import Control.Concurrent.STM (STM)
+import Control.Concurrent.STM (STM, check, readTVar, registerDelay, retry)
 import qualified Control.Exception as E
 import DNS.Do53.Imports
 import DNS.Do53.Types
@@ -143,3 +148,26 @@ sendVC writev bs = do
 -- | Sending data to a TCP socket.
 sendTCP :: Socket -> [BS] -> IO ()
 sendTCP = NSB.sendMany
+
+----------------------------------------------------------------
+
+-- | Thrown where an operation gives up on an 'STM' action, and caught by
+--   'withDeadline'.
+data GaveUp = GaveUp deriving (Show)
+
+instance E.Exception GaveUp
+
+-- | Throwing 'GaveUp' for the 'Left' of an operation which gave up.
+orGaveUp :: IO (Either a b) -> IO b
+orGaveUp io = io >>= either (\_ -> E.throwIO GaveUp) return
+
+-- | Running the action with an 'STM' action which succeeds once the
+--   microseconds have passed, for it to give up on with 'GaveUp'.
+--   'Nothing' if it did, as 'System.Timeout.timeout' answers.
+withDeadline :: Int -> (STM () -> IO a) -> IO (Maybe a)
+withDeadline us action = do
+    giveUp <-
+        if us < 0
+            then return retry
+            else (\late -> readTVar late >>= check) <$> registerDelay us
+    (Just <$> action giveUp) `E.catch` \GaveUp -> return Nothing

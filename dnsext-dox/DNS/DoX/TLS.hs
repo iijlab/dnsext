@@ -27,14 +27,18 @@ tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolve
     -- Using a fresh connection
     asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
         disarm gu
-        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
+        let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
             -- connection timeout, not query timeout
             to = ractionTimeoutTime rinfoActions * 10
         -- One reader for the connection: recvTLS hands over a whole TLS
         -- record, so two answers written together arrive together and
         -- a reader made for each message would drop the second.
         recvVC' <- makeRecvVC rinfoVCLimit $ H2TLS.recvTLS ctx
-        let recvDoT = recvGivingUp gu to recvVC'
+        let recvDoT g = do
+                d <- deadline to
+                givingUpOn gu (g <|> d) recvVC' `E.catch` \GaveUp -> do
+                    late <- gaveUp d
+                    E.throwIO $ if late then E.toException TimeoutExpired else E.toException GaveUp
         vcPersistentResolver tag sendDoT recvDoT ri body
   where
     tag = nameTag ri "TLS"
@@ -80,9 +84,8 @@ tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
     -- Using a fresh connection
     asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
         disarm gu
-        let sendDoT = sendVC $ H2TLS.sendManyTLS ctx
-            to = ractionTimeoutTime rinfoActions
-            recvDoT = recvGivingUp gu to $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+        let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
+            recvDoT g = givingUpOn gu g $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
         vcResolver tag sendDoT recvDoT ri q qctl
   where
     tag = nameTag ri "TLS"
@@ -100,14 +103,13 @@ connectGivingUp ResolveInfo{..} settings = do
                 }
     return (settings', gu)
 
--- | Giving up a read of the connection after the microseconds, with
---   'TimeoutExpired'.
-recvGivingUp :: GiveUp -> Int -> IO a -> IO a
-recvGivingUp gu to action = do
-    g <- deadline to
+-- | Running an operation of the connection with the 'GiveUp' pointed at
+--   the 'STM' action, throwing 'GaveUp' once it has given up.
+givingUpOn :: GiveUp -> STM () -> IO a -> IO a
+givingUpOn gu g action =
     withGiveUp gu g action `E.catch` \e -> do
         given <- gaveUp g
-        if given then E.throwIO TimeoutExpired else E.throwIO (e :: E.SomeException)
+        if given then E.throwIO GaveUp else E.throwIO (e :: E.SomeException)
 
 -- | Giving up a question at the query timeout, answering 'TimeoutExpired'.
 queryGivingUp
