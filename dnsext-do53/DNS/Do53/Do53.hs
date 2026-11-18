@@ -20,7 +20,7 @@ import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
-import System.Timeout (timeout)
+import Control.Concurrent.STM (STM)
 
 import DNS.Do53.IO
 import DNS.Do53.Imports
@@ -117,8 +117,8 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
     -- Using only one socket and the same identifier.
     go qctl = bracket open close $ \sock -> do
         ractionSetSockOpt sock
-        let send = NSB.send sock
-            recv = NSB.recv sock
+        let send g bs = orGaveUp $ NSB.sendWith sock bs g
+            recv g n = orGaveUp $ NSB.recvWith sock n g
         ident <- ractionGenId
         loop rinfoUDPRetry ident qctl send recv
 
@@ -140,10 +140,10 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
             -- kept as a floor so that a peer which sends a little more
             -- than it was offered is still heard out.
             room = max 2048 $ fromIntegral $ queryUdpSize ident q qctl
-        timeout ractionTimeoutTime $ do
-            _ <- send qry
+        withDeadline ractionTimeoutTime $ \giveUp -> do
+            _ <- send giveUp qry
             let tx = BS.length qry
-            recvAnswer ident (recv room) tx
+            recvAnswer ident (recv giveUp room) tx
 
     recvAnswer ident recv tx = do
         ans <- recv
@@ -193,15 +193,17 @@ tcpResolver ri@ResolveInfo{..} q qctl =
     -- Using a fresh connection
     bracket open close $ \sock -> do
         ractionSetSockOpt rinfoActions sock
-        let send = sendVC $ sendTCP sock
-            recv = recvVC rinfoVCLimit $ recvTCP sock
+        let send g = sendVC $ \bss -> orGaveUp $ NSB.sendManyWith sock bss g
+            recv g = recvVC rinfoVCLimit $ orGaveUp $ NSB.recvWith sock 2048 g
         vcResolver tag send recv ri q qctl
   where
     tag = nameTag ri "TCP"
     open = openTCP rinfoIP rinfoPort
 
--- | Generic resolver for virtual circuit.
-vcResolver :: NameTag -> (BS -> IO ()) -> IO BS -> OneshotResolver
+-- | Generic resolver for virtual circuit.  Sending and receiving give up
+--   on the 'STM' action with 'GaveUp'.
+vcResolver
+    :: NameTag -> (STM () -> BS -> IO ()) -> (STM () -> IO BS) -> OneshotResolver
 vcResolver tag send recv ResolveInfo{rinfoActions = ResolveActions{..}} q qctl_ = do
     unless ractionShortLog $ ractionLog Log.DEMO Nothing [qtag]
     join <$> tryDNS qtag (go qctl_)
@@ -221,16 +223,16 @@ vcResolver tag send recv ResolveInfo{rinfoActions = ResolveActions{..}} q qctl_ 
         -- Using a fresh identifier.
         ident <- ractionGenId
         let qry = encodeQuery ident q qctl
-        mres <- timeout ractionTimeoutTime $ do
-            _ <- send qry
+        mres <- withDeadline ractionTimeoutTime $ \giveUp -> do
+            _ <- send giveUp qry
             let tx = BS.length qry
-            recvAnswer ident tx
+            recvAnswer ident tx $ recv giveUp
         case mres of
             Nothing -> return $ Left TimeoutExpired
             Just res -> return $ Right res
 
-    recvAnswer ident tx = do
-        bs <- recv
+    recvAnswer ident tx recv' = do
+        bs <- recv'
         now <- ractionGetTime
         case decodeAt now bs of
             Left e -> E.throwIO e
