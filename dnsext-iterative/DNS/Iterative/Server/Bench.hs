@@ -7,6 +7,7 @@ module DNS.Iterative.Server.Bench (
 
 -- GHC packages
 import Control.Concurrent
+import Control.Concurrent.STM (retry)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.List.NonEmpty as NE
@@ -49,7 +50,7 @@ benchServer bench_pipelines env _ = do
         workers_per_pipeline = 8 {- only used initial setup, benchmark runs on cached state -}
     cacherStats <- getWorkerStats pipelines_per_socket
     workerStats <- getWorkerStats workers_per_pipeline
-    (cachers, workers, toCacher) <- mkPipeline env cacherStats workerStats
+    (cachers, workers, toCacher) <- mkPipeline env cacherStats workerStats retry
 
     resQ <- newChan
 

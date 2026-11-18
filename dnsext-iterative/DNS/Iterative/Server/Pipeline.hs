@@ -101,17 +101,20 @@ mkPipeline
     :: Env
     -> [WorkerStatOP]
     -> [WorkerStatOP]
+    -> STM ()
+    -- ^ Succeeding once the cachers and workers are to return.
+    --   What is still queued then is dropped.
     -> IO ([IO ()], [IO ()], ToCacher -> IO ())
     -- ^ (worker actions, cacher actions, input to cacher)
-mkPipeline env cacherStats workerStats = do
+mkPipeline env cacherStats workerStats stop = do
     {- limit waiting area on server to constant size -}
     let queueBound = 64
     qr <- newTBQueueIO queueBound
     let toCacher = atomically . writeTBQueue qr
-        fromReceiver = atomically $ readTBQueue qr
+        fromReceiver = atomically $ (Nothing <$ stop) `orElse` (Just <$> readTBQueue qr)
     qw <- newTBQueueIO queueBound
-    let toWorker = atomically . writeTBQueue qw
-        fromCacher = atomically $ readTBQueue qw
+    let toWorker x = atomically $ stop `orElse` writeTBQueue qw x
+        fromCacher = atomically $ (Nothing <$ stop) `orElse` (Just <$> readTBQueue qw)
     let cachers = [cacherLogic env cstat fromReceiver toWorker | cstat <- cacherStats]
     let workers = [workerLogic env wstat fromCacher | wstat <- workerStats]
     return (cachers, workers, toCacher)
@@ -153,9 +156,11 @@ logQuery env name (Question qn typ cls) flags eh = do
 
 ----------------------------------------------------------------
 
-cacherLogic :: Env -> WorkerStatOP -> IO FromReceiver -> (ToWorker -> IO ()) -> IO ()
-cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
-    inpBS@Input{..} <- blockingRequest wstat fromReceiver
+cacherLogic :: Env -> WorkerStatOP -> IO (Maybe FromReceiver) -> (ToWorker -> IO ()) -> IO ()
+cacherLogic env wstat fromReceiver toWorker = handledLoopWhile env "cacher" $
+    blockingRequest wstat fromReceiver >>= maybe (pure False) (\inp -> True <$ cacher inp)
+  where
+  cacher inpBS@Input{..} = do
     -- A query which will not be answered is not pending any more.
     let drop_ = vpDelete inputPendingOp
     flip E.onException drop_ $ case DNS.decode inputQuery of
@@ -198,10 +203,11 @@ cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
 
 ----------------------------------------------------------------
 
-workerLogic :: Env -> WorkerStatOP -> IO FromCacher -> IO ()
-workerLogic env wstat fromCacher = handledLoop env "worker" $ do
-    inp@Input{inputQuery = queryMsg@DNSMessage{question = qq, flags = qflags, ednsHeader = qeh},..}
-        <- blockingRequest wstat fromCacher
+workerLogic :: Env -> WorkerStatOP -> IO (Maybe FromCacher) -> IO ()
+workerLogic env wstat fromCacher = handledLoopWhile env "worker" $
+    blockingRequest wstat fromCacher >>= maybe (pure False) (\inp -> True <$ worker inp)
+  where
+  worker inp@Input{inputQuery = queryMsg@DNSMessage{question = qq, flags = qflags, ednsHeader = qeh},..} = do
     flip E.onException (vpDelete inputPendingOp) $ do
         let blockingEnqueue_ tag = blockingEnqueue wstat $ "worker: " ++ tag
         logQuery env "worker" qq qflags qeh
@@ -789,9 +795,6 @@ mkConnector' = do
 ----------------------------------------------------------------
 
 {- FOURMOLU_DISABLE -}
-handledLoop :: Env -> String -> IO () -> IO ()
-handledLoop env tag body = handledLoopWhile env tag (True <$ body)
-
 -- | Looping until the body returns False.
 handledLoopWhile :: Env -> String -> IO Bool -> IO ()
 handledLoopWhile env tag body = loop
