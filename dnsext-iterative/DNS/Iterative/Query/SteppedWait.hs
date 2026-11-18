@@ -23,7 +23,7 @@ import DNS.Types (DNSError (NetworkFailure))
 import DNS.ThreadStats (forkIO)
 import DNS.WorkerStats
     (WorkerStatOP, BlockingStatOP, OpBlockingStat (..),
-     addTasks, blockingIO, blockingKillThread, getBlockingStatOP)
+     addTasks, blockingIO, getBlockingStatOP)
 
 -- $setup
 -- >>> :seti -XNumericUnderscores
@@ -45,7 +45,7 @@ _tryDNS action = either left right =<< E.try action
 -- |
 -- >>> import DNS.Types (DNSError (TimeoutExpired, RetryLimitExceeded, UnknownDNSError))
 -- >>> import DNS.WorkerStats (noopWorkerStat)
--- >>> steppedWait' uu actions = steppedWait noopWorkerStat TimeoutExpired RetryLimitExceeded uu (zip (cycle [""]) $ map _tryDNS actions)
+-- >>> steppedWait' uu actions = steppedWait noopWorkerStat TimeoutExpired RetryLimitExceeded uu (zip (cycle [""]) $ map (const . _tryDNS) actions)
 --
 -- --------------------------------------------------------------------------------
 -- run  runnings   timer     remain-actions
@@ -189,17 +189,21 @@ _tryDNS action = either left right =<< E.try action
 -- >>> steppedWait' 150_000 [threadDelay 250_000 $> '4', threadDelay 50_000 >> throwIO UnknownDNSError]
 -- Right '4'
 --
+--
+-- Each action is given an 'STM' which succeeds once the result is decided,
+-- for it to give up on.
 steppedWait
   :: Show a
   => WorkerStatOP
   -> e -> e -> Int
-  -> [(String, IO (Either e a))] -> IO (Either e a)
+  -> [(String, STM () -> IO (Either e a))] -> IO (Either e a)
 steppedWait wstat exTimeout exNoResult uusec actions = do
   vrun <- newTVarIO 0
   vrem <- newTVarIO $ length actions
   qres <- newTQueueIO
+  done <- newTVarIO False
   let noTimer = Timer{ timSTM_ = retry, timDel_ = pure ()}
-  steppedWaitLoop wstat vrun vrem qres exTimeout uusec noTimer id exNoResult actions
+  steppedWaitLoop wstat vrun vrem qres done exTimeout uusec noTimer exNoResult actions
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
@@ -207,18 +211,18 @@ steppedWaitLoop
   :: Show a
   => WorkerStatOP
   -> TVar Running
-  -> TVar Int -> TQueue (Either e a)
+  -> TVar Int -> TQueue (Either e a) -> TVar Bool
   -> e -> Int -> Timer
-  -> ([ThreadId] -> [ThreadId]) -> e -> [(String, IO (Either e a))]
+  -> e -> [(String, STM () -> IO (Either e a))]
   -> IO (Either e a)
-steppedWaitLoop wstat vrun vrem qres exTimeout uusec timer0 tids lastE0 xxs = eventLoop timer0 lastE0
+steppedWaitLoop wstat vrun vrem qres done exTimeout uusec timer0 lastE0 xxs = eventLoop timer0 lastE0
   where
-    nexts lastE x xs timer = fork x >>= \tid -> steppedWaitLoop wstat vrun vrem qres exTimeout uusec timer (tids . (tid:)) lastE xs
+    nexts lastE x xs timer = fork x >> steppedWaitLoop wstat vrun vrem qres done exTimeout uusec timer lastE xs
 
     fork (tag, ax) = do
         bstatOP <- getBlockingStatOP
         addTasks wstat [bstatOP]
-        doFork vrun qres (tag, bstatOP, blockingIO bstatOP tag ax)
+        doFork vrun qres (tag, bstatOP, blockingIO bstatOP tag $ ax $ readTVar done >>= check)
     waitEV timer = waitEvent vrem qres vrun timer
 
     eventLoop timer lastE = waitEV timer >>= dispatchEV timer lastE
@@ -235,8 +239,7 @@ steppedWaitLoop wstat vrun vrem qres exTimeout uusec timer0 tids lastE0 xxs = ev
           EvResult r@Right{}   -> finalize   $>   r
       where
         renewTimer  = timDel_ timer >> newTimer uusec
-        finalize    = timDel_ timer >> mapM_ bsKillThread (tids [])
-        bsKillThread tid = blockingKillThread wstat "stepped-wait" tid
+        finalize    = timDel_ timer >> atomically (writeTVar done True)
 {- FOURMOLU_ENABLE -}
 
 --------------------------------------------------------------------------------

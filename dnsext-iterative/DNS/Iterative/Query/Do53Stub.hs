@@ -91,13 +91,13 @@ instance Exception Deadline
 
 -- | Running the action with a deadline it gives up at, rather than one
 --   which interrupts it.  A negative time is none, as for 'timeout'.
-timeoutDNS' :: String -> Int -> (STM () -> IO a) -> IO a
-timeoutDNS' tag micro action = do
-    giveUp <-
+timeoutDNS' :: String -> Int -> STM () -> (STM () -> IO a) -> IO a
+timeoutDNS' tag micro giveUp0 action = do
+    deadline <-
         if micro < 0
             then return retry
             else (\late -> check =<< readTVar late) <$> registerDelay micro
-    action giveUp `E.catch` \Deadline -> throwIO $ DNSErrorInfo TimeoutExpired tag
+    action (deadline <|> giveUp0) `E.catch` \Deadline -> throwIO $ DNSErrorInfo TimeoutExpired tag
 
 orDeadline :: IO (Either () a) -> IO a
 orDeadline io = either (\_ -> throwIO Deadline) return =<< io
@@ -106,9 +106,10 @@ orDeadline io = either (\_ -> throwIO Deadline) return =<< io
 
 {- FOURMOLU_DISABLE -}
 -- | A resolver using UDP and TCP.
---   fallback once for NoEDNS case
-udpTcpResolver1 :: OneshotResolver
-udpTcpResolver1 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = timeout' $ \giveUp -> do
+--   fallback once for NoEDNS case.
+--   It also gives up, as at the deadline, once the given 'STM' succeeds.
+udpTcpResolver1 :: STM () -> OneshotResolver
+udpTcpResolver1 giveUp0 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = timeout' $ \giveUp -> do
     WStats.setThreadId ractionBlockingStat =<< myThreadId
     er1 <- udpResolver1 giveUp ri q qctl0
     case er1 of
@@ -122,7 +123,7 @@ udpTcpResolver1 ri@ResolveInfo{rinfoActions = ResolveActions{..}} q qctl0 = time
                     __@(Right rply2)  -> handleTC giveUp rply2 qctl1
   where
     ~qtag = queryTag q (nameTag ri "UDP-TCP") qctl0
-    timeout' = timeoutDNS' ("iter.udpTcpResolver1: " ++ qtag) ractionTimeoutTime
+    timeout' = timeoutDNS' ("iter.udpTcpResolver1: " ++ qtag) ractionTimeoutTime giveUp0
     handleTC giveUp rply qctl
         | tc         = tcpResolver1 giveUp ri q qctl
         | otherwise  = return $ Right rply
