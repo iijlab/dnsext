@@ -72,7 +72,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
         logLn env Log.DEBUG $ "tls-srv: accept: " ++ show peersa
         vsRunning <- newTVarIO True
         inpq <- newTBQueueIO 8
-        (vcSess, toSender, fromX, senderQ) <- initVcSession' (return $ checkInp inpq)
+        (vcSess, toSender, fromX, senderQ) <- initVcSession' retry (return $ checkInp inpq)
         let idle = do
                 guard . Set.null =<< readTVar (vcPendings_ vcSess)
                 guard =<< isEmptyTBQueue inpq
