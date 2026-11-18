@@ -5,7 +5,7 @@
 module DNS.Iterative.Server.QUIC where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically, isEmptyTQueue, writeTVar)
+import Control.Concurrent.STM (atomically, isEmptyTQueue)
 
 -- dnsext-utils
 import qualified DNS.ThreadAsync as TAsync
@@ -55,10 +55,9 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
             waitInput = return $ do
                 isEmpty <- isEmptyTQueue $ QUIC.inputQ conn
                 retryUntil $ not isEmpty
-        (vcSess, toSender, fromX) <- initVcSession waitInput
         -- Draining ends the session as TCP's stopping does.
-        let onDrain = atomically $ draining >> writeTVar (vcStopping_ vcSess) True
-        TAsync.withAsync "bw.quic-drain" onDrain $ \_ -> withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
+        (vcSess, toSender, fromX) <- initVcSession draining waitInput
+        withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = do
                     strm <- QUIC.acceptStream conn
                     let peerInfo = PeerInfoStream peersa $ StreamQUIC strm

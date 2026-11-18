@@ -578,7 +578,7 @@ data VcSession =
     , vcTimeout_        :: TVar VcTimeout
     -- ^ TimerManager tells timed-out. This is another RX event
     --   but defined independently on EOF to make recording event simpler.
-    , vcStopping_       :: TVar Bool
+    , vcStopping_       :: STM ()
     -- ^ The server is stopping: the receiver reads on until no query is
     --   pending and nothing comes within a moment, and then times out.
     , vcPendings_       :: TVar VcPendings
@@ -621,20 +621,22 @@ withVcTimer
 withVcTimer micro actionTO = bracket (initVcTimer micro actionTO) finalizeVcTimer
 
 initVcSession
-    :: IO (STM VcWaitRead)
+    :: STM ()
+    -- ^ Succeeding once the server is stopping
+    -> IO (STM VcWaitRead)
     -> IO (VcSession, ToSender -> IO (), IO FromX)
-initVcSession getWaitIn = do
-    (a, b, c, _) <- initVcSession' getWaitIn
+initVcSession stopping getWaitIn = do
+    (a, b, c, _) <- initVcSession' stopping getWaitIn
     pure (a, b, c)
 
 {- FOURMOLU_DISABLE -}
 initVcSession'
-    :: IO (STM VcWaitRead)
+    :: STM ()
+    -> IO (STM VcWaitRead)
     -> IO (VcSession, ToSender -> IO (), IO FromX, TBQueue ToSender)
-initVcSession' getWaitIn = do
+initVcSession' vcStopping getWaitIn = do
     vcEof       <- newTVarIO False
     vcTimeout   <- newTVarIO False
-    vcStopping  <- newTVarIO False
     vcPendings  <- newTVarIO Set.empty
     let queueBound = 8 {- limit waiting area per session to constant size -}
     senderQ     <- newTBQueueIO queueBound
@@ -693,7 +695,7 @@ waitVcInput VcSession{..} = do
     -- Nothing: readable.  Just True: timed out.  Just False: stopping.
     r <- atomically $ do
         timeout <- readTVar vcTimeout_
-        stopping <- readTVar vcStopping_
+        stopping <- (True <$ vcStopping_) <|> pure False
         if timeout || stopping
             then return $ Just timeout
             else do

@@ -40,7 +40,7 @@ withVc
     -> ((VcSession, ToSender -> IO (), IO FromX) -> VcTimer -> IO a)
     -> IO a
 withVc getWaitIn micro action = do
-    (vcSess@VcSession{..}, toSender, fromX) <- initVcSession getWaitIn
+    (vcSess@VcSession{..}, toSender, fromX) <- initVcSession retry getWaitIn
     withVcTimer micro (atomically $ enableVcTimeout vcTimeout_) $ action (vcSess, toSender, fromX)
 
 waitInputSpec :: Spec
