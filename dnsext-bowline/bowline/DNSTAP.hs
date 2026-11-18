@@ -14,19 +14,32 @@ import qualified DNS.Log as Log
 import qualified DNS.TAP.FastStream as FSTRM
 import DNS.TAP.Schema
 import qualified DNS.ThreadStats as TStat
+import qualified Data.ByteString as BS
 import Data.IORef
 import Network.Socket
 
 import Config
 
-new :: Config -> Log.PutLines IO -> IO (IO (Maybe ThreadId), Message -> IO ())
+-- | The action starting the writer returns the action stopping it.
+new :: Config -> Log.PutLines IO -> IO (IO (IO ()), Message -> IO ())
 new conf@Config{..} logP
     | cnf_dnstap = do
-        (writer, put) <- newDnstapWriter conf logP
-        return (Just <$> TStat.forkIO "bw.dnstap-writer" writer, put)
+        (writer, put, stop) <- newDnstapWriter conf logP
+        return (start writer stop, put)
     | otherwise = do
         let put ~_ = return ()
-        return (return Nothing, put)
+        return (return $ return (), put)
+  where
+    -- Killed only if it has not ended a second after being told to stop.
+    start :: IO () -> IO () -> IO (IO ())
+    start writer stop = do
+        done <- newEmptyTMVarIO
+        tid <- TStat.forkIO "bw.dnstap-writer" $ writer `E.finally` atomically (putTMVar done ())
+        return $ do
+            stop
+            late <- registerDelay 1000000
+            ended <- atomically $ (True <$ readTMVar done) `orElse` (False <$ (readTVar late >>= check))
+            when (not ended) $ killThread tid
 
 newtype DnstapQ = DnstapQ (TBQueue Message)
 
@@ -40,27 +53,29 @@ newDnstapQ = DnstapQ <$> newTBQueueIO queueBound
 writeDnstapQ :: DnstapQ -> Message -> IO ()
 writeDnstapQ (DnstapQ q) ~msg = atomically $ writeTBQueue q msg
 
-readDnsTapQ :: DnstapQ -> IO Message
-readDnsTapQ (DnstapQ q) = atomically $ readTBQueue q
+-- | 'Nothing' once stopped and the queue is empty.
+readDnsTapQ :: DnstapQ -> TVar Bool -> IO (Maybe Message)
+readDnsTapQ (DnstapQ q) stopped =
+    atomically $ (Just <$> readTBQueue q) `orElse` (Nothing <$ (readTVar stopped >>= check))
 
-newDnstapWriter :: Config -> Log.PutLines IO -> IO (IO (), Message -> IO ())
+newDnstapWriter :: Config -> Log.PutLines IO -> IO (IO (), Message -> IO (), IO ())
 newDnstapWriter conf logP = do
     q <- newDnstapQ
     ref <- newIORef False
-    let logger = control conf $ exec conf q ref logP
+    stopped <- newTVarIO False
+    let logger = control conf stopped $ exec conf q stopped ref logP
         put ~x = do
             ready <- readIORef ref
             when ready $ writeDnstapQ q x
-    return (logger, put)
+    return (logger, put, atomically $ writeTVar stopped True)
 
-exec :: Config -> DnstapQ -> IORef Bool -> Log.PutLines IO -> IO ()
-exec Config{..} q ref logP = E.bracket setup teardown $ \sock -> do
+exec :: Config -> DnstapQ -> TVar Bool -> IORef Bool -> Log.PutLines IO -> IO ()
+exec Config{..} q stopped ref logP = E.bracket setup teardown $ \sock -> do
     let fconf = FSTRM.Config True False
-    FSTRM.writer sock fconf $ do
-        msg <- readDnsTapQ q
-        let d = defaultDNSTAP{dnstapMessage = Just msg}
-        return $ encodeDnstap d
+    -- An empty frame ends the writer.
+    FSTRM.writer sock fconf $ maybe BS.empty encode <$> readDnsTapQ q stopped
   where
+    encode msg = encodeDnstap defaultDNSTAP{dnstapMessage = Just msg}
     logLn level = logP level Nothing . (: [])
     setup = do
         s <- E.bracketOnError open close conn
@@ -77,8 +92,8 @@ exec Config{..} q ref logP = E.bracket setup teardown $ \sock -> do
         logLn Log.INFO ("DNSTAP disconnected: " ++ cnf_dnstap_socket_path)
         close s
 
-control :: Config -> IO () -> IO ()
-control Config{..} body = loop
+control :: Config -> TVar Bool -> IO () -> IO ()
+control Config{..} stopped body = loop
   where
     loop = do
         ex <- E.try body
@@ -89,5 +104,6 @@ control Config{..} body = loop
                 | Just (E.SomeAsyncException _) <- E.fromException se ->
                     E.throwIO se
                 | otherwise -> do
-                    threadDelay (cnf_dnstap_reconnect_interval * 1000000)
-                    loop
+                    late <- registerDelay (cnf_dnstap_reconnect_interval * 1000000)
+                    stop <- atomically $ (False <$ (readTVar late >>= check)) `orElse` (readTVar stopped >>= check >> return True)
+                    when (not stop) loop
