@@ -1,7 +1,9 @@
 module Net where
 
+import Control.Concurrent.STM (STM, check, readTVar, registerDelay, retry)
 import qualified Control.Exception as E
 import Control.Monad (when)
+import DNS.Do53.Internal (orGaveUp)
 import DNS.Types.Decode (decodeVCLength)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -19,7 +21,6 @@ import Data.IP (
 import qualified Data.List.NonEmpty as NE
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
-import System.Timeout (timeout)
 
 serverSocket :: PortNumber -> HostName -> IO Socket
 serverSocket pn addr = serverResolve pn addr >>= openSock
@@ -82,16 +83,19 @@ askUDP tries tmo ip port out take_ = E.bracket (openUDP ip port) close ask
   where
     ask sock = do
         why <- newIORef "no answer"
-        let waiting = do
-                bs <- NSB.recv sock 2048
-                case take_ bs of
-                    Right a -> return a
-                    Left w -> writeIORef why w >> waiting
+        let waiting giveUp = do
+                ebs <- NSB.recvWith sock 2048 giveUp
+                case ebs of
+                    Left () -> return Nothing
+                    Right bs -> case take_ bs of
+                        Right a -> return $ Just a
+                        Left w -> writeIORef why w >> waiting giveUp
             go n
                 | n <= 0 = Left <$> readIORef why
                 | otherwise = do
                     _ <- NSB.send sock out
-                    ma <- timeout tmo waiting
+                    late <- registerDelay tmo
+                    ma <- waiting $ readTVar late >>= check
                     maybe (go (n - 1)) (return . Right) ma
         go tries
 
@@ -125,22 +129,28 @@ vcLimitMax = 65535
 --   afresh for each message drops what it read ahead, and those
 --   queries are never answered and never reported.
 recvMessage :: Int -> Socket -> ByteString -> IO (ByteString, ByteString)
-recvMessage lim sock rest0 = do
-    (lenbs, rest1) <- recvExactly 2 sock rest0
+recvMessage = recvMessageWith retry
+
+-- | 'recvMessage' which gives up on the 'STM' action with
+--   'DNS.Do53.Internal.GaveUp'.
+recvMessageWith
+    :: STM () -> Int -> Socket -> ByteString -> IO (ByteString, ByteString)
+recvMessageWith giveUp lim sock rest0 = do
+    (lenbs, rest1) <- recvExactly giveUp 2 sock rest0
     let len = decodeVCLength lenbs
     when (len > lim) $
         E.throwIO $
             userError $
                 "message of " ++ show len ++ " bytes is over the limit of " ++ show lim
-    recvExactly len sock rest1
+    recvExactly giveUp len sock rest1
 
-recvExactly :: Int -> Socket -> ByteString -> IO (ByteString, ByteString)
-recvExactly n sock rest0 = go [rest0] (BS.length rest0)
+recvExactly :: STM () -> Int -> Socket -> ByteString -> IO (ByteString, ByteString)
+recvExactly giveUp n sock rest0 = go [rest0] (BS.length rest0)
   where
     go acc len
         | len >= n = return $ BS.splitAt n $ BS.concat $ reverse acc
         | otherwise = do
-            bs <- NSB.recv sock $ max 2048 (n - len)
+            bs <- orGaveUp $ NSB.recvWith sock (max 2048 (n - len)) giveUp
             if BS.null bs
                 then E.throwIO $ userError $ ended len
                 else go (bs : acc) (len + BS.length bs)
