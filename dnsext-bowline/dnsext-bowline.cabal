@@ -207,7 +207,7 @@ executable clove
         dnsext-types,
         dnsext-utils,
         iproute,
-        network-run >= 0.7.0 && < 0.8,
+        network-run >= 0.7.0 && < 0.9,
         stm,
         time-manager,
         unix,

@@ -77,7 +77,7 @@ library
         http3 >=0.1.2 && <0.2,
         iproute,
         network >=3.2.3 && <3.3,
-        network-run >= 0.7.0 && < 0.8,
+        network-run >= 0.7.0 && < 0.9,
         psqueues,
         quic >=0.3.0 && <0.4,
         ram,
