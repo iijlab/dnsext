@@ -119,8 +119,7 @@ runConfig
     -> (SockKey -> IO (Maybe Socket)) -> IO () -> ([(SockKey, Socket)] -> IO ()) -> IO ()
 runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inherit bound handOver = do
     -- Setup
-    let tmout = timeout cnf_resolve_timeout
-        check_for_v6_ns
+    let check_for_v6_ns
             | cnf_disable_v6_ns = pure True
             | otherwise = do
                 let disabled _ = putStrLn "cnf_disable_v6_ns is False, but disabling, because IPv6 is not supported." $> True
@@ -170,7 +169,6 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
                         , reloadInfo_ = reloadInfo
                         , nsid_ = cnf_nsid
                         , updateHistogram_ = updateHistogram
-                        , timeout_ = tmout
                         }
             --  filled env available
             (sm, killSM) <- ST.newSessionTicketManager' ST.defaultConfig{ST.ticketLifetime = cnf_tls_session_ticket_lifetime}

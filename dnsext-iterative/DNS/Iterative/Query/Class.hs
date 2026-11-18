@@ -67,7 +67,6 @@ import DNS.Transport.Types (Synthesis)
 import DNS.WorkerStats (WorkerStatOP)
 
 -- dnsext-do53
-import DNS.Do53.Client (Reply)
 
 -- this package
 import DNS.Iterative.Imports
@@ -147,7 +146,6 @@ data Env = Env
     , stats_ :: Stats
     , nsid_ :: Maybe OD_NSID
     , updateHistogram_ :: Integer -> Stats -> IO ()
-    , timeout_ :: IO Reply -> IO (Maybe Reply)
     }
 
 ----------

@@ -20,7 +20,6 @@ import System.Console.GetOpt (
     usageInfo,
  )
 import System.Environment (getArgs)
-import System.Timeout (timeout)
 import Text.Read (readEither)
 
 import DNS.Iterative.Internal (Env (..), newEmptyEnv)
@@ -196,7 +195,7 @@ getEnv Config{..} putLines = do
     Cache.RRCacheOps{..} <- Cache.newRRCacheOps cacheConf
     env <- newEmptyEnv
     pure env{ disableV6NS_ = False, logLines_ = putLines, currentSeconds_ = getTime tcache
-            , insert_ = insertCache, getCache_ = readCache, expireCache_ = expireCache, timeout_ = timeout 3000000}
+            , insert_ = insertCache, getCache_ = readCache, expireCache_ = expireCache}
 {- FOURMOLU_ENABLE -}
 
 runQueries :: [a1] -> ((a1, ()) -> IO a2) -> IO a3 -> IO [a3]

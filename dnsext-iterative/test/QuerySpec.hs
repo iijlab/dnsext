@@ -14,7 +14,6 @@ import Data.Either (isRight)
 import Data.Maybe (isJust, isNothing)
 import Data.String (fromString)
 import System.Environment (lookupEnv)
-import System.Timeout (timeout)
 
 import qualified DNS.Log as Log
 
@@ -57,7 +56,7 @@ newTestEnv :: Bool -> Log.PutLines IO -> IO Env
 newTestEnv disableV6NS putLines = do
     env <- newEmptyEnv
     (getCache, insert) <- newTestCache (currentSeconds_ env) $ 2 * 1024 * 1024
-    pure env{disableV6NS_ = disableV6NS, logLines_ = putLines, insert_ = insert, getCache_ = getCache, timeout_ = timeout 3000000}
+    pure env{disableV6NS_ = disableV6NS, logLines_ = putLines, insert_ = insert, getCache_ = getCache}
 
 spec :: Spec
 spec = do
