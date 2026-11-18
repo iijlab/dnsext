@@ -194,7 +194,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     monitor <- monitors <$> mapM (\(n, _mk, sks) -> srvInfo1 n <$> mapM getSocketName sks) all_addrs
     -- Run
     gcacheSetLogLn putLines
-    tidW <- maybe [] (:[]) <$> runWriter
+    stopWriter <- runWriter
     runLogger
     runSSLKeyLogger
     apis <- forM (zip [1 :: Int ..] asocks) $ \(i, s) -> do
@@ -256,7 +256,8 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     race_ concPipeline (conc [concServer `race_` cutOff, handOver'])
         -- Teardown
         `finally` do
-            mapM_ killThread $ tidA ++ tidW
+            mapM_ killThread tidA
+            stopWriter
             killSSLKeyLogger
             stopLogger
             killSM
