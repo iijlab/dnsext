@@ -160,7 +160,8 @@ jobs:
         # dnsext-bowline and dnsext-scenario have no library to open a
         # repl on: one is executables, the other a test suite which runs
         # them.
-        for package in $(cat cabal.project | sed 's/packages://g' | sed 's/dnsext-bowline//g' | sed 's/dnsext-scenario//g')
+        # Only the packages section: the file also pins unreleased dependencies.
+        for package in $(awk '/^packages:/{p=1;next} p&&/^[^ ]/{p=0} p{print $1}' cabal.project | grep -v -e dnsext-bowline -e dnsext-scenario)
         do
           DISABLE_V6_NS=1 cabal v2-repl $package               ${{ env.repl-doctest-param }}
         done
