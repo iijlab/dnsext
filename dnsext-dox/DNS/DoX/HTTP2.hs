@@ -27,7 +27,7 @@ import qualified Data.ByteString.Char8 as C8
 import Data.ByteString.Short (fromShort)
 import qualified Data.ByteString.Short as Short
 import Network.HTTP.Types
-import Network.HTTP2.Client (Client, Response, SendRequest, getResponseBodyChunk, requestBuilder, responseStatus, setRequestGiveUp)
+import Network.HTTP2.Client (Client, Response, SendRequest, getResponseBodyChunk, requestBuilder, responseStatus, sendRequestWith)
 import qualified Network.HTTP2.Client as H2
 import qualified Network.HTTP2.TLS.Client as H2TLS
 
@@ -38,10 +38,9 @@ import DNS.DoX.TLS
 http2PersistentResolver :: PersistentResolver
 http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentResolver" $ do
     -- TLS SNI
-    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
-    asTimeout gu $ H2TLS.runWithConfig config settings ipstr rinfoPort $
-        onceUp gu $
-            doHTTP tag ri body
+    settings <- makeSettings ri tag
+    untilUp ri (H2TLS.runGivingUp config settings ipstr rinfoPort) $
+        doHTTP tag ri body
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -50,10 +49,9 @@ http2PersistentResolver ri@ResolveInfo{..} body = toDNSError "http2PersistentRes
 
 http2Resolver :: OneshotResolver
 http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
-    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
-    asTimeout gu $ H2TLS.runWithConfig config settings ipstr rinfoPort $
-        onceUp gu $
-            doHTTPOneshot tag ri q qctl
+    settings <- makeSettings ri tag
+    untilUp ri (H2TLS.runGivingUp config settings ipstr rinfoPort) $
+        doHTTPOneshot tag ri q qctl
   where
     tag = nameTag ri "H2"
     ipstr = show rinfoIP
@@ -62,10 +60,8 @@ http2Resolver ri@ResolveInfo{..} q qctl = toDNSError "http2Resolver" $ do
 
 http2cPersistentResolver :: PersistentResolver
 http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentResolver" $ do
-    (settings, gu) <- connectGivingUp ri H2TLS.defaultSettings
-    asTimeout gu $ H2TLS.runH2CWithConfig config settings ipstr rinfoPort $
-        onceUp gu $
-            doHTTP tag ri body
+    untilUp ri (H2TLS.runH2CGivingUp config H2TLS.defaultSettings ipstr rinfoPort) $
+        doHTTP tag ri body
   where
     tag = nameTag ri "H2C"
     ipstr = show rinfoIP
@@ -75,10 +71,8 @@ http2cPersistentResolver ri@ResolveInfo{..} body = toDNSError "http2cPersistentR
 http2cResolver :: OneshotResolver
 http2cResolver ri@ResolveInfo{..} q qctl = toDNSError "http2cResolver" $ do
     let tag = nameTag ri "H2C"
-    (settings, gu) <- connectGivingUp ri H2TLS.defaultSettings
-    asTimeout gu $ H2TLS.runH2CWithConfig config settings ipstr rinfoPort $
-        onceUp gu $
-            doHTTPOneshot tag ri q qctl
+    untilUp ri (H2TLS.runH2CGivingUp config H2TLS.defaultSettings ipstr rinfoPort) $
+        doHTTPOneshot tag ri q qctl
   where
     ipstr = show rinfoIP
     -- HTTP :authority
@@ -98,8 +92,8 @@ resolv
     -> SendRequest
     -> STM ()
     -> Resolver
-resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure $
-    sendRequest (setRequestGiveUp req giveUp) $ \rsp ->
+resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure . fmap timedOut $
+    sendRequestWith sendRequest req giveUp $ \rsp ->
         if responseStatus rsp /= Just ok200
             then return $ Left OperationRefused
             else do
@@ -114,6 +108,7 @@ resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure $
     -- A Resolver does not throw: what goes wrong with this one answer
     -- is this one answer's business and not the connection's.
     reportFailure action = action `E.catch` \e -> return $ Left (e :: DNSError)
+    timedOut = either (\_ -> Left TimeoutExpired) id
     getTime = ractionGetTime rinfoActions
     wire = encodeQuery dohIdentifier q qctl
     tx = BS.length wire
@@ -123,8 +118,15 @@ resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure $
         Just p -> fromShort $ Short.takeWhile (/= 0x7b) p -- '{'
     req = requestBuilder methodPost path hdr $ BB.byteString wire
 
--- | Stopping 'connectGivingUp' once the connection is up, which is what
---   being called at all means for a 'Client'.
+-- | Giving up connecting, the TLS handshake and the HTTP\/2 preface at
+--   the query timeout, with 'TimeoutExpired'.  It stops once the 'Client'
+--   is called, which is what being up means.
+untilUp
+    :: ResolveInfo -> (Client a -> STM () -> IO (Either () a)) -> Client a -> IO a
+untilUp ri run client = do
+    gu <- connectGiveUp ri
+    orTimeoutExpired =<< run (onceUp gu client) (giveUpSTM gu)
+
 onceUp :: GiveUp -> Client a -> Client a
 onceUp gu client sendRequest aux = disarm gu >> client sendRequest aux
 
