@@ -5,7 +5,7 @@
 module DNS.Iterative.Server.QUIC where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically, isEmptyTQueue)
+import Control.Concurrent.STM (atomically, orElse, peekTQueue)
 
 -- dnsext-utils
 import qualified DNS.ThreadAsync as TAsync
@@ -52,13 +52,18 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
         info <- QUIC.getConnectionInfo conn
         let mysa = QUIC.localSockAddr info
             peersa = QUIC.remoteSockAddr info
-            waitInput = return $ do
-                isEmpty <- isEmptyTQueue $ QUIC.inputQ conn
-                retryUntil $ not isEmpty
+            -- The connection's end wakes it too, not to be cancelled.
+            waitInput = return $ QUIC.waitAcceptableSTM conn
         -- Draining ends the session as TCP's stopping does.
         (vcSess, toSender, fromX) <- initVcSession draining waitInput
         withVcTimer tmicro (atomically $ enableVcTimeout $ vcTimeout_ vcSess) $ \vcTimer -> do
             let recv = do
+                    ended <- atomically $
+                        (False <$ peekTQueue (QUIC.inputQ conn))
+                            `orElse` (True <$ QUIC.connectionEndedSTM conn)
+                    -- The connection's end is the session's EOF, as TCP's.
+                    if ended then return ("", PeerInfoVC peersa) else recvStream
+                recvStream = do
                     strm <- QUIC.acceptStream conn
                     let peerInfo = PeerInfoStream peersa $ StreamQUIC strm
                     -- Without a designated thread, recvStream would block.
