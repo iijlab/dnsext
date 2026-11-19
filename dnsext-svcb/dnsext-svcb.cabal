@@ -40,7 +40,7 @@ library
         dnsext-types,
         ech-config >=0.0.1,
         iproute,
-        network >=3.2.2 && <3.3
+        network >=3.2.2 && <4.1
 
     if impl(ghc >=8)
         default-extensions: Strict StrictData

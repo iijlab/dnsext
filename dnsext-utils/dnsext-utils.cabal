@@ -57,7 +57,7 @@ library
         dnsext-svcb,
         dnsext-types,
         iproute,
-        network >=3.2.2 && <3.3,
+        network >=3.2.2 && <4.1,
         network-byte-order,
         psqueues,
         recv,
