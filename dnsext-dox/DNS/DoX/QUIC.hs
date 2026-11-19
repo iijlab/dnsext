@@ -24,9 +24,8 @@ import qualified DNS.Log as Log
 
 quicPersistentResolver :: PersistentResolver
 quicPersistentResolver ri body = do
-    (cc, gu) <- handshakeGivingUp ri =<< getQUICParams ri tag "doq"
-    toDNSError "quicPersistentResolver" $ asTimeout gu $ run cc $ \conn -> do
-        disarm gu
+    cc <- getQUICParams ri tag "doq"
+    toDNSError "quicPersistentResolver" $ runQUIC ri cc $ \conn -> do
         -- The query timeout, which quicResolver has had all along and
         -- which every other transport puts on each question.  Without
         -- it a peer which opens the connection and then leaves a stream
@@ -38,9 +37,8 @@ quicPersistentResolver ri body = do
 
 quicResolver :: OneshotResolver
 quicResolver ri q qctl = do
-    (cc, gu) <- handshakeGivingUp ri =<< getQUICParams ri tag "doq"
-    toDNSError "quicResolver" $ asTimeout gu $ run cc $ \conn -> queryGivingUp ri $ \g -> do
-        disarm gu
+    cc <- getQUICParams ri tag "doq"
+    toDNSError "quicResolver" $ runQUIC ri cc $ \conn -> queryGivingUp ri $ \g -> do
         res <- resolv conn ri g q qctl
         saveResumptionInfo conn ri tag
         return res
@@ -79,11 +77,12 @@ resolv conn ri@ResolveInfo{..} giveUp q qctl = do
     orTimeout :: Either () a -> IO a
     orTimeout = either (\_ -> E.throwIO TimeoutExpired) return
 
--- | Giving up the handshake at the query timeout, as 'connectGivingUp'.
-handshakeGivingUp :: ResolveInfo -> ClientConfig -> IO (ClientConfig, GiveUp)
-handshakeGivingUp ResolveInfo{..} cc = do
-    gu <- newGiveUp =<< deadline (ractionTimeoutTime rinfoActions)
-    return (cc{ccGiveUp = giveUpSTM gu}, gu)
+-- | Running a QUIC client whose handshake gives up at the query timeout,
+--   with 'TimeoutExpired'.
+runQUIC :: ResolveInfo -> ClientConfig -> (Connection -> IO a) -> IO a
+runQUIC ri cc client = do
+    gu <- connectGiveUp ri
+    orTimeoutExpired =<< runGivingUp cc (\conn -> disarm gu >> client conn) (giveUpSTM gu)
 
 saveResumptionInfo :: Connection -> ResolveInfo -> NameTag -> IO ()
 saveResumptionInfo conn ResolveInfo{..} tag = do

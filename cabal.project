@@ -14,35 +14,35 @@ packages:
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/quic.git
-  tag: 0c93960d009f8ddcd9d7a19bed82eda99976f6b7
+  tag: 6ebdcdfc25cb24d5af61e58918472f311d6ec19b
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: b057d779f6650fec2af11e927874153df4250b0e
+  tag: a5bff0ec8dc828fdcbdddc27b4fbe975844c63bb
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 02eeb2bdc4aee6e8a5543af865b7967cd019fa7a
+  tag: 1442361cbe38af454f828f804c9cc469b499572b
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http-semantics.git
-  tag: 93ac752ec26e1b8a16b135d368a0d634f6d6f5fe
+  tag: aceec4c31a946dde86ae5cb5c191a903c6059dcd
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2-tls.git
-  tag: c45d96617c99ed020883fbc5fed9176a2eb53859
+  tag: 026efa0e9bec96a27a914fa1b392bb91b925ea8f
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/network-run.git
-  tag: 7de3771c095a2067a77db4501d06867eb969e1f0
+  tag: 01d464214d9345bc138095d29e676b9ca5444dbd
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/wai.git
-  tag: 9cb425c7076f0337fd86a7ef55cb247d4e5f70a3
-  subdir: time-manager
+  tag: c34840c5410bbd29748ff8d44b3d0a44ad296470
+  subdir: time-manager warp

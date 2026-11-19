@@ -11,7 +11,6 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Either (rights)
 import qualified Network.HTTP2.TLS.Client as H2TLS
 import qualified Network.HTTP2.TLS.Internal as H2TLS
-import Network.Run.TCP (openClientSocketGivingUp)
 import Network.TLS
 
 import DNS.Do53.Internal
@@ -23,10 +22,9 @@ import DNS.Types
 
 tlsPersistentResolver :: PersistentResolver
 tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolver" $ do
-    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
+    settings <- makeSettings ri tag
     -- Using a fresh connection
-    asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-        disarm gu
+    runDoT ri settings $ \gu ctx -> do
         let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
             -- connection timeout, not query timeout
             to = ractionTimeoutTime rinfoActions * 10
@@ -80,10 +78,9 @@ makeSettings ResolveInfo{..} tag = do
 
 tlsResolver :: OneshotResolver
 tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
-    (settings, gu) <- connectGivingUp ri =<< makeSettings ri tag
+    settings <- makeSettings ri tag
     -- Using a fresh connection
-    asTimeout gu $ H2TLS.runTLS settings (show rinfoIP) rinfoPort "dot" $ \ctx _ _ -> do
-        disarm gu
+    runDoT ri settings $ \gu ctx -> do
         let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
             recvDoT g = givingUpOn gu g $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
         vcResolver tag sendDoT recvDoT ri q qctl
@@ -92,16 +89,20 @@ tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
 
 -- | Giving up connecting and the TLS handshake at the query timeout.
 --   'disarm' stops it once the connection is up.
-connectGivingUp :: ResolveInfo -> H2TLS.Settings -> IO (H2TLS.Settings, GiveUp)
-connectGivingUp ResolveInfo{..} settings = do
-    gu <- newGiveUp =<< deadline (ractionTimeoutTime rinfoActions)
-    let giveUp = giveUpSTM gu
-        settings' =
-            settings
-                { H2TLS.settingsGiveUp = giveUp
-                , H2TLS.settingsOpenClientSocket = openClientSocketGivingUp giveUp []
-                }
-    return (settings', gu)
+connectGiveUp :: ResolveInfo -> IO GiveUp
+connectGiveUp ResolveInfo{..} = newGiveUp =<< deadline (ractionTimeoutTime rinfoActions)
+
+-- | DoT over a fresh connection, giving up connecting and the TLS
+--   handshake with 'TimeoutExpired'.  The 'GiveUp' is the connection's.
+runDoT :: ResolveInfo -> H2TLS.Settings -> (GiveUp -> Context -> IO a) -> IO a
+runDoT ri@ResolveInfo{..} settings action = do
+    gu <- connectGiveUp ri
+    let action' ctx _ _ = disarm gu >> action gu ctx
+    orTimeoutExpired
+        =<< H2TLS.runTLSGivingUp cliconf settings ipstr rinfoPort "dot" action' (giveUpSTM gu)
+  where
+    ipstr = show rinfoIP
+    cliconf = H2TLS.defaultClientConfig settings $ H2TLS.defaultAuthority ipstr
 
 -- | Running an operation of the connection with the 'GiveUp' pointed at
 --   the 'STM' action, throwing 'GaveUp' once it has given up.

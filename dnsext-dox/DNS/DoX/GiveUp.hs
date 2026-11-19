@@ -8,7 +8,7 @@ module DNS.DoX.GiveUp (
     disarm,
     withGiveUp,
     gaveUp,
-    asTimeout,
+    orTimeoutExpired,
 ) where
 
 import Control.Concurrent.STM
@@ -48,9 +48,7 @@ withGiveUp gu g action = (setGiveUp gu g >> action) `E.finally` disarm gu
 gaveUp :: STM () -> IO Bool
 gaveUp g = atomically $ (True <$ g) `orElse` return False
 
--- | Throwing 'TimeoutExpired' for whatever the action throws once the
---   'GiveUp' has given up, as a timeout around it would have.
-asTimeout :: GiveUp -> IO a -> IO a
-asTimeout gu action = action `E.catch` \e -> do
-    given <- gaveUp $ giveUpSTM gu
-    if given then E.throwIO TimeoutExpired else E.throwIO (e :: E.SomeException)
+-- | Throwing 'TimeoutExpired' once the connection has been given up on,
+--   as a timeout around it would have.
+orTimeoutExpired :: Either () a -> IO a
+orTimeoutExpired = either (\_ -> E.throwIO TimeoutExpired) return
