@@ -44,5 +44,5 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/wai.git
-  tag: 8cb9c7583f1cb3e51a4ecdcb2035ab45220ca940
+  tag: 938b9131f5205f5c0e27c5f13e2210d393568cf9
   subdir: time-manager warp
