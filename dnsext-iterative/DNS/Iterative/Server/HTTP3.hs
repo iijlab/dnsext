@@ -15,7 +15,6 @@ import DNS.Transport.Types
 -- other packages
 import qualified Network.HTTP3.Server as H3
 import qualified Network.QUIC.Server as QUIC
-import qualified System.TimeManager as T
 
 -- this package
 import DNS.Iterative.Internal (Env (..))
@@ -36,10 +35,9 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
     let http3server = withLocationIOE name $ do
             sessions <- newSessions
             stoppableDraining vc_stop (vc_drain ss) sessions $ \draining install ->
-                T.withManager (vc_idle_timeout * 1000000) $ \mgr ->
                 QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
                     -- Draining sends GOAWAY and ends once the requests taken are answered.
-                    withSession sessions $ H3.runIOWith draining conn (conf mgr)
+                    withSession sessions $ H3.runIOWith draining conn H3.defaultConfig
                     $ doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative
     return [http3server]
   where
@@ -47,4 +45,3 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
     sbracket = sessionStatsDoH3 (stats_ env)
     incQuery inet6 = incStatsDoH3 inet6 (stats_ env)
     sconf = getServerConfig vc_credentials vc_session_manager "h3" (vc_idle_timeout * 1000) env
-    conf mgr = H3.defaultConfig{H3.confTimeoutManager = mgr}
