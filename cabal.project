@@ -39,7 +39,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/network-run.git
-  tag: 01d464214d9345bc138095d29e676b9ca5444dbd
+  tag: 3eb30b5cb4a17430eb0ea16878a33208a7b54485
 
 source-repository-package
   type: git
