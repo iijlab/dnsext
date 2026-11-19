@@ -19,7 +19,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: a5bff0ec8dc828fdcbdddc27b4fbe975844c63bb
+  tag: 13beae4657b73f576a458c0fb4c44b2d1c77c723
 
 source-repository-package
   type: git
@@ -29,12 +29,12 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http-semantics.git
-  tag: aceec4c31a946dde86ae5cb5c191a903c6059dcd
+  tag: 0a3c58ba4a94a352f1a74bd1e28e4f21fad267de
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2-tls.git
-  tag: 026efa0e9bec96a27a914fa1b392bb91b925ea8f
+  tag: 4eecb33e3e4301d69adff5e9c03b19c46ed39885
 
 source-repository-package
   type: git
@@ -44,5 +44,5 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/wai.git
-  tag: c34840c5410bbd29748ff8d44b3d0a44ad296470
+  tag: 8cb9c7583f1cb3e51a4ecdcb2035ab45220ca940
   subdir: time-manager warp
