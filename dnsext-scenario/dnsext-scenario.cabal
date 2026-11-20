@@ -51,8 +51,6 @@ extra-source-files:
     test/ns-ttl/*.zone
     test/optout-ent/*.conf
     test/optout-ent/*.zone
-    test/parent-ds/*.conf
-    test/parent-ds/*.zone
     test/orphan-glue/*.conf
     test/orphan-glue/*.zone
     test/injected-delegation/*.args
@@ -105,7 +103,6 @@ test-suite spec
         JpSharpSpec
         NsTtlSpec
         OptoutEntSpec
-        ParentDsSpec
         OrphanGlueSpec
         PoisonedGlueSpec
         QnameMinSpec
