@@ -125,6 +125,17 @@ resolveJust = resolveExact
 -- use iterative queries to get the final `DNSMessage` and its associated delegation information
 -- from the authoritative server.
 -- `CNAME`s are not resolved.
+--
+-- >>> Right stubs = Stub.getStubMap [("example.", [], [(IPv4 "192.0.2.1", 53)], FilledDS [])]
+-- >>> env <- (\e -> e{stubZones_ = stubs}) <$> _newTestEnv _noLogging
+-- >>> referral = defaultResponse{question = Question "a.example." A IN, authority = [ResourceRecord "a.example." NS IN 3600 $ rd_ns "ns.a.example."], additional = [ResourceRecord "ns.a.example." A IN 3600 $ rd_a "192.0.2.2"]}
+-- >>> newtype StubIO a = StubIO { runStubIO :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
+-- >>> instance MonadQuery (QueryT StubIO) where { queryNorec _ _ name typ = pure $ Right $ if typ == A then referral else defaultResponse{question = Question name typ IN} }
+-- >>> askedZone typ = fmap (delegationZone . snd) <$> runStubIO (evalQueryT (resolveExact "a.example." typ) env noopWorkerStat (queryParamIN "a.example." typ mempty))
+-- >>> askedZone TXT
+-- Right "a.example."
+-- >>> askedZone DS  {- asked of the parent -}
+-- Right "example."
 resolveExact :: MonadQuery m => Domain -> TYPE -> m (DNSMessage, Delegation)
 resolveExact = resolveExactDC 0
 
@@ -137,7 +148,7 @@ resolveExactDC dc n typ
     | otherwise = do
         anchor <- getAnchor
         liftIO $ TStat.eventLog ("iter.rec " ++ show dc ++ " " ++ show n ++ " " ++ show typ)
-        (mmsg, nss) <- iterative dc anchor $ DNS.superDomains' (delegationZone anchor) n
+        (mmsg, nss) <- iterative dc anchor $ stopAbove $ DNS.superDomains' (delegationZone anchor) n
         let reuseMsg msg
                 | typ == requestDelegationTYPE  = do
                       logLn Log.DEMO $ unwords ["resolve-exact: skip exact query", show n, show typ, "for last no-delegation"]
@@ -146,6 +157,12 @@ resolveExactDC dc n typ
         maybe (request nss) reuseMsg mmsg
   where
     mdc = maxNotSublevelDelegation
+    {- a DS is asked of the delegation above the name. RFC 4034 Sec 5, RFC 4035 Sec 2.4 -}
+    stopAbove ds
+        | typ == DS = dropLast ds
+        | otherwise = ds
+    dropLast [] = []
+    dropLast ds = init ds
     getAnchor = do
         stub <- asksEnv stubZones_
         maybe refreshRoot (fillDelegationDNSKEY 0) $ Stub.lookupStub stub n
