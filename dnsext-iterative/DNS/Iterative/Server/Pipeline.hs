@@ -156,8 +156,12 @@ logQuery env name (Question qn typ cls) flags eh = do
 cacherLogic :: Env -> WorkerStatOP -> IO FromReceiver -> (ToWorker -> IO ()) -> IO ()
 cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
     inpBS@Input{..} <- blockingRequest wstat fromReceiver
-    case DNS.decode inputQuery of
-        Left e -> logLn env Log.WARN $ "cacher.decode-error: " ++ inputAddr inpBS ++ " : " ++ show e
+    -- A query which will not be answered is not pending any more.
+    let drop_ = vpDelete inputPendingOp
+    flip E.onException drop_ $ case DNS.decode inputQuery of
+        Left e -> do
+            logLn env Log.WARN $ "cacher.decode-error: " ++ inputAddr inpBS ++ " : " ++ show e
+            drop_
         {- A response is not a question.  Answering one has two servers
            which both do it talk to each other until somebody stops them,
            and lets anybody who can forge a source address have us send a
@@ -165,8 +169,9 @@ cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
            packet costs nothing to drop and a line of log for each one
            would cost more than the packet did. -}
         Right DNSMessage{flags = qflags}
-            | isResponse qflags ->
+            | isResponse qflags -> do
                 logLn env Log.DEBUG $ "cacher.not-a-query: " ++ inputAddr inpBS
+                drop_
         Right queryMsg@DNSMessage{question = qq, flags = qflags, ednsHeader = qeh} -> do
             -- Input ByteString -> Input DNSMessage
             let blockingEnqueue_ tag = blockingEnqueue wstat $ "cacher: " ++ tag
@@ -188,7 +193,7 @@ cacherLogic env wstat fromReceiver toWorker = handledLoop env "cacher" $ do
                     duration <- diffUsec <$> currentTimeUsec_ env <*> pure inputRecvTime
                     updateHistogram_ env duration (stats_ env)
                     logicDenied env inp
-                    vpDelete inputPendingOp
+                    drop_
             contextClear wstat
 
 ----------------------------------------------------------------
@@ -197,20 +202,21 @@ workerLogic :: Env -> WorkerStatOP -> IO FromCacher -> IO ()
 workerLogic env wstat fromCacher = handledLoop env "worker" $ do
     inp@Input{inputQuery = queryMsg@DNSMessage{question = qq, flags = qflags, ednsHeader = qeh},..}
         <- blockingRequest wstat fromCacher
-    let blockingEnqueue_ tag = blockingEnqueue wstat $ "worker: " ++ tag
-    logQuery env "worker" qq qflags qeh
-    contextSetQuery wstat inputDoX qq
-    ex <- inputFoldIterative Left (curry Right) env wstat queryMsg
-    duration <- diffUsec <$> currentTimeUsec_ env <*> pure inputRecvTime
-    updateHistogram_ env duration (stats_ env)
-    case ex of
-        Right (vr, replyMsg) -> do
-            mapM_ (incStats $ stats_ env) [statsIxOfVR vr, CacheMiss, QueriesAll]
-            let bs = encodeWithTC env inputPeerInfo qeh replyMsg
-            blockingEnqueue_ "dnstap" $ record env inp replyMsg bs
-            blockingResponse wstat $ inputToSender $ Output bs inputPendingOp inputPeerInfo
-        Left _e -> logicDenied env inp
-    contextClear wstat
+    flip E.onException (vpDelete inputPendingOp) $ do
+        let blockingEnqueue_ tag = blockingEnqueue wstat $ "worker: " ++ tag
+        logQuery env "worker" qq qflags qeh
+        contextSetQuery wstat inputDoX qq
+        ex <- inputFoldIterative Left (curry Right) env wstat queryMsg
+        duration <- diffUsec <$> currentTimeUsec_ env <*> pure inputRecvTime
+        updateHistogram_ env duration (stats_ env)
+        case ex of
+            Right (vr, replyMsg) -> do
+                mapM_ (incStats $ stats_ env) [statsIxOfVR vr, CacheMiss, QueriesAll]
+                let bs = encodeWithTC env inputPeerInfo qeh replyMsg
+                blockingEnqueue_ "dnstap" $ record env inp replyMsg bs
+                blockingResponse wstat $ inputToSender $ Output bs inputPendingOp inputPeerInfo
+            Left _e -> logicDenied env inp >> vpDelete inputPendingOp
+        contextClear wstat
 
 ----------------------------------------------------------------
 
