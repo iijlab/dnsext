@@ -46,9 +46,3 @@ source-repository-package
   location: https://github.com/kazu-yamamoto/wai.git
   tag: bb78cec50d8b7cee1f76a4e2e513749aab4cdf5e
   subdir: time-manager warp
-
-source-repository-package
-  type: git
-  location: https://github.com/haskell-tls/hs-tls.git
-  tag: 17ac60a163a6be7db86508e1eb9f9266b0771ee2
-  subdir: tls tls-session-manager
