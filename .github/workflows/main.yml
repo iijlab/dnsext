@@ -147,8 +147,10 @@ jobs:
     - name: Build
       run: cabal v2-build ${{ env.build-targets }}
 
+    # The suites run in parallel and streaming interleaves their lines;
+    # always prints each suite's output as one block once it is done.
     - name: Run tests
-      run: env DISABLE_V6_NS=1 cabal v2-test --test-show-details=streaming all:tests
+      run: env DISABLE_V6_NS=1 cabal v2-test --test-show-details=always all:tests
 
     - name: Run doctest
       if: ${{ runner.os == 'Linux' }}
