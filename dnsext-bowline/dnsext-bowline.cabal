@@ -62,7 +62,7 @@ executable bowline
         network >=3.2.12 && <4.1,
         split,
         stm,
-        tls >=2.3.0 && < 2.6,
+        tls >=2.3.0 && < 2.7,
         tls-session-manager >= 0.1.0 && <0.2,
         transformers,
         unix,
@@ -109,7 +109,7 @@ executable dug
         random,
         serialise,
         stm,
-        tls >=2.3.0 && < 2.6,
+        tls >=2.3.0 && < 2.7,
         transformers,
         unix-time
 
