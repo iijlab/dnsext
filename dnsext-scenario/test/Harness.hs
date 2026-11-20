@@ -39,6 +39,7 @@ import Control.Monad (unless, void, when)
 import Data.List (isInfixOf, isPrefixOf, stripPrefix)
 import Data.Maybe (mapMaybe)
 import Data.String (fromString)
+import GHC.Clock (getMonotonicTimeNSec)
 import System.Directory (
     createDirectoryIfMissing,
     doesFileExist,
@@ -108,15 +109,19 @@ authAddr = do
 
 -- | Whether this machine will let a socket have this address.
 bindable :: Family -> String -> IO Bool
-bindable family addr = do
-    ais <- getAddrInfo (Just hints) (Just addr) (Just "0")
+bindable family addr = bindableAt family Datagram addr 0
+
+-- | Whether a socket of this kind can have this address and port now.
+bindableAt :: Family -> SocketType -> String -> PortNumber -> IO Bool
+bindableAt family typ addr port = do
+    ais <- getAddrInfo (Just hints) (Just addr) (Just $ show port)
     case ais of
         [] -> pure False
         ai : _ ->
             bracket (openSocket ai) close (\s -> bind s (addrAddress ai) >> pure True)
                 `catch` \e -> const (pure False) (e :: IOError)
   where
-    hints = defaultHints{addrFamily = family, addrSocketType = Datagram, addrFlags = [AI_NUMERICHOST]}
+    hints = defaultHints{addrFamily = family, addrSocketType = typ, addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV]}
 
 -- | How a zone's name is written where an address is expected of it:
 --   a scenario's zone file says @ns.example. IN {{AUTH_ADDR_RR}}@ and
@@ -138,8 +143,8 @@ withScenario name body = do
     -- nothing can read.  Every scenario here has signed zones in it.
     -- Registering a type twice is writing the same entry twice.
     runInitIO addResourceDataForDNSSEC
-    [authPort, resolverPort, monitorPort] <- mapM (const freePort) [1 :: Int, 2, 3]
     auth <- authAddr
+    [authPort, resolverPort, monitorPort] <- freePorts auth
     files <- makeAbsolute $ "test" </> name
     -- The directory is named after a port nothing else has, so that two
     -- scenarios at once do not write over each other.
@@ -475,17 +480,28 @@ waitForValue what get = go (300 :: Int)
 
 ----------------------------------------------------------------
 
--- | A port nothing is listening on.  Asked of the kernel and given
---   back, which leaves the moment between here and the daemon binding
---   it; there is no way to hand a bound socket to another program.
-freePort :: IO PortNumber
-freePort = bracket open close socketPort
+-- | Three ports nothing is listening on, all different, for the
+--   primaries, the resolver and the monitor.  They are taken from below
+--   the range the kernel hands out by itself, so that a socket somebody
+--   else opens before the daemons bind theirs is never given one of
+--   them; where the search starts is varied, so that scenarios running
+--   beside each other are not all after the same ones.
+freePorts :: String -> IO [PortNumber]
+freePorts auth = do
+    ns <- getMonotonicTimeNSec
+    go [] $ lowest + fromIntegral (ns `div` 1000 `mod` 20000)
   where
-    open = do
-        s <- socket AF_INET Stream defaultProtocol
-        setSocketOption s ReuseAddr 1
-        bind s $ SockAddrInet 0 $ tupleToHostAddress (127, 0, 0, 1)
-        pure s
+    lowest = 10000 :: PortNumber
+    below = 32768 :: PortNumber -- Linux hands out from here, macOS from 49152
+    go found p
+        | length found == 3 = pure $ reverse found
+        | p >= below = fail $ "no three free ports between " ++ show lowest ++ " and " ++ show below
+        | otherwise = do
+            ok <- and <$> sequence [bindableAt f t a p | (f, a) <- [(AF_INET, rootAddr), (family auth, auth)], t <- [Stream, Datagram]]
+            go (if ok then p : found else found) (p + 1)
+    family addr
+        | ':' `elem` addr = AF_INET6
+        | otherwise = AF_INET
 
 withTempDir :: String -> (FilePath -> IO a) -> IO a
 withTempDir name = bracket make remove
