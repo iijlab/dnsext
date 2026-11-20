@@ -74,6 +74,9 @@ data Scenario = Scenario
     -- ^ The port bowline answers on.
     , scenarioAuth :: PortNumber
     -- ^ The port both primaries answer on, for asking one directly.
+    , scenarioAuthAddr :: String
+    -- ^ The address the primary below the root is on; the root is at
+    --   'rootAddr'.
     }
 
 -- | What came back, reduced to what a scenario asks about.
@@ -183,6 +186,7 @@ withScenario name body = do
                             { scenarioDir = dir
                             , scenarioResolver = resolverPort
                             , scenarioAuth = authPort
+                            , scenarioAuthAddr = auth
                             }
 
 -- | The scenario's own files, with this run's directory, addresses and
@@ -327,12 +331,34 @@ asked sc server = do
     unless ("log-level: DEBUG" `isInfixOf` conf) $
         fail $
             confOf server ++ ": asked needs log-level: DEBUG to have anything to read"
-    mapMaybe oneQuestion . lines <$> readFile (scenarioDir sc </> logOf server)
+    -- clove logs from a thread of its own, in the order it was asked,
+    -- so a question of this one's own is asked and the log is read
+    -- until that question is in it: everything answered before is too.
+    before <- length . filter isMark <$> questions
+    _ <- udpResolver (resolveInfo (addrOf server) (scenarioAuth sc)) (Question mark A IN) mempty
+    waitForValue (logOf server ++ " to catch up") $ do
+        qs <- questions
+        pure $
+            if length (filter isMark qs) > before
+                then Just (filter (not . isMark) qs)
+                else Nothing
   where
+    questions = mapMaybe oneQuestion . lines <$> readWhole (scenarioDir sc </> logOf server)
+    mark = "asked.harness.invalid." :: Domain
+    isMark (n, _) = n == mark
+    addrOf TheRoot = rootAddr
+    addrOf ThePrimary = scenarioAuthAddr sc
     logOf TheRoot = "root.log"
     logOf ThePrimary = "clove.log"
     confOf TheRoot = "root.conf"
     confOf ThePrimary = "clove.conf"
+
+-- | The whole of a file, read before anything is done with it, so that
+--   a file another program is still writing is read as it was.
+readWhole :: FilePath -> IO String
+readWhole path = do
+    s <- readFile path
+    length s `seq` pure s
 
 -- | clove writes @\"a.b.example.\" A from 127.0.0.1\/UDP@ for each
 --   query it answers.  Whatever else is in the log is not one.
