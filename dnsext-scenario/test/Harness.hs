@@ -35,7 +35,7 @@ module Harness (
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, catch, throwIO)
-import Control.Monad (unless, void, when)
+import Control.Monad (replicateM, unless, void, when)
 import Data.List (isInfixOf, isPrefixOf, stripPrefix)
 import Data.Maybe (mapMaybe)
 import Data.String (fromString)
@@ -138,7 +138,7 @@ withScenario name body = do
     -- nothing can read.  Every scenario here has signed zones in it.
     -- Registering a type twice is writing the same entry twice.
     runInitIO addResourceDataForDNSSEC
-    [authPort, resolverPort, monitorPort] <- mapM (const freePort) [1 :: Int, 2, 3]
+    [authPort, resolverPort, monitorPort] <- freePorts 3
     auth <- authAddr
     files <- makeAbsolute $ "test" </> name
     -- The directory is named after a port nothing else has, so that two
@@ -475,11 +475,11 @@ waitForValue what get = go (300 :: Int)
 
 ----------------------------------------------------------------
 
--- | A port nothing is listening on.  Asked of the kernel and given
---   back, which leaves the moment between here and the daemon binding
---   it; there is no way to hand a bound socket to another program.
-freePort :: IO PortNumber
-freePort = bracket open close socketPort
+-- | As many ports nothing is listening on, asked of the kernel while the
+--   others are still held so that no two are the same, and given back;
+--   there is no way to hand a bound socket to another program.
+freePorts :: Int -> IO [PortNumber]
+freePorts n = bracket (replicateM n open) (mapM_ close) (mapM socketPort)
   where
     open = do
         s <- socket AF_INET Stream defaultProtocol
