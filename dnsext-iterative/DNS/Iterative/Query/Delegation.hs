@@ -107,7 +107,10 @@ delegationWithCache zone dnskeys dom msg = do
     nullDS CheckDisabled   k =
         Verify.insecureLog (msgf "no DS, check disabled") $> k []
     nullDS NoCheckDisabled k = do
-        unsignedDelegationOrNoData $> ()
+        {- RFC 4035 Sec 5.2: a missing DS is insecure only with a proof of its absence -}
+        witnesses <- unsignedDelegationOrNoData
+        when (null witnesses && not (null dnskeys)) $
+            Verify.bogusError (msgf "no DS, and nothing to say there is none")
         Verify.insecureLog (msgf "no DS, so no verification chain")
         cacheNoData dom DS (getRank rankedDS msg)
         caches $> k []
@@ -128,7 +131,7 @@ delegationWithCache zone dnskeys dom msg = do
         match rr = rrtype rr `elem` [A, AAAA] && rrname rr `isSubDomainOf` zone && rrname rr `Set.member` nsSet
         nsSet = Set.fromList $ map fst nsps
 
-    unsignedDelegationOrNoData = unsignedDelegationOrNoDataAction zone dnskeys dom A msg
+    unsignedDelegationOrNoData = unsignedDelegationOrNoDataAction zone dnskeys dom DS msg
 {- FOURMOLU_ENABLE -}
 
 {- FOURMOLU_DISABLE -}
