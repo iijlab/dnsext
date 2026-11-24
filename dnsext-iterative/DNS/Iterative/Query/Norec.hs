@@ -6,7 +6,7 @@ module DNS.Iterative.Query.Norec where
 -- GHC packages
 import Control.Concurrent (myThreadId)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, bracket_, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException (..), bracket_, catch, fromException, throwIO, try)
 import Data.Foldable (toList)
 
 -- other packages
@@ -102,34 +102,40 @@ norec_ giveUp utimeout cxt wstat dnssecOK aservers name typ = do
 --   give up on it, as on the given 'STM'.  The last error is returned
 --   when none answers.
 raceResolve :: STM () -> [ResolveInfo] -> Question -> DNS.QueryControls -> IO (Either DNSError DNS.Reply)
-raceResolve giveUp [ri] q qctl = udpTcpResolver1 giveUp ri q qctl
+raceResolve giveUp [ri] q qctl = resolve1 giveUp ri q qctl
 raceResolve giveUp ris q@(Question qn qt _) qctl = do
     won <- newTVarIO False
     results <- newTQueueIO
     caller <- TStat.getThreadLabel
     let giveUp' = giveUp <|> (readTVar won >>= check)
+        -- The thread's top: whatever ends it is recorded as data.
+        orFailure = either (\se -> Left $ NetworkFailure se "do53-res") id
     sequence_
         [ TStat.forkIO (caller ++ ".do53-res: " ++ show (rinfoIP ri)) $
-            try (udpTcpResolver1 giveUp' ri q qctl) >>= atomically . writeTQueue results . (,) ri
+            try (resolve1 giveUp' ri q qctl) >>= atomically . writeTQueue results . (,) ri . orFailure
         | ri <- ris ]
     let collect :: Int -> IO (Either DNSError DNS.Reply)
         collect n = do
             (ri, r) <- atomically $ readTQueue results
-            let failed :: Either SomeException DNSError -> IO (Either DNSError DNS.Reply)
-                failed e
-                    | n <= 1 = either throwIO (return . Left) e
-                    | otherwise = collect (n - 1)
             case r of
-                Right (Right rply) -> do
+                Right rply -> do
                     atomically $ writeTVar won True
                     ractionLog (rinfoActions ri) Log.DEMO Nothing
                         ["    query @" ++ DNS.fromNameTag (DNS.replyTag rply) ++ " " ++ show qn ++ " " ++ show qt ++ ": win"]
                     return $ Right rply
-                Right (Left e) -> failed $ Right $ context ri e
-                Left se
-                    | Just e <- fromException se -> failed $ Right $ context ri e
-                    | otherwise -> failed $ Left se
+                Left e
+                    | n <= 1 -> return $ Left e
+                    | otherwise -> collect (n - 1)
     collect $ length ris
+
+-- | Asking a server, with its errors as data: thrown from the caller of
+--   'steppedWait', a timeout reached the top of a thread nobody waits on.
+resolve1 :: STM () -> ResolveInfo -> Question -> DNS.QueryControls -> IO (Either DNSError DNS.Reply)
+resolve1 giveUp ri q@(Question qn qt _) qctl =
+    (either (Left . context) Right <$> udpTcpResolver1 giveUp ri q qctl) `catch` \se ->
+        case fromException se of
+            Just (SomeAsyncException _) -> throwIO se
+            Nothing -> return $ Left $ context $ fromMaybe (NetworkFailure se "") $ fromException se
   where
-    context ri e = DNSErrorInfo e $ "query " ++ show qn ++ " " ++ show qt ++ " to " ++ show (rinfoIP ri) ++ "#" ++ show (rinfoPort ri)
+    context e = DNSErrorInfo e $ "query " ++ show qn ++ " " ++ show qt ++ " to " ++ show (rinfoIP ri) ++ "#" ++ show (rinfoPort ri)
 {- FOURMOLU_ENABLE -}
