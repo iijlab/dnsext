@@ -54,7 +54,7 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
             withLocationIOE name $
                 stoppable vc_stop $ \install ->
                     runTCPServerWithSocketAndSettings
-                        defaultServerSettings{settingsInstallShutdownHandler = install, settingsUnsafeClose = True}
+                        defaultServerSettings{settingsInstallShutdownHandler = install}
                         s
                         go
     return [tcpserver]

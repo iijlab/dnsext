@@ -332,7 +332,7 @@ tcpServer env keys zoneAlist port TCPConf{..} addr =
   where
     settings =
         defaultServerSettings
-            { settingsGracefulCloseTimeout = 0 -- withClientSlot drains it
+            { settingsClose = close -- withClientSlot drains it
             , settingsOnException = mishap env tcpSeldom
             }
 

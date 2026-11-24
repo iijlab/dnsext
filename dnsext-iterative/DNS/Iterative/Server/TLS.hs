@@ -52,7 +52,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
     name <- socketName s <&> (++ "/tls")
     let tlsserver = withLocationIOE name $
             stoppable vc_stop $ \install ->
-                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install, H2.settingsUnsafeClose = True} vc_credentials s "dot" go
+                H2.runTLSWithSocket settings{H2.settingsInstallShutdownHandler = install} vc_credentials s "dot" go
     return [tlsserver]
   where
     maxSize = fromIntegral vc_query_max_size
