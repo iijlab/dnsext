@@ -5,7 +5,8 @@
 module DNS.Iterative.Server.QUIC where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically, orElse, peekTQueue)
+import Control.Concurrent.STM (atomically, check, orElse, peekTQueue, readTVar, registerDelay, throwSTM)
+import qualified Control.Exception as E
 
 -- dnsext-utils
 import qualified DNS.ThreadAsync as TAsync
@@ -45,6 +46,7 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
   where
     (_synth, foldCached, foldIterative) = extendSynthesis synth
     tmicro = vc_idle_timeout * 1_000_000
+    deadline = (\late -> readTVar late >>= check) <$> registerDelay tmicro
     sconf = getServerConfig vc_credentials vc_session_manager "doq" (vc_idle_timeout * 1_000 + quicDeferMills) env
     quicDeferMills = 20 {- deferral until an exception is raised from quic library -}
     maxSize = fromIntegral vc_query_max_size
@@ -66,14 +68,26 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
                 recvStream = do
                     strm <- QUIC.acceptStream conn
                     let peerInfo = PeerInfoStream peersa $ StreamQUIC strm
-                    -- Without a designated thread, recvStream would block.
-                    bs <- DNS.recvVC maxSize $ QUIC.recvStream strm 2048
+                    -- A stream begun and never finished gives up after the
+                    -- idle timeout, as the connection's PINGs keep it alive.
+                    gaveUp <- deadline
+                    let recvN = do
+                            atomically $
+                                QUIC.waitReadableSTM strm `orElse` (gaveUp >> throwSTM DNS.GaveUp)
+                            QUIC.recvStream strm 2048
+                    bs <- DNS.recvVC maxSize recvN
                     checkReceived vc_slowloris_size vcTimer bs
                     incStatsDoQ peersa (stats_ env)
                     return (bs, peerInfo)
                 send = getSendVC vcTimer $ \bs peerInfo -> do
                     case peerInfo of
-                        PeerInfoStream _ (StreamQUIC strm) -> DNS.sendVC (QUIC.sendStreamMany strm) bs >> QUIC.closeStream strm
+                        PeerInfoStream _ (StreamQUIC strm) -> do
+                            -- A peer granting no credit gives up likewise.
+                            gaveUp <- deadline
+                            let sendMany bss =
+                                    QUIC.sendStreamManyWith strm bss gaveUp
+                                        >>= either (\_ -> E.throwIO DNS.GaveUp) return
+                            DNS.sendVC sendMany bs >> QUIC.closeStream strm
                         _ -> return ()
                 -- FIXME
                 receiver = receiverVC "quic-recv" env vcSess recv toCacher
