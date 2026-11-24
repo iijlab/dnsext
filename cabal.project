@@ -14,17 +14,17 @@ packages:
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/quic.git
-  tag: 78886792ad481fdb54acc7f8ee3d4dbdfb03cebc
+  tag: 48de4ddf0e65a8baef507bb41af6e462ec67aeed
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: 04d87894640a9d4c67aa483d54f704033fc04f3f
+  tag: bbb2af33a5b56036b539b2d89f973f5a1589353e
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 93df4c26794b6f01353e849ffd4d84a17f11a78f
+  tag: c675e46601d300e386b2e46fe27485067caa7895
 
 source-repository-package
   type: git
@@ -34,7 +34,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2-tls.git
-  tag: aca11431360801c1f7996141916d90e00654569c
+  tag: 6fcb127e25aa1e3f01e8c470c6ec867c6ba82ee5
 
 source-repository-package
   type: git
@@ -44,5 +44,5 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/wai.git
-  tag: 9951763fcd7286521717e3f29a6395ecd5564ba4
+  tag: e54458a4200a2f97ebfd4b7b0d8ff10d887a09c7
   subdir: time-manager warp
