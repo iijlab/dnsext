@@ -9,7 +9,7 @@ module DNS.Iterative.Server.TCP (
 where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, check, readTVar, registerDelay)
 import qualified Control.Exception as E
 import Control.Monad (join)
 import Data.Functor
@@ -84,7 +84,13 @@ tcpServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
             let onRecv bs = do
                     checkReceived vc_slowloris_size vcTimer bs
                     incStatsTCP53 peersa (stats_ env)
-            let send = getSendVC vcTimer $ \bs _ -> DNS.sendVC (DNS.sendTCP sock) bs
+            -- A peer which stops reading would hold a send for good: one
+            -- gives up after the idle timeout.
+            let sendTCP bss = do
+                    late <- registerDelay tmicro
+                    Network.sendManyWith sock bss (readTVar late >>= check)
+                        >>= either (\_ -> E.throwIO DNS.GaveUp) return
+                send = getSendVC vcTimer $ \bs _ -> DNS.sendVC sendTCP bs
                 receiver = receiverVCnonBlocking "tcp-recv" env maxSize vcSess peerInfo recv onRecv toCacher
                            $ mkInput mysa toSender TCP synth foldCached foldIterative
                 sender = senderVC "tcp-send" env vcSess send fromX
