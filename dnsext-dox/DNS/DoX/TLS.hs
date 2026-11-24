@@ -110,7 +110,7 @@ givingUpOn :: GiveUp -> STM () -> IO a -> IO a
 givingUpOn gu g action =
     withGiveUp gu g action `E.catch` \e -> do
         given <- gaveUp g
-        if given then E.throwIO GaveUp else E.throwIO (e :: E.SomeException)
+        if given && isSync e then E.throwIO GaveUp else E.throwIO e
 
 -- | Giving up a question at the query timeout, answering 'TimeoutExpired'.
 queryGivingUp
@@ -119,4 +119,10 @@ queryGivingUp ResolveInfo{..} action = do
     g <- deadline $ ractionTimeoutTime rinfoActions
     action g `E.catch` \e -> do
         given <- gaveUp g
-        if given then return (Left TimeoutExpired) else E.throwIO (e :: E.SomeException)
+        if given && isSync e then return (Left TimeoutExpired) else E.throwIO e
+
+-- | Others' asynchronous exceptions are not for giving up to take.
+isSync :: E.SomeException -> Bool
+isSync e = case E.fromException e of
+    Just (E.SomeAsyncException _) -> False
+    Nothing -> True
