@@ -44,7 +44,10 @@ tcpPersistentResolver ri@ResolveInfo{..} body = E.bracket open close $ \sock -> 
     vcPersistentResolver tag send recv ri body
   where
     tag = nameTag ri "TCP"
-    open = openTCP rinfoIP rinfoPort
+    -- Connecting gives up at the query's deadline, as a query does.
+    open =
+        withDeadline (ractionTimeoutTime rinfoActions) (\g -> orGaveUp $ openTCPWith g rinfoIP rinfoPort)
+            >>= maybe (E.throwIO TimeoutExpired) return
 
 -- | Making a persistent resolver.  Sending and receiving give up on the
 --   'STM' action with 'GaveUp': once the body is done, the sender and the

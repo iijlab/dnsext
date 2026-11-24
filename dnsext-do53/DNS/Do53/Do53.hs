@@ -190,15 +190,19 @@ udpResolver ri@ResolveInfo{rinfoActions = ResolveActions{..}, ..} q qctl_ = do
 -- | A resolver using TCP.
 tcpResolver :: OneshotResolver
 tcpResolver ri@ResolveInfo{..} q qctl =
-    -- Using a fresh connection
-    bracket open close $ \sock -> do
-        ractionSetSockOpt rinfoActions sock
-        let send g = sendVC $ \bss -> orGaveUp $ NSB.sendManyWith sock bss g
-            recv g = recvVC rinfoVCLimit $ orGaveUp $ NSB.recvWith sock 2048 g
-        vcResolver tag send recv ri q qctl
+    -- Using a fresh connection, which gives up at the query's deadline
+    -- too: a server dropping SYNs held it for the OS's connect timeout.
+    bracket open (mapM_ close) $ \msock -> case msock of
+        Nothing -> return $ Left TimeoutExpired
+        Just sock -> do
+            ractionSetSockOpt rinfoActions sock
+            let send g = sendVC $ \bss -> orGaveUp $ NSB.sendManyWith sock bss g
+                recv g = recvVC rinfoVCLimit $ orGaveUp $ NSB.recvWith sock 2048 g
+            vcResolver tag send recv ri q qctl
   where
     tag = nameTag ri "TCP"
-    open = openTCP rinfoIP rinfoPort
+    open = withDeadline (ractionTimeoutTime rinfoActions) $ \g ->
+        orGaveUp $ openTCPWith g rinfoIP rinfoPort
 
 -- | Generic resolver for virtual circuit.  Sending and receiving give up
 --   on the 'STM' action with 'GaveUp'.
