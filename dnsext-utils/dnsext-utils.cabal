@@ -79,6 +79,7 @@ test-suite spec
     other-modules:
         ArraySpec
         FastStreamSpec
+        LogSpec
         ProtocolBufferSpec
         SchemaSpec
         TSIGSpec

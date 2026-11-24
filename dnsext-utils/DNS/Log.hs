@@ -1,5 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeApplications #-}
 
 module DNS.Log (
     newStdLogger,
@@ -199,13 +200,20 @@ makeHandleLogger qsize getM open close loggerLevel k = do
             mdfy <- getM'
             toM $ writeTBQueue inQ $ \_ _ ck -> ck c (map mdfy xs)
 
-    run inQ mvar = loop
+    -- An IO error drops what it was for, and the logger stays to drain
+    -- the queue: dying would block every 'putLines' and 'stopLogger'.
+    run inQ mvar = loop . Just
       where
-        loop outFh = do
+        loop mfh = do
             me <- atomically (readTBQueue inQ)
-            let close' = close outFh >> putMVar mvar ()
-                reopen' = close outFh >> open' >>= loop
-            me close' reopen' $ \c xs -> logit outFh c xs >> loop outFh
+            let close' = mapM_ (trySync . close) mfh >> putMVar mvar ()
+                reopen' = mapM_ (trySync . close) mfh >> trySync open' >>= loop
+            me close' reopen' $ \c xs -> mapM_ (\fh -> trySync $ logit fh c xs) mfh >> loop mfh
+
+    trySync :: IO b -> IO (Maybe b)
+    trySync io = (Just <$> io) `E.catch` \e -> case E.fromException e of
+        Just (E.SomeAsyncException _) -> E.throwIO e
+        Nothing -> Nothing <$ E.try @E.SomeException (hPutStrLn stderr $ "logger: " ++ show e)
 
     open' = open >>= \outFh -> hSetBuffering outFh LineBuffering $> outFh
 
