@@ -224,9 +224,10 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
     {- Advisedly separating 'dumper' thread from Async thread-tree
        - Keep the 'dumper' thread alive until the end for debugging purposes
        - Not to be affected by issued `cancel` to thread-tree
-       The 'dumper' thread separated by forkIO automatically terminates
-       when the 'main' thread ends, so there's no need for cleanup.          -}
-    sequence_ [TStat.forkIO "bw.dumper" (TStat.dumper $ putLines Log.SYSTEM Nothing) | cnf_threads_dumper]
+       It is told to stop in the teardown, before the logger it writes to:
+       a reload would otherwise leave one behind for each generation.       -}
+    dumperDone <- newTVarIO False
+    sequence_ [TStat.forkIO "bw.dumper" (TStat.dumper (readTVar dumperDone >>= check) $ putLines Log.SYSTEM Nothing) | cnf_threads_dumper]
     -- The servers return once told to stop and their sessions are done;
     -- the pipeline keeps answering those sessions until then.  The sockets
     -- are handed over as soon as the monitors and the web API are gone.
@@ -259,6 +260,7 @@ runConfig tcache gcache@GlobalCache{..} mng0 reloadInfo ruid conf@Config{..} inh
         -- Teardown
         `finally` do
             mapM_ killThread tidA
+            atomically $ writeTVar dumperDone True
             stopWriter
             killSSLKeyLogger
             stopLogger

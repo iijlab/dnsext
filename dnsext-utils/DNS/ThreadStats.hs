@@ -18,8 +18,9 @@ import qualified GHC.Conc.Sync as GHC
 import GHC.Conc.Sync (labelThread)
 
 -- base
-import Control.Concurrent (ThreadId, myThreadId, threadDelay)
+import Control.Concurrent (ThreadId, myThreadId)
 import qualified Control.Concurrent as Concurrent
+import Control.Concurrent.STM
 import Control.Monad
 import Data.List
 import Data.Maybe
@@ -47,7 +48,8 @@ setThreadLabel name = do
 
 getThreadLabel :: IO String
 dumpThreads :: IO [String]
-dumper :: ([String] -> IO ()) -> IO ()
+-- | Dumping the threads every 3 seconds until the 'STM' succeeds.
+dumper :: STM () -> ([String] -> IO ()) -> IO ()
 
 #if __GLASGOW_HASKELL__ >= 906
 
@@ -71,23 +73,28 @@ dumpThreads = do
         pure (name, val)
     width = 24
 
-dumper putLines = forever $ do
-    putLines . (++ ["----------------------------------------"]) =<< dumpThreads
-    threadDelay interval
+dumper stop putLines = loop
   where
-    interval = 3 * 1000 * 1000
+    loop = do
+        putLines . (++ ["----------------------------------------"]) =<< dumpThreads
+        stopped <- stoppedWithin (3 * 1000 * 1000) stop
+        unless stopped loop
 
 #else
 
 getThreadLabel = pure "<thread-label not supported>"
 dumpThreads = pure ["<not supported>"]
-dumper _ = forever $ threadDelay interval
-  where
-    interval = 3 * 1000 * 1000
+dumper stop _ = void $ atomically stop
 
 #endif
 
 ---
+
+-- | Waiting for the interval or for the 'STM': 'True' for the latter.
+stoppedWithin :: Int -> STM () -> IO Bool
+stoppedWithin usec stop = do
+    late <- registerDelay usec
+    atomically $ (True <$ stop) `orElse` (False <$ (readTVar late >>= check))
 
 listThreads :: IO [ThreadId]
 threadLabel :: ThreadId -> IO (Maybe String)
