@@ -108,14 +108,19 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
 reader :: H2.IOBackend -> STM () -> STM () -> STM VsRunning -> TBQueue ByteString -> IO ()
 reader backend stop idle vsRunning inpq = loop False
   where
+    -- The session's end gives the receive up too: it waited for the
+    -- watchdog after an idle timeout ended the session.
+    notRunning = guard . not =<< vsRunning
     loop draining = do
         let proceed = do
-                r <- H2.recvWith backend $ if draining then idle else stop
+                r <- H2.recvWith backend $
+                    (False <$ notRunning) <|> (True <$ if draining then idle else stop)
                 case r of
-                    Left ()
+                    Left False -> return ()
+                    Left True
                         | draining -> put =<< H2.recvWith backend =<< grace
                         | otherwise -> loop True
-                    Right _ -> put r
+                    Right bs -> put $ Right bs
             put r = do
                 let pkt = either (const mempty) id r
                 atomically $ writeTBQueue inpq pkt
@@ -124,7 +129,7 @@ reader backend stop idle vsRunning inpq = loop False
                     else atomically (guard . not =<< vsRunning)  -- wait session on EOF
         --
         next <- atomically $
-                (guard . not =<< vsRunning)          $> return ()  -- breaks, not running
+                notRunning                           $> return ()  -- breaks, not running
                 <|>
                 (guard . not =<< isFullTBQueue inpq) $> proceed    -- proceed only not full
         next
