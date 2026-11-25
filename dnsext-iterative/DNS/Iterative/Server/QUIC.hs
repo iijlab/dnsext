@@ -5,7 +5,7 @@
 module DNS.Iterative.Server.QUIC where
 
 -- GHC packages
-import Control.Concurrent.STM (atomically, check, orElse, peekTQueue, readTVar, registerDelay, throwSTM)
+import Control.Concurrent.STM (atomically, check, orElse, peekTQueue, readTVar, registerDelay)
 import qualified Control.Exception as E
 
 -- dnsext-utils
@@ -71,10 +71,9 @@ quicServers VcServerConfig{..} synth env toCacher ss = do
                     -- A stream begun and never finished gives up after the
                     -- idle timeout, as the connection's PINGs keep it alive.
                     gaveUp <- deadline
-                    let recvN = do
-                            atomically $
-                                QUIC.waitReadableSTM strm `orElse` (gaveUp >> throwSTM DNS.GaveUp)
-                            QUIC.recvStream strm 2048
+                    let recvN =
+                            QUIC.recvStreamWith strm 2048 gaveUp
+                                >>= either (\_ -> E.throwIO DNS.GaveUp) return
                     bs <- DNS.recvVC maxSize recvN
                     checkReceived vc_slowloris_size vcTimer bs
                     incStatsDoQ peersa (stats_ env)

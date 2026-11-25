@@ -4,7 +4,7 @@
 module DNS.DoX.QUIC where
 
 import Codec.Serialise
-import Control.Concurrent.STM (STM, atomically, throwSTM)
+import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import DNS.Do53.Internal
 import DNS.Types (DNSError (TimeoutExpired))
@@ -62,9 +62,7 @@ resolv conn ri@ResolveInfo{..} giveUp q qctl = do
         tx = BS.length qry
     sendVC (\bss -> orTimeout =<< sendStreamManyWith strm bss giveUp) qry
     orTimeout =<< shutdownStreamWith strm giveUp
-    bs <- recvVC rinfoVCLimit $ do
-        atomically $ waitReadableSTM strm <|> (giveUp >> throwSTM TimeoutExpired)
-        recvStream strm 2048
+    bs <- recvVC rinfoVCLimit $ orTimeout =<< recvStreamWith strm 2048 giveUp
     now <- getTime
     case decodeAt now bs of
         Left e -> return $ Left e
