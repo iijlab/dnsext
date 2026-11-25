@@ -72,7 +72,7 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
         logLn env Log.DEBUG $ "tls-srv: accept: " ++ show peersa
         vsRunning <- newTVarIO True
         inpq <- newTBQueueIO 8
-        (vcSess, toSender, fromX, senderQ) <- initVcSession' retry (return $ checkInp inpq)
+        (vcSess, toSender, fromX, _) <- initVcSession' retry (return $ checkInp inpq)
         let idle = do
                 guard . Set.null =<< readTVar (vcPendings_ vcSess)
                 guard =<< isEmptyTBQueue inpq
@@ -88,11 +88,11 @@ tlsServer VcServerConfig{..} env synth foldCached foldIterative toCacher s = do
                     hrecv = exceptionCase $ \es -> logLn env Log.DEMO ("tls-recv: " ++ es)
                     receiver = hrecv $ receiverVCnonBlocking "tls-recv" env maxSize vcSess peerInfo recv onRecv toCacher
                                $ mkInput mysa toSender DoT synth foldCached foldIterative
+                    -- senderVC marks the session so that its responses are
+                    -- dropped once it ends.
                     hsend = exceptionCase $ \es -> do
-                        let pendings = vcPendings_ vcSess
-                        p <- showVcPendings pendings
+                        p <- showVcPendings $ vcPendings_ vcSess
                         logLn env Log.DEMO ("tls-send: " ++ es ++ ": " ++ p)
-                        dequeueVcPendings pendings senderQ
                     sender = hsend $ senderVC "tls-send" env vcSess send fromX
                 TAsync.concurrently_ "bw.tls-send" sender "bw.tls-recv" receiver
            )

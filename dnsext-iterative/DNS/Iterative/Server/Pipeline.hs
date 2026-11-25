@@ -26,7 +26,6 @@ module DNS.Iterative.Server.Pipeline (
     delVcPending,
     showVcPendings,
     nullVcPendings,
-    dequeueVcPendings,
     checkReceived,
     controlledRecvVC,
     receiverVC,
@@ -687,16 +686,6 @@ nullVcPendings pendings = Set.null <$> atomically (readTVar pendings)
 resetVcTimer :: VcTimer -> IO ()
 resetVcTimer VcTimer{..} = updateTimeout vtManager_ vtKey_ vtMicrosec_
 
-dequeueVcPendings :: TVar VcPendings -> TBQueue ToSender -> IO ()
-dequeueVcPendings pendings senderQ = loop
-  where
-    loop = do
-        nn <- not . Set.null <$> atomically (readTVar pendings)
-        when nn $ do
-            Output _ VcPendingOp{..} _ <- atomically (readTBQueue senderQ)
-            vpDelete
-            when nn loop
-
 waitVcInput :: VcSession -> IO Bool
 waitVcInput VcSession{..} = do
     waitIn <- vcWaitRead_
@@ -792,15 +781,20 @@ mkConnector = do
     (a, b, c, d, _, _) <- mkConnector'
     pure (a, b, c, d)
 
-mkConnector' :: IO (ToSender -> IO (), IO FromX, STM VcRespAvail, STM VcAllowInput, TBQueue ToSender, TVar VcPendings)
+-- | 'mkConnector' with the session's pendings and the flag its sender
+--   sets as it ends, after which a response is dropped, as for a VC
+--   session.
+mkConnector' :: IO (ToSender -> IO (), IO FromX, STM VcRespAvail, STM VcAllowInput, TVar Bool, TVar VcPendings)
 mkConnector' = do
     let queueBound = 8 {- limit waiting area per session to constant size -}
         inputThreshold = succ queueBound `quot` 2
     qs <- newTBQueueIO queueBound
-    let toSender = atomically . writeTBQueue qs
+    senderDone <- newTVarIO False
+    let toSender x = atomically $
+            writeTBQueue qs x `orElse` (readTVar senderDone >>= check)
         fromX = atomically $ readTBQueue qs
     vcPendings <- newTVarIO Set.empty
-    return (toSender, fromX, not <$> isEmptyTBQueue qs, (<= inputThreshold) <$> lengthTBQueue qs, qs, vcPendings)
+    return (toSender, fromX, not <$> isEmptyTBQueue qs, (<= inputThreshold) <$> lengthTBQueue qs, senderDone, vcPendings)
 
 ----------------------------------------------------------------
 

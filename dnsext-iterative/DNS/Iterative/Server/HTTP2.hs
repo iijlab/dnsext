@@ -10,7 +10,8 @@ module DNS.Iterative.Server.HTTP2 (
 ) where
 
 -- GHC packages
-import Control.Exception (bracket)
+import Control.Concurrent.STM (atomically, writeTVar)
+import Control.Exception (bracket, finally)
 import Control.Monad (forever)
 import Data.ByteString.Builder (byteString)
 import qualified Data.ByteString.Char8 as C8
@@ -120,7 +121,7 @@ doHTTP
     -> ServerIO a
     -> IO (IO ())
 doHTTP name sbracket incQuery env toCacher dox synth foldCached foldIterative ServerIO{..} = do
-    (toSender, fromX, _, _, senderQ, pendings) <- mkConnector'
+    (toSender, fromX, _, _, senderDone, pendings) <- mkConnector'
     let hrecv = exceptionCase $ \es -> logLn env Log.DEMO (name ++ "-recv: " ++ es)
         rloop i = do
             (sprstrm, req) <- sioReadRequest
@@ -137,10 +138,12 @@ doHTTP name sbracket incQuery env toCacher dox synth foldCached foldIterative Se
             rloop (i + 1)
         receiver = hrecv $ rloop 1
         --
-        hsend = exceptionCase $ \es -> do
+        -- Once the sender ends, the workers' responses are dropped
+        -- rather than waited for.
+        hsend body = exceptionCase logSend body `finally` atomically (writeTVar senderDone True)
+        logSend es = do
             p <- showVcPendings pendings
             logLn env Log.DEMO (name ++ "-send: " ++ es ++ ": " ++ p)
-            dequeueVcPendings pendings senderQ
         sfinalize (Output _ VcPendingOp{..} _) = vpDelete
         sloop =
             forever $
