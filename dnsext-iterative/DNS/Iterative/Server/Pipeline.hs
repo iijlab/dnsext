@@ -526,7 +526,8 @@ senderVC
     -> (BS -> Peer -> IO ())
     -> IO FromX
     -> IO VcFinished
-senderVC name env vcs send fromX = loop `E.catch` onError
+senderVC name env vcs send fromX =
+    (loop `E.catch` onError) `E.finally` atomically (writeTVar (vcSenderDone_ vcs) True)
   where
     -- logging async exception intentionally, for not expected `cancel`
     -- SomeException: asynchronous exceptions are re-thrown
@@ -592,6 +593,8 @@ data VcSession =
     --   WITHOUT IO.
     , vcAllowInput_     :: STM VcAllowInput
     , vcWaitRead_       :: IO (STM VcWaitRead)
+    , vcSenderDone_     :: TVar Bool
+    -- ^ The sender has ended: nothing drains its queue any more.
     }
 {- FOURMOLU_ENABLE -}
 
@@ -640,7 +643,11 @@ initVcSession' vcStopping getWaitIn = do
     vcPendings  <- newTVarIO Set.empty
     let queueBound = 8 {- limit waiting area per session to constant size -}
     senderQ     <- newTBQueueIO queueBound
-    let toSender = atomically . writeTBQueue senderQ
+    senderDone  <- newTVarIO False
+    -- A response for a session whose sender has ended is dropped: the
+    -- workers, shared by every session, waited on its full queue.
+    let toSender x = atomically $
+            writeTBQueue senderQ x `orElse` (readTVar senderDone >>= check)
         fromX = atomically $ readTBQueue senderQ
         inputThreshold = succ queueBound `quot` 2
         {- allow room for cacher loops and worker loops to write -}
@@ -654,6 +661,7 @@ initVcSession' vcStopping getWaitIn = do
             , vcRespAvail_      = not <$> isEmptyTBQueue senderQ
             , vcAllowInput_     = allowInput
             , vcWaitRead_       = getWaitIn
+            , vcSenderDone_     = senderDone
             }
     pure (result, toSender, fromX, senderQ)
 {- FOURMOLU_ENABLE -}
