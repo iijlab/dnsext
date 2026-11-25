@@ -14,7 +14,7 @@ packages:
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/quic.git
-  tag: bf32dcc87961955355b96f43576631fd6625e20a
+  tag: 46f42a67fdcacfdeda14669d075157917e91e06e
 
 source-repository-package
   type: git
@@ -24,7 +24,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 7786f7a1f550fc87b7d42a52a4cfaf381b49088a
+  tag: c0c3e6c49ea8d77ef8907ad776485203fcfc49e7
 
 source-repository-package
   type: git
@@ -34,7 +34,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2-tls.git
-  tag: 2e3e27aa5f84b10c030b6c374c13a998e7e2315a
+  tag: 85e41f149c92439e657a3e621d5d1a276fa3f6a6
 
 source-repository-package
   type: git
@@ -46,3 +46,11 @@ source-repository-package
   location: https://github.com/kazu-yamamoto/wai.git
   tag: e54458a4200a2f97ebfd4b7b0d8ff10d887a09c7
   subdir: time-manager warp
+
+-- tls 2.6.4 (handshakeWith, recvDataWith, sendDataWith, byeWith) is not
+-- released yet; http2-tls takes it.
+source-repository-package
+  type: git
+  location: https://github.com/haskell-tls/hs-tls.git
+  tag: e86383bc016898e1459a4c2d125387c7a21c1e28
+  subdir: tls
