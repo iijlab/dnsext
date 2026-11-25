@@ -14,7 +14,7 @@ packages:
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/quic.git
-  tag: 46f42a67fdcacfdeda14669d075157917e91e06e
+  tag: bea99beba74682b1612363886ee6fcde610dcff9
 
 source-repository-package
   type: git
