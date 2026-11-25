@@ -24,7 +24,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: c0c3e6c49ea8d77ef8907ad776485203fcfc49e7
+  tag: 2f057c3795f37fe5ee04677c57d85e0efcc50361
 
 source-repository-package
   type: git
