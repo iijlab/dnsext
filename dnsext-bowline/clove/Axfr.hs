@@ -393,7 +393,7 @@ axfrQuery :: Env -> Maybe TSIGKey -> IP -> PortNumber -> Domain -> IO [ResourceR
 axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
     now <- currentTime
     mrrs <- withDeadline axfrTimeout $ \giveUp ->
-        E.bracket (orGaveUp $ openTCPWith giveUp ip port) close $ request giveUp now
+        E.bracket (orGaveUp $ openTCPWith ip port giveUp) close $ request giveUp now
     case mrrs of
         Nothing -> E.ioError $ E.userError "timed out"
         Just rrs -> return rrs

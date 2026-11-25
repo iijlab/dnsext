@@ -202,7 +202,7 @@ tcpResolver ri@ResolveInfo{..} q qctl =
   where
     tag = nameTag ri "TCP"
     open = withDeadline (ractionTimeoutTime rinfoActions) $ \g ->
-        orGaveUp $ openTCPWith g rinfoIP rinfoPort
+        orGaveUp $ openTCPWith rinfoIP rinfoPort g
 
 -- | Generic resolver for virtual circuit.  Sending and receiving give up
 --   on the 'STM' action with 'GaveUp'.

@@ -234,7 +234,7 @@ tcpResolver1 giveUp ri@ResolveInfo{rinfoActions = ra@ResolveActions{..}, ..} q q
     blockingIO n = raBlockingIO ra ("tcp-rslv." ++ n ++ ": " ++ fromNameTag tag)
     sblockingIO sock n action = withSockBucket sock $ \sbucket ->
         blockingIO (n ++ "." ++ show sock ++ "." ++ show sbucket) action
-    open = blockingIO "openTCP" (orDeadline $ openTCPWith giveUp rinfoIP rinfoPort)
+    open = blockingIO "openTCP" (orDeadline $ openTCPWith rinfoIP rinfoPort giveUp)
     close_ s = sblockingIO s "close" (close s)
 {- FOURMOLU_ENABLE -}
 

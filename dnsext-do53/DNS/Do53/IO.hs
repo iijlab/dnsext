@@ -57,8 +57,8 @@ openTCP a p = do
 
 -- | 'openTCP' which the caller can give up on while it connects.  The
 --   socket is closed when it gives up.
-openTCPWith :: STM a -> IP -> PortNumber -> IO (Either a Socket)
-openTCPWith giveUp a p = do
+openTCPWith :: IP -> PortNumber -> STM a -> IO (Either a Socket)
+openTCPWith a p giveUp = do
     let ai = makeAddrInfo a p
     E.bracketOnError (openSocket ai) close $ \sock -> do
         r <- connectWith sock (addrAddress ai) giveUp

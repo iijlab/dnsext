@@ -46,7 +46,7 @@ tcpPersistentResolver ri@ResolveInfo{..} body = E.bracket open close $ \sock -> 
     tag = nameTag ri "TCP"
     -- Connecting gives up at the query's deadline, as a query does.
     open =
-        withDeadline (ractionTimeoutTime rinfoActions) (\g -> orGaveUp $ openTCPWith g rinfoIP rinfoPort)
+        withDeadline (ractionTimeoutTime rinfoActions) (\g -> orGaveUp $ openTCPWith rinfoIP rinfoPort g)
             >>= maybe (E.throwIO TimeoutExpired) return
 
 -- | Making a persistent resolver.  Sending and receiving give up on the
