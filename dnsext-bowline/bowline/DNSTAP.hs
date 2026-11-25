@@ -9,7 +9,7 @@ module DNSTAP (
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Exception as E
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import qualified DNS.Log as Log
 import qualified DNS.TAP.FastStream as FSTRM
 import DNS.TAP.Schema
@@ -50,8 +50,12 @@ newDnstapQ = DnstapQ <$> newTBQueueIO queueBound
     {- transactions per 1 millisecond. When under load, assume GC runs about every 1 millisecond and the thread switches -}
     queueBound = 64
 
+-- | Dropped when the queue is full: a collector which stalls would
+--   otherwise stall every worker putting a message.
 writeDnstapQ :: DnstapQ -> Message -> IO ()
-writeDnstapQ (DnstapQ q) ~msg = atomically $ writeTBQueue q msg
+writeDnstapQ (DnstapQ q) ~msg = atomically $ do
+    full <- isFullTBQueue q
+    unless full $ writeTBQueue q msg
 
 -- | 'Nothing' once stopped and the queue is empty.
 readDnsTapQ :: DnstapQ -> TVar Bool -> IO (Maybe Message)
