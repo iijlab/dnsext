@@ -93,18 +93,18 @@ resolv
     -> STM ()
     -> Resolver
 resolv tag ResolveInfo{..} sendRequest giveUp q qctl = reportFailure . fmap timedOut $
-    sendRequestWith sendRequest req giveUp $ \rsp ->
-        if responseStatus rsp /= Just ok200
-            then return $ Left OperationRefused
-            else do
-                bs <- recvHTTP2 rinfoVCLimit rsp
-                now <- getTime
-                case decodeAt now bs of
-                    Left e -> return $ Left e
-                    Right msg -> case checkRespM q dohIdentifier msg of
-                        Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
-                        Just err -> return $ Left err
+    sendRequestWith sendRequest req handle giveUp
   where
+    handle rsp
+        | responseStatus rsp /= Just ok200 = return $ Left OperationRefused
+        | otherwise = do
+            bs <- recvHTTP2 rinfoVCLimit rsp
+            now <- getTime
+            case decodeAt now bs of
+                Left e -> return $ Left e
+                Right msg -> case checkRespM q dohIdentifier msg of
+                    Nothing -> return $ Right $ Reply tag msg tx $ BS.length bs
+                    Just err -> return $ Left err
     -- A Resolver does not throw: what goes wrong with this one answer
     -- is this one answer's business and not the connection's.
     reportFailure action = action `E.catch` \e -> return $ Left (e :: DNSError)
