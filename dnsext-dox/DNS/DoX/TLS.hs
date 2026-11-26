@@ -3,12 +3,10 @@
 
 module DNS.DoX.TLS where
 
-import Codec.Serialise
 import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import Data.ByteString.Char8 ()
-import qualified Data.ByteString.Lazy as BL
-import Data.Either (rights)
+import qualified Data.ByteString as BS
 import qualified Network.HTTP2.TLS.Client as H2TLS
 import qualified Network.HTTP2.TLS.Internal as H2TLS
 import Network.TLS
@@ -55,11 +53,11 @@ makeSettings ResolveInfo{..} tag = do
             , H2TLS.settingsUseServerNameIndication = False
             , H2TLS.settingsKeyLogger = ractionKeyLog rinfoActions
             , H2TLS.settingsWantSessionResumeList =
-                rights (deserialiseOrFail . BL.fromStrict <$> resInfos)
+                mapMaybe decodeTLSResumption resInfos
             , H2TLS.settingsSessionManager =
                 noSessionManager
                     { sessionEstablish = \sid sd -> do
-                        let bs = BL.toStrict $ serialise (sid, sd)
+                        let bs = encodeTLSResumption sid sd
                         ractionOnResumptionInfo rinfoActions tag bs
                         return Nothing
                     }
@@ -126,3 +124,26 @@ isSync :: E.SomeException -> Bool
 isSync e = case E.fromException e of
     Just (E.SomeAsyncException _) -> False
     Nothing -> True
+
+----------------------------------------------------------------
+
+-- | What a DoT connection leaves for resuming: a version byte, the
+--   session ID with a 2-byte length, then tls's 'encodeSessionData'.
+encodeTLSResumption :: SessionID -> SessionData -> ByteString
+encodeTLSResumption sid sd =
+    BS.concat [BS.pack [0, fromIntegral (len `shiftR` 8), fromIntegral (len .&. 0xff)], sid, encodeSessionData sd]
+  where
+    len = BS.length sid
+
+-- | The inverse of 'encodeTLSResumption'; 'Nothing' for anything else,
+--   such as what an older version stored.
+decodeTLSResumption :: ByteString -> Maybe (SessionID, SessionData)
+decodeTLSResumption bs = case BS.unpack (BS.take 3 bs) of
+    [0, h, l] -> do
+        let len = fromIntegral h `shiftL` 8 .|. fromIntegral l
+            (sid, rest) = BS.splitAt len $ BS.drop 3 bs
+        if BS.length sid /= len
+            then Nothing
+            else (,) sid <$> decodeSessionData rest
+    _ -> Nothing
+

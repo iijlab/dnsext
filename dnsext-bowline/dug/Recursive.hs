@@ -4,7 +4,6 @@
 
 module Recursive (recursiveQuery) where
 
-import Codec.Serialise
 import Control.Concurrent (MVar, newMVar, withMVar)
 import Control.Concurrent.Async
 import Control.Concurrent.STM
@@ -32,6 +31,7 @@ import DNS.Do53.Internal (
     toNameTag,
  )
 import DNS.DoX.Client
+import DNS.DoX.Internal (decodeTLSResumption)
 import qualified DNS.Log as Log
 import DNS.Types (Question (..))
 import qualified DNS.Types as DNS
@@ -39,7 +39,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as C8
-import qualified Data.ByteString.Lazy as BL
 import Data.Either
 import Data.IP (IP (..))
 import qualified Data.List as List
@@ -299,15 +298,10 @@ saveResumption file lock tq name bs = do
   where
     extractInfo
         | "QUIC" == nameTagProto name || "H3" == nameTagProto name =
-            case deserialiseOrFail $ BL.fromStrict bs of
-                Left _ -> Nothing
-                Right (info :: QUIC.ResumptionInfo) ->
-                    Just $ next (QUIC.isResumptionPossible info) (QUIC.is0RTTPossible info)
+            (\info -> next (QUIC.isResumptionPossible info) (QUIC.is0RTTPossible info))
+                <$> QUIC.decodeResumptionInfo bs
         | otherwise =
-            case deserialiseOrFail $ BL.fromStrict bs of
-                Left _ -> Nothing
-                Right (_ :: TLS.SessionID, sd :: TLS.SessionData) ->
-                    Just $ next True (TLS.is0RTTPossible sd)
+            (\(_, sd) -> next True (TLS.is0RTTPossible sd)) <$> decodeTLSResumption bs
     next res rtt0 = "Next(Resumption:" ++ ok res ++ ", 0-RTT:" ++ ok rtt0 ++ ")"
     ok True = "OK"
     ok False = "NG"

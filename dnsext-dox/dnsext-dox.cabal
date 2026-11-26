@@ -52,9 +52,8 @@ library
         network >=3.2.8 && <4.1,
         network-run >=0.8 && <0.10,
         quic >=0.3.0 && <0.4,
-        serialise,
         stm,
-        tls >=2.3.0 && < 2.7
+        tls >=2.7 && <2.8
 
     if impl(ghc >=8)
         default-extensions: Strict StrictData

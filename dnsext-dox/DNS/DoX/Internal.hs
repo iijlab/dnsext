@@ -9,6 +9,8 @@ module DNS.DoX.Internal (
     tlsPersistentResolver,
     quicResolver,
     quicPersistentResolver,
+    encodeTLSResumption,
+    decodeTLSResumption,
 )
 where
 

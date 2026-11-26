@@ -3,14 +3,12 @@
 
 module DNS.DoX.QUIC where
 
-import Codec.Serialise
 import Control.Concurrent.STM (STM)
 import qualified Control.Exception as E
 import DNS.Do53.Internal
 import DNS.Types (DNSError (TimeoutExpired))
 import DNS.Types.Decode
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BL
 import Network.QUIC
 import Network.QUIC.Client
 import Network.QUIC.Internal hiding (Recv, shared)
@@ -86,7 +84,7 @@ saveResumptionInfo :: Connection -> ResolveInfo -> NameTag -> IO ()
 saveResumptionInfo conn ResolveInfo{..} tag = do
     rinfo <- getResumptionInfo conn
     when (isResumptionPossible rinfo) $ do
-        let bs = BL.toStrict $ serialise rinfo
+        let bs = encodeResumptionInfo rinfo
         ractionOnResumptionInfo rinfoActions tag bs
 
 getQUICParams :: ResolveInfo -> NameTag -> ByteString -> IO ClientConfig
@@ -94,9 +92,7 @@ getQUICParams ResolveInfo{..} tag alpn0 = do
     resInfo <- ractionResumptionInfo rinfoActions tag
     let rinfo = case resInfo of
             [] -> defaultResumptionInfo
-            r : _ -> case deserialiseOrFail $ BL.fromStrict r of
-                Left _ -> defaultResumptionInfo
-                Right x -> x
+            r : _ -> fromMaybe defaultResumptionInfo $ decodeResumptionInfo r
     return $
         defaultClientConfig
             { ccServerName = show rinfoIP
