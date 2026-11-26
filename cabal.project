@@ -19,17 +19,12 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: 158b8c6439187925b8a4d605fdc1ad07faf19d28
+  tag: 35c5f5d423b75a2ee9f8f9b8a40f16c6e55a7433
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 00c1c19026723a3a81d70a635ae3b7f3fbf2386e
-
-source-repository-package
-  type: git
-  location: https://github.com/kazu-yamamoto/http-semantics.git
-  tag: 6d1d62d1be356599f4565cb466d5ba308856f59f
+  tag: 23b5113c6f5ab503abf89ddf277015d703502285
 
 source-repository-package
   type: git
