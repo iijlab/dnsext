@@ -14,17 +14,17 @@ packages:
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/quic.git
-  tag: bc35678c545a1bb25b3b189f5f798d62c92fbcd7
+  tag: 9025fbdd2dbb7baad65482e62250895dde695bf3
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: 35c5f5d423b75a2ee9f8f9b8a40f16c6e55a7433
+  tag: cd5e6fb31f22ec59eb382f962213af88b65f3fc0
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 66ec513f33f86f38df32bb8891941e32c4014d94
+  tag: eb64c7d4a6e979c92265b9103809391760c39629
 
 source-repository-package
   type: git
