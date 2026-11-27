@@ -4,9 +4,7 @@ module DNS.DoX.GiveUp (
     GiveUp,
     newGiveUp,
     giveUpSTM,
-    setGiveUp,
     disarm,
-    withGiveUp,
     gaveUp,
     orTimeoutExpired,
 ) where
@@ -24,7 +22,7 @@ deadline us
     | us < 0 = return retry
     | otherwise = (\late -> readTVar late >>= check) <$> registerDelay us
 
--- | What a connection gives up on, pointed at one deadline after another.
+-- | What connecting gives up on, disarmed once the connection is up.
 newtype GiveUp = GiveUp (TVar (STM ()))
 
 newGiveUp :: STM () -> IO GiveUp
@@ -39,10 +37,6 @@ setGiveUp (GiveUp var) = atomically . writeTVar var
 -- | Giving up never from here.
 disarm :: GiveUp -> IO ()
 disarm gu = setGiveUp gu retry
-
--- | Pointing it at the STM for the action, and at 'retry' after.
-withGiveUp :: GiveUp -> STM () -> IO a -> IO a
-withGiveUp gu g action = (setGiveUp gu g >> action) `E.finally` disarm gu
 
 -- | Whether it has succeeded.
 gaveUp :: STM () -> IO Bool

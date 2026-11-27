@@ -3,10 +3,12 @@
 
 module DNS.DoX.TLS where
 
-import Control.Concurrent.STM (STM)
+import Control.Concurrent.STM (STM, retry)
 import qualified Control.Exception as E
-import Data.ByteString.Char8 ()
 import qualified Data.ByteString as BS
+import Data.ByteString.Char8 ()
+import qualified Data.ByteString.Lazy as LBS
+import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Network.HTTP2.TLS.Client as H2TLS
 import qualified Network.HTTP2.TLS.Internal as H2TLS
 import Network.TLS
@@ -22,17 +24,19 @@ tlsPersistentResolver :: PersistentResolver
 tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolver" $ do
     settings <- makeSettings ri tag
     -- Using a fresh connection
-    runDoT ri settings $ \gu ctx -> do
-        let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
+    runDoT ri settings $ \ctx -> do
+        let sendDoT g = sendVC $ sendDoTWith ctx g
             -- connection timeout, not query timeout
             to = ractionTimeoutTime rinfoActions * 10
         -- One reader for the connection: recvTLS hands over a whole TLS
         -- record, so two answers written together arrive together and
         -- a reader made for each message would drop the second.
-        recvVC' <- makeRecvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+        -- Only the receiver reads 'stopRef', which holds its give-up.
+        stopRef <- newIORef retry
+        recvVC' <- makeRecvVC rinfoVCLimit $ readIORef stopRef >>= recvDoTWith ctx
         let recvDoT g = do
                 d <- deadline to
-                givingUpOn gu (g <|> d) recvVC' `E.catch` \GaveUp -> do
+                (writeIORef stopRef (g <|> d) >> recvVC') `E.catch` \GaveUp -> do
                     late <- gaveUp d
                     E.throwIO $ if late then E.toException TimeoutExpired else E.toException GaveUp
         vcPersistentResolver tag sendDoT recvDoT ri body
@@ -78,9 +82,9 @@ tlsResolver :: OneshotResolver
 tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
     settings <- makeSettings ri tag
     -- Using a fresh connection
-    runDoT ri settings $ \gu ctx -> do
-        let sendDoT g = givingUpOn gu g . sendVC (H2TLS.sendManyTLS ctx)
-            recvDoT g = givingUpOn gu g $ recvVC rinfoVCLimit $ H2TLS.recvTLS ctx
+    runDoT ri settings $ \ctx -> do
+        let sendDoT g = sendVC $ sendDoTWith ctx g
+            recvDoT g = recvVC rinfoVCLimit $ recvDoTWith ctx g
         vcResolver tag sendDoT recvDoT ri q qctl
   where
     tag = nameTag ri "TLS"
@@ -91,24 +95,26 @@ connectGiveUp :: ResolveInfo -> IO GiveUp
 connectGiveUp ResolveInfo{..} = newGiveUp =<< deadline (ractionTimeoutTime rinfoActions)
 
 -- | DoT over a fresh connection, giving up connecting and the TLS
---   handshake with 'TimeoutExpired'.  The 'GiveUp' is the connection's.
-runDoT :: ResolveInfo -> H2TLS.Settings -> (GiveUp -> Context -> IO a) -> IO a
+--   handshake with 'TimeoutExpired'.
+runDoT :: ResolveInfo -> H2TLS.Settings -> (Context -> IO a) -> IO a
 runDoT ri@ResolveInfo{..} settings action = do
     gu <- connectGiveUp ri
-    let action' ctx _ _ = disarm gu >> action gu ctx
+    let action' ctx _ _ = disarm gu >> action ctx
     orTimeoutExpired
         =<< H2TLS.runTLSGivingUp cliconf settings ipstr rinfoPort "dot" action' (giveUpSTM gu)
   where
     ipstr = show rinfoIP
     cliconf = H2TLS.defaultClientConfig settings $ H2TLS.defaultAuthority ipstr
 
--- | Running an operation of the connection with the 'GiveUp' pointed at
---   the 'STM' action, throwing 'GaveUp' once it has given up.
-givingUpOn :: GiveUp -> STM () -> IO a -> IO a
-givingUpOn gu g action =
-    withGiveUp gu g action `E.catch` \e -> do
-        given <- gaveUp g
-        if given && isSync e then E.throwIO GaveUp else E.throwIO e
+-- | Sending, giving up on the 'STM' action with 'GaveUp'.  Each call
+--   has its own, so the sender and the receiver do not share one.
+sendDoTWith :: Context -> STM () -> [ByteString] -> IO ()
+sendDoTWith ctx g bss =
+    orGaveUp $ H2TLS.afterCloseNotifyWith $ sendDataWith ctx (LBS.fromChunks bss) g
+
+-- | Receiving, giving up on the 'STM' action with 'GaveUp'.
+recvDoTWith :: Context -> STM () -> IO ByteString
+recvDoTWith ctx g = orGaveUp $ H2TLS.recvTLSWith ctx g
 
 -- | Giving up a question at the query timeout, answering 'TimeoutExpired'.
 queryGivingUp
@@ -146,4 +152,3 @@ decodeTLSResumption bs = case BS.unpack (BS.take 3 bs) of
             then Nothing
             else (,) sid <$> decodeSessionData rest
     _ -> Nothing
-

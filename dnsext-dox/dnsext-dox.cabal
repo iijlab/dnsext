@@ -69,6 +69,7 @@ test-suite spec
         ResolverSpec
         SVCBSpec
         SetupSpec
+        TLSSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded
@@ -84,7 +85,8 @@ test-suite spec
         http-types,
         http2,
         http2-tls,
-        network
+        network,
+        tls
 
     if (os(windows) && impl(ghc >=9.0))
         ghc-options: -with-rtsopts=--io-manager=native
