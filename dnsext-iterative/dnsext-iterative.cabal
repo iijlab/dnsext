@@ -126,6 +126,7 @@ test-suite spec
         QuerySpec
         SessionPropSpec
         SessionSpec
+        UDPSpec
 
     default-language:   Haskell2010
     ghc-options:        -Wall -threaded

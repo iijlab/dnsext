@@ -70,11 +70,14 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
     -- Once draining, what was read in its window and not yet handed on.
     draining <- newIORef Nothing
     recvDone <- newTVarIO False
+    senderDone <- newTVarIO False
     let newPending = do
             i <- atomicModifyIORef' counter $ \n -> (n + 1, n)
             pendingOp pendings i $ \add pop -> pop <$ add
         answered = readTVar pendings >>= check . Set.null
-        toSender = atomically . writeTBQueue qs
+        -- Once the sender is cut, an answer is dropped: the workers, shared
+        -- by every server, would wait on its full queue.
+        toSender x = atomically $ writeTBQueue qs x `orElse` (readTVar senderDone >>= check)
         -- After the receiver, which may still be reading once stopped.
         fromX = atomically $ (Just <$> readTBQueue qs) `orElse` (Nothing <$ (readTVar recvDone >>= check >> answered))
         recvOr = NSB.recvMsgWith s 2048 2048 0
@@ -110,7 +113,7 @@ udpServer UdpServerConfig{..} env synth foldCached foldIterative toCacher s = do
             void $ NSB.sendMsg s peersa [bs] cmsgs 0
         send _ _ = return ()
         receiver = receiverLogic env mysa recv newPending toCacher toSender UDP synth foldCached foldIterative
-        sender = senderLogic env send fromX
+        sender = senderLogic env send fromX `finally` atomically (writeTVar senderDone True)
         receiver' = receiver `finally` atomically (writeTVar recvDone True)
     return [TAsync.concurrently_ "bw.udp-send" sender "bw.udp-recv" receiver']
 
