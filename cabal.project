@@ -19,17 +19,17 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2.git
-  tag: 3348d7a12a4b03e8e188e6ab7ff5af9ca6a9e6ce
+  tag: c37c93eb976e2916054f5eb19711ac7be98edfbc
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http3.git
-  tag: 0279d8e60772c9791cfde6b097fb91fa98223aab
+  tag: 4bee4857e1311585555111df24981c117a31fceb
 
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/http2-tls.git
-  tag: 48b2c6c100c228f74c7ab0fed110c94171eb4941
+  tag: 06c27863ece010c03330c94eeb0b8aa4d3e10678
 
 source-repository-package
   type: git
@@ -39,12 +39,12 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/kazu-yamamoto/wai.git
-  tag: d3a263f8742b15c7c46cb282d4a6c98de3be71b1
+  tag: 9365c10dd83791a505a8e92068da924d4a4d3278
   subdir: time-manager warp
 
 -- tls 2.7 (no serialise; encodeSessionData) is not released yet.
 source-repository-package
   type: git
   location: https://github.com/haskell-tls/hs-tls.git
-  tag: 3c3170891b4ae520b932273c670a3591b499830f
+  tag: b1f84fa8d7255494592245027762e8bc6330125f
   subdir: tls tls-session-manager

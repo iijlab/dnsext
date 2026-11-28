@@ -37,8 +37,8 @@ http3Servers VcServerConfig{..} synth env toCacher ss = do
             stoppableDraining vc_stop (vc_drain ss) sessions $ \draining install ->
                 QUIC.runWithSockets ss sconf{QUIC.scInstallShutdownHandler = install} $ \conn ->
                     -- Draining sends GOAWAY and ends once the requests taken are answered.
-                    withSession sessions $ H3.runIOWith draining conn H3.defaultConfig
-                    $ doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative
+                    withSession sessions $
+                        H3.runIOGracefully conn H3.defaultConfig (doHTTP name sbracket incQuery env toCacher H3 synth foldCached foldIterative) draining
     return [http3server]
   where
     (_synth, foldCached, foldIterative) = extendSynthesis synth

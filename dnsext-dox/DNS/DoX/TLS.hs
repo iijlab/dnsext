@@ -110,7 +110,7 @@ runDoT ri@ResolveInfo{..} settings action = do
 --   has its own, so the sender and the receiver do not share one.
 sendDoTWith :: Context -> [ByteString] -> STM () -> IO ()
 sendDoTWith ctx bss g =
-    orGaveUp $ H2TLS.afterCloseNotifyWith $ sendDataWith ctx (LBS.fromChunks bss) g
+    orGaveUp $ respectingGracefulClose ctx (Right ()) $ sendDataWith ctx (LBS.fromChunks bss) g
 
 -- | Receiving, giving up on the 'STM' action with 'GaveUp'.
 recvDoTWith :: Context -> STM () -> IO ByteString
