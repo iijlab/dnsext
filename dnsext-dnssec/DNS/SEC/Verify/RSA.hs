@@ -64,8 +64,14 @@ rsaSHAHelper alg =
 rsaEncodePriKey :: PrivateKey -> ByteString
 rsaEncodePriKey = BL.toStrict . serialise
 
+-- | The private key as 'rsaEncodePriKey' wrote it.
+--
+-- >>> isLeft $ rsaDecodePriKey "\xff"
+-- True
 rsaDecodePriKey :: ByteString -> Either String PrivateKey
-rsaDecodePriKey = Right . deserialise . BL.fromStrict
+rsaDecodePriKey = either failed Right . deserialiseOrFail . BL.fromStrict
+  where
+    failed e = Left $ "RSASHA.rsaDecodePriKey: " ++ show e
 
 -- | Most bits of modulus, and of exponent, taken from a DNSKEY.
 --   RFC 5702 Sec 2.1 and 2.2 hold an RSA key to 4096 bits, and RFC 3110
@@ -76,7 +82,7 @@ maxRSAKeyBits = 4096
 -- $setup
 -- >>> :seti -XOverloadedStrings
 -- >>> import qualified Data.ByteString as BS
--- >>> import Data.Either (isRight)
+-- >>> import Data.Either (isLeft, isRight)
 -- >>> :{
 -- rsaPubKey eBits nBits = PubKey $ Opaque.concat [elen, e, ones $ (nBits + 7) `div` 8]
 --   where
