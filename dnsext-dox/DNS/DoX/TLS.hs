@@ -25,7 +25,7 @@ tlsPersistentResolver ri@ResolveInfo{..} body = toDNSError "tlsPersistentResolve
     settings <- makeSettings ri tag
     -- Using a fresh connection
     runDoT ri settings $ \ctx -> do
-        let sendDoT g = sendVC $ sendDoTWith ctx g
+        let sendDoT g = sendVC $ \bss -> sendDoTWith ctx bss g
             -- connection timeout, not query timeout
             to = ractionTimeoutTime rinfoActions * 10
         -- One reader for the connection: recvTLS hands over a whole TLS
@@ -83,7 +83,7 @@ tlsResolver ri@ResolveInfo{..} q qctl = toDNSError "tlsResolver" $ do
     settings <- makeSettings ri tag
     -- Using a fresh connection
     runDoT ri settings $ \ctx -> do
-        let sendDoT g = sendVC $ sendDoTWith ctx g
+        let sendDoT g = sendVC $ \bss -> sendDoTWith ctx bss g
             recvDoT g = recvVC rinfoVCLimit $ recvDoTWith ctx g
         vcResolver tag sendDoT recvDoT ri q qctl
   where
@@ -108,8 +108,8 @@ runDoT ri@ResolveInfo{..} settings action = do
 
 -- | Sending, giving up on the 'STM' action with 'GaveUp'.  Each call
 --   has its own, so the sender and the receiver do not share one.
-sendDoTWith :: Context -> STM () -> [ByteString] -> IO ()
-sendDoTWith ctx g bss =
+sendDoTWith :: Context -> [ByteString] -> STM () -> IO ()
+sendDoTWith ctx bss g =
     orGaveUp $ H2TLS.afterCloseNotifyWith $ sendDataWith ctx (LBS.fromChunks bss) g
 
 -- | Receiving, giving up on the 'STM' action with 'GaveUp'.

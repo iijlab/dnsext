@@ -129,23 +129,23 @@ vcLimitMax = 65535
 --   afresh for each message drops what it read ahead, and those
 --   queries are never answered and never reported.
 recvMessage :: Int -> Socket -> ByteString -> IO (ByteString, ByteString)
-recvMessage = recvMessageWith retry
+recvMessage lim sock rest = recvMessageWith lim sock rest retry
 
 -- | 'recvMessage' which gives up on the 'STM' action with
 --   'DNS.Do53.Internal.GaveUp'.
 recvMessageWith
-    :: STM () -> Int -> Socket -> ByteString -> IO (ByteString, ByteString)
-recvMessageWith giveUp lim sock rest0 = do
-    (lenbs, rest1) <- recvExactly giveUp 2 sock rest0
+    :: Int -> Socket -> ByteString -> STM () -> IO (ByteString, ByteString)
+recvMessageWith lim sock rest0 giveUp = do
+    (lenbs, rest1) <- recvExactly 2 sock rest0 giveUp
     let len = decodeVCLength lenbs
     when (len > lim) $
         E.throwIO $
             userError $
                 "message of " ++ show len ++ " bytes is over the limit of " ++ show lim
-    recvExactly giveUp len sock rest1
+    recvExactly len sock rest1 giveUp
 
-recvExactly :: STM () -> Int -> Socket -> ByteString -> IO (ByteString, ByteString)
-recvExactly giveUp n sock rest0 = go [rest0] (BS.length rest0)
+recvExactly :: Int -> Socket -> ByteString -> STM () -> IO (ByteString, ByteString)
+recvExactly n sock rest0 giveUp = go [rest0] (BS.length rest0)
   where
     go acc len
         | len >= n = return $ BS.splitAt n $ BS.concat $ reverse acc

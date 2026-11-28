@@ -414,7 +414,7 @@ axfrQuery _env mkey ip port dom = withUpstream ip port dom "AXFR" $ do
     -- The records come back reversed, so the head is the last one seen:
     -- the transfer is over once that is the closing SOA.
     collect giveUp sock rest chain racc = do
-        (bs, rest') <- recvMessageWith giveUp vcLimitMax sock rest
+        (bs, rest') <- recvMessageWith vcLimitMax sock rest giveUp
         -- Each message is checked against the time it arrives at.
         now <- currentTime
         msg <- case decode bs of
